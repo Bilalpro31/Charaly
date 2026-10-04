@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Stories, world state and memories are backed up with the app because they are
+  the user's own work. GGUF models are NOT backed up: they are large, and the
+  user can re-import them at any time.
+-->
+<full-backup-content>
+    <include domain="file" path="charaly" />
+    <exclude domain="file" path="models" />
+</full-backup-content>

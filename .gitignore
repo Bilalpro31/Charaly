@@ -1,0 +1,21 @@
+# Build outputs
+build/
+.gradle/
+.cxx/
+*.apk
+*.aab
+*.so
+
+# Local machine configuration: must never be committed.
+local.properties
+
+# IDE
+.idea/
+*.iml
+.DS_Store
+
+# llama.cpp is fetched by scripts/setup-llama.sh, not vendored.
+app/src/main/cpp/llama.cpp/
+
+# Imported models must never enter the repository.
+*.gguf

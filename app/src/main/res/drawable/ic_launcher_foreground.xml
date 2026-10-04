@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  A vector launcher icon: a lamplight over an open book, which is roughly what
+  Charaly is. Vectors keep the APK small and avoid shipping raster assets.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Parchment background -->
+    <path
+        android:fillColor="#F6F1E7"
+        android:pathData="M0,0h108v108h-108z" />
+
+    <!-- Lamp glow -->
+    <path
+        android:fillColor="#E0A458"
+        android:fillAlpha="0.35"
+        android:pathData="M54,20m-26,0a26,26 0,1 1,52 0a26,26 0,1 1,-52 0" />
+
+    <!-- Open book -->
+    <path
+        android:fillColor="#B98A44"
+        android:pathData="M22,54 L52,48 L54,50 L54,86 L52,88 L22,82 Z" />
+    <path
+        android:fillColor="#8C6630"
+        android:pathData="M86,54 L56,48 L54,50 L54,86 L56,88 L86,82 Z" />
+    <path
+        android:fillColor="#3A2E1C"
+        android:pathData="M52,48 L54,50 L54,86 L52,88 Z" />
+
+    <!-- Flame -->
+    <path
+        android:fillColor="#E0A458"
+        android:pathData="M54,32 C58,38 60,42 60,46 C60,51 57,54 54,54 C51,54 48,51 48,46 C48,42 50,38 54,32 Z" />
+</vector>

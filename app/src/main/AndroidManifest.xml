@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Charaly is local-first.
+
+  Note what is NOT here: android.permission.INTERNET. Without it the OS makes it
+  impossible for this app to open a socket, which is a machine-checkable
+  guarantee that conversations, characters, memories, world state and model data
+  can never leave the device.
+
+  No telemetry, no analytics, no cloud account, no API key.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+      Reading a GGUF the user picks from their own storage. ACTION_OPEN_DOCUMENT
+      via the Storage Access Framework grants a per-file URI without any broad
+      storage permission.
+    -->
+    <application
+        android:name=".CharalyApplication"
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Charaly"
+        android:usesCleartextTraffic="false"
+        tools:targetApi="34">
+
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.Charaly">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
