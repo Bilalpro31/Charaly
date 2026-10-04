@@ -110,7 +110,7 @@ runs in seconds on a laptop.
 scripts/setup-llama.sh
 
 # 2. Verify the deterministic runtime (no device needed).
-./gradlew :charaly-runtime:test
+./gradlew verify
 
 # 3. Build the APK.
 ./gradlew :app:assembleDebug
@@ -119,6 +119,24 @@ scripts/setup-llama.sh
 Requires JDK 17 and the Android SDK (`compileSdk 35`). If `llama.cpp` is missing,
 `scripts/setup-llama.sh` tells you so and the app falls back to a clearly
 labelled offline echo engine - never to a remote service.
+
+### Building on an ARM64 host
+
+The Android SDK and NDK ship **x86_64-only** `aapt2` and `clang++`, so an ARM64
+machine cannot run them directly. That is a host limitation, not a Charaly one,
+and it is worked around with local shims (see the comments at the bottom of
+`gradle.properties`). Nothing in those shims ships inside the APK: the real
+tools still do the work.
+
+Two properties help on such hosts:
+
+```bash
+# only cross-compile arm64 (a 32-bit shim cannot be used from ARM64)
+./gradlew :app:assembleDebug -PcharalyAbis=arm64-v8a
+
+# compile and link the native library without Gradle
+scripts/verify-native-arm64.sh
+```
 
 ---
 
@@ -141,7 +159,15 @@ labelled offline echo engine - never to a remote service.
 
 `AndroidManifest.xml` declares **no** `INTERNET` permission. Without it the OS
 refuses to let the app open a socket, which makes "your conversations never leave
-the device" a machine-checkable property rather than a promise.
+the device" a machine-checkable property rather than a promise. You can verify it
+on a built APK:
+
+```bash
+$ aapt2 dump permissions app-debug.apk
+package: dev.charaly.app
+permission: dev.charaly.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+# no android.permission.INTERNET
+```
 
 No telemetry, no analytics, no cloud account, no API key. Stories and memories are
 included in device backup; imported `.gguf` models are excluded.
@@ -150,7 +176,7 @@ included in device backup; imported `.gguf` models are excluded.
 
 ## Testing
 
-237 JVM tests, no device, no emulator, no model download.
+263 JVM tests, no device, no emulator, no model download.
 
 ```
 StoryPackTest              CharacterRuntimeTest      ContextBuilderTest
@@ -158,6 +184,7 @@ StoryInstanceTest          RelationshipTest          SceneDirectorTest
 WorldStateTest             KnowledgeTest             EventEngineTest
 WorldClockTest             MemoryTest                PersistenceTest
 StoryThreadTest            CompatibilityTest         StoryPipelineIntegrationTest
+CharalyApplicationTest     LocalLlamaInferenceEngineTest
 ```
 
 The integration suite walks the whole pipeline end to end: pack -> instance ->

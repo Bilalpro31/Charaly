@@ -74,7 +74,11 @@ extern "C" {
 
 JNIEXPORT jboolean JNICALL
 Java_dev_charaly_app_inference_LlamaNative_nativeAvailable(JNIEnv *, jclass) {
-    return llama_backend_is_initialized() || true ? JNI_TRUE : JNI_FALSE;
+    // Reaching this function at all means System.loadLibrary("charaly_llama")
+    // succeeded, which is exactly what "the native engine is available" means.
+    // There is no llama_backend_is_initialized() in the public API: the backend
+    // is initialised lazily on first load, not at library load time.
+    return JNI_TRUE;
 }
 
 JNIEXPORT jstring JNICALL
@@ -302,7 +306,10 @@ Java_dev_charaly_app_inference_LlamaNative_generate(
         if (j_temperature > 0.0f) {
             llama_sampler_chain_add(ctx_sampler, llama_sampler_init_temp(j_temperature));
         }
-        llama_sampler_chain_add(ctx_sampler, llama_sampler_init_penalty(64, j_repeat_penalty, j_repeat_penalty));
+        // repeat / frequency / presence penalties; 1.0 disables each.
+        llama_sampler_chain_add(
+            ctx_sampler,
+            llama_sampler_init_penalties(64, j_repeat_penalty, 1.0f, 1.0f));
         llama_sampler_chain_add(ctx_sampler, llama_sampler_init_dist(j_seed));
 
         // 4. Decode loop, emitting each token as it is produced.

@@ -52,19 +52,31 @@ class LocalLlamaInferenceEngine(
 
     override suspend fun loadModel(request: ModelLoadRequest): LoadOutcome = withContext(Dispatchers.IO) {
         unload()
-        if (!LlamaNative.nativeAvailable()) {
-            return@withContext LoadOutcome.Failed(
-                InferenceError.Unsupported("native llama.cpp is not available in this build"),
-            )
-        }
+
+        // Validate the user's file FIRST. These checks are pure Kotlin, so they
+        // give a precise reason ("that file is not a GGUF model") even when the
+        // native library is missing, and they stop a multi-gigabyte non-model
+        // file from ever reaching native code.
         val file = java.io.File(request.path)
-        if (!file.isFile || !file.canRead()) {
+        if (!file.exists() || !file.isFile || !file.canRead()) {
             return@withContext LoadOutcome.Failed(InferenceError.ModelNotFound(request.path))
         }
-        // A GGUF header check before handing a multi-gigabyte file to native code.
+        if (file.length() < MIN_GGUF_BYTES) {
+            return@withContext LoadOutcome.Failed(
+                InferenceError.InvalidModel(request.path, "file is too small to be a GGUF model"),
+            )
+        }
         if (!looksLikeGguf(file)) {
             return@withContext LoadOutcome.Failed(
                 InferenceError.InvalidModel(request.path, "missing GGUF magic"),
+            )
+        }
+
+        if (!LlamaNative.nativeAvailable()) {
+            return@withContext LoadOutcome.Failed(
+                InferenceError.Unsupported(
+                    "native llama.cpp is not available in this build; run scripts/setup-llama.sh and rebuild",
+                ),
             )
         }
 
@@ -239,6 +251,9 @@ class LocalLlamaInferenceEngine(
 
     companion object {
         const val ENGINE_ID = "llama.cpp-local"
+
+        /** A GGUF header is at least 24 bytes; anything smaller cannot be one. */
+        private const val MIN_GGUF_BYTES = 24L
 
         fun isNativeAvailable(): Boolean = runCatching { LlamaNative.nativeAvailable() }.getOrDefault(false)
 

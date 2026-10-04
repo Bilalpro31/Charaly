@@ -38,7 +38,6 @@ add_library(charaly_llama SHARED charaly_jni.cpp)
 target_include_directories(charaly_llama PRIVATE "${LLAMA_CPP_DIR}/include")
 target_link_libraries(charaly_llama PRIVATE llama ggml android log)
 
+# Only the JNI entry points are exported. jni.h already annotates JNIEXPORT with
+# __attribute__((visibility("default"))), so hiding everything else is enough.
 target_compile_options(charaly_llama PRIVATE -O3 -fvisibility=hidden)
-
-# JNI entry points must be exported even though everything else is hidden.
-target_compile_definitions(charaly_llama PRIVATE JNIEXPORT=__attribute__((visibility("default"))))

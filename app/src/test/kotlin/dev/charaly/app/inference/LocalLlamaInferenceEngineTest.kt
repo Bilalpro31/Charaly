@@ -12,6 +12,7 @@ import dev.charaly.runtime.inference.ModelInfo
 import dev.charaly.runtime.inference.ModelLoadRequest
 import dev.charaly.runtime.inference.StopReason
 import dev.charaly.runtime.inference.StreamChunk
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -169,7 +170,7 @@ class LocalLlamaInferenceEngineTest {
     fun `the engine satisfies the InferenceEngine port`() {
         // A compile-time guarantee, stated explicitly so it cannot regress.
         val engine: InferenceEngine = LocalLlamaInferenceEngine()
-        assertEquals(ENGINE_ID, LocalLlamaInferenceEngine.ENGINE_ID)
+        assertEquals("llama.cpp-local", LocalLlamaInferenceEngine.ENGINE_ID)
         assertEquals(engine.javaClass.simpleName, LocalLlamaInferenceEngine::class.java.simpleName)
     }
 

@@ -25,9 +25,15 @@ android {
             }
         }
         ndk {
-            // ABI filters keep the APK small: local inference only needs the
-            // mainstream arm ABIs plus x86_64 for emulators.
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+            // Local inference only needs the mainstream arm ABIs plus x86_64 for
+            // emulators. The list is overridable because an ARM64 build host can
+            // only cross-compile arm64 (see -PcharalyAbis=arm64-v8a).
+            val abis = (project.findProperty("charalyAbis") as String?)
+                ?.split(",")
+                ?.map(String::trim)
+                ?.filter(String::isNotEmpty)
+                ?: listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+            abiFilters += abis
         }
     }
 
@@ -94,4 +100,9 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
     debugImplementation(libs.androidx.compose.ui.tooling)
+
+    // App-layer wiring is unit tested on the JVM: no device, no emulator, no
+    // model file. These run with unitTests.isReturnDefaultValues = true.
+    testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
 }

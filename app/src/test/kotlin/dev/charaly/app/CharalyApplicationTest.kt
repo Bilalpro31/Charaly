@@ -100,7 +100,10 @@ class CharalyApplicationTest {
             override suspend fun unloadModel() = Unit
             override suspend fun generate(request: InferenceRequest) =
                 dev.charaly.runtime.inference.InferenceResult("")
-            override fun stream(request: InferenceRequest) = kotlinx.coroutines.flow.flow<dev.charaly.runtime.inference.StreamChunk>()
+            override fun stream(request: InferenceRequest) =
+                kotlinx.coroutines.flow.flow<dev.charaly.runtime.inference.StreamChunk> {
+                    emit(dev.charaly.runtime.inference.StreamChunk(text = "", done = true))
+                }
             override fun stop() = Unit
             override fun isLoaded() = false
             override fun modelInfo() = null
