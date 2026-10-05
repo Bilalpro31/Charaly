@@ -17,7 +17,13 @@ import dev.charaly.runtime.domain.WorldVariable
 import dev.charaly.runtime.domain.events.CharacterActivityChanged
 import dev.charaly.runtime.domain.events.CharacterEnteredScene
 import dev.charaly.runtime.domain.events.CharacterLeftScene
+import dev.charaly.runtime.domain.events.BeliefFormed
 import dev.charaly.runtime.domain.events.CharacterMoved
+import dev.charaly.runtime.domain.events.CharacterObserved
+import dev.charaly.runtime.domain.events.MemoryUpdated
+import dev.charaly.runtime.domain.events.MisconceptionCorrected
+import dev.charaly.runtime.domain.events.MisconceptionFormed
+import dev.charaly.runtime.domain.events.SuspicionRaised
 import dev.charaly.runtime.domain.events.CharacterRoutineApplied
 import dev.charaly.runtime.domain.events.EventOrigin
 import dev.charaly.runtime.domain.events.LocationEntered
@@ -55,6 +61,7 @@ enum class EventRejection {
     EMPTY_CHANGE,
     STAGE_REGRESSION,
     MISSING_CHARACTER_STATE,
+    UNKNOWN_MEMORY,
 }
 
 data class EventValidation(
@@ -365,6 +372,93 @@ class EventEngine(val definition: WorldDefinition) {
             }
 
             is FactRevealed -> Unit
+
+            is CharacterObserved -> {
+                if (definition.character(payload.characterId) == null) errors += EventRejection.UNKNOWN_CHARACTER
+                if (payload.description.isBlank()) errors += EventRejection.EMPTY_CHANGE
+                if (payload.locationId != null && definition.location(payload.locationId) == null) {
+                    errors += EventRejection.UNKNOWN_LOCATION
+                }
+                // An observation is a record of something that happened, so it is
+                // always a change: re-witnessing the same thing at the same moment is
+                // folded into the existing record rather than refused, because refusing
+                // it would mean a character who watches something twice somehow
+                // witnessed it only once.
+                //
+                // The dedup key is spelled out here rather than by constructing an
+                // Observation, because constructing one runs its own precondition - and
+                // validation must not throw on malformed input, it must reject it.
+                val key = dev.charaly.runtime.domain.knowledge.Observation.dedupKey(
+                    description = payload.description,
+                    at = instance.worldClock.now,
+                    locationId = payload.locationId,
+                )
+                if (instance.knowledge.mind(payload.characterId).observations.any { it.dedupKey() == key }) {
+                    notes += "${payload.characterId.value} has already recorded this"
+                }
+            }
+
+            is BeliefFormed -> {
+                if (definition.character(payload.characterId) == null) errors += EventRejection.UNKNOWN_CHARACTER
+                if (payload.subject.isBlank() || payload.claim.isBlank()) errors += EventRejection.EMPTY_CHANGE
+                if (payload.confidence !in 0..100) errors += EventRejection.INCONSISTENT_TIME
+                val existing = instance.knowledge.mind(payload.characterId).beliefAbout(payload.subject)
+                if (existing != null && existing.claim.equals(payload.claim, ignoreCase = true) &&
+                    existing.confidence == payload.confidence
+                ) {
+                    notes += "${payload.characterId.value} already believes exactly that"
+                    noOp = true
+                }
+            }
+
+            is SuspicionRaised -> {
+                if (definition.character(payload.characterId) == null) errors += EventRejection.UNKNOWN_CHARACTER
+                if (payload.subject.isBlank() || payload.claim.isBlank()) errors += EventRejection.EMPTY_CHANGE
+                if (payload.strength !in 0..100) errors += EventRejection.INCONSISTENT_TIME
+                val existing = instance.knowledge.mind(payload.characterId).suspicionAbout(payload.subject)
+                if (existing != null && existing.strength == payload.strength) {
+                    notes += "${payload.characterId.value} is already exactly this suspicious"
+                    noOp = true
+                }
+            }
+
+            is MisconceptionFormed -> {
+                if (definition.character(payload.characterId) == null) errors += EventRejection.UNKNOWN_CHARACTER
+                if (payload.subject.isBlank() || payload.claim.isBlank()) errors += EventRejection.EMPTY_CHANGE
+                // The truth is not optional. Without it this is not a recorded error but
+                // an unlabelable falsehood, which no later reveal could ever find.
+                if (payload.truth.isBlank()) errors += EventRejection.EMPTY_CHANGE
+                // A character cannot be wrong about something that is true.
+                if (payload.claim.trim().equals(payload.truth.trim(), ignoreCase = true)) {
+                    errors += EventRejection.EMPTY_CHANGE
+                }
+            }
+
+            is MisconceptionCorrected -> {
+                if (definition.character(payload.characterId) == null) errors += EventRejection.UNKNOWN_CHARACTER
+                if (payload.subject.isBlank()) errors += EventRejection.EMPTY_CHANGE
+                val mind = instance.knowledge.mind(payload.characterId)
+                // A correction is a no-op only when there is nothing to correct. An
+                // answer to a standing *suspicion* counts, because a character who was
+                // wondering whether the new student was hiding something has just been
+                // told, and refusing that would leave them wondering forever.
+                if (mind.misconceptionAbout(payload.subject) == null &&
+                    mind.suspicionAbout(payload.subject) == null
+                ) {
+                    notes += "${payload.characterId.value} held nothing to correct about ${payload.subject}"
+                    noOp = true
+                }
+            }
+
+            is MemoryUpdated -> {
+                val existing = instance.memories.byId(payload.memoryId)
+                if (existing == null) errors += EventRejection.UNKNOWN_MEMORY
+                if (payload.at.isBefore(instance.worldClock.now)) errors += EventRejection.TIME_NOT_MONOTONIC
+                if (existing != null && !existing.isCurrent) {
+                    notes += "memory ${payload.memoryId.value} is already history"
+                    noOp = true
+                }
+            }
         }
 
         return EventValidation(
@@ -685,6 +779,127 @@ class EventEngine(val definition: WorldDefinition) {
             is FactRevealed -> {
                 current = current.evolved(knowledge = current.knowledge.withFact(payload.fact))
                 changes += "fact ${payload.fact.id.value} added to world truth"
+            }
+
+            is CharacterObserved -> {
+                current = current.evolved(
+                    knowledge = current.knowledge.updateMind(payload.characterId) { mind ->
+                        mind.withObservation(
+                            dev.charaly.runtime.domain.knowledge.Observation(
+                                description = payload.description,
+                                at = current.worldClock.now,
+                                locationId = payload.locationId,
+                                witnesses = payload.witnesses,
+                                sourceEventId = scheduled.id,
+                            ),
+                        )
+                    },
+                )
+                changes += "${payload.characterId.value} observed '${payload.description}'"
+            }
+
+            is BeliefFormed -> {
+                current = current.evolved(
+                    knowledge = current.knowledge.updateMind(payload.characterId) { mind ->
+                        mind.withBelief(
+                            dev.charaly.runtime.domain.knowledge.Belief(
+                                subject = payload.subject,
+                                claim = payload.claim,
+                                confidence = payload.confidence.coerceIn(0, 100),
+                                at = current.worldClock.now,
+                                via = payload.via,
+                                locationId = payload.locationId,
+                            ),
+                        )
+                    },
+                )
+                changes += "${payload.characterId.value} believes '${payload.claim}' (${payload.confidence}%)"
+            }
+
+            is SuspicionRaised -> {
+                current = current.evolved(
+                    knowledge = current.knowledge.updateMind(payload.characterId) { mind ->
+                        mind.withSuspicion(
+                            dev.charaly.runtime.domain.knowledge.Suspicion(
+                                subject = payload.subject,
+                                claim = payload.claim,
+                                strength = payload.strength.coerceIn(0, 100),
+                                at = current.worldClock.now,
+                                via = payload.via,
+                            ),
+                        )
+                    },
+                )
+                changes += "${payload.characterId.value} suspects '${payload.claim}' (${payload.strength}%)"
+            }
+
+            is MisconceptionFormed -> {
+                current = current.evolved(
+                    knowledge = current.knowledge.updateMind(payload.characterId) { mind ->
+                        mind.withMisconception(
+                            dev.charaly.runtime.domain.knowledge.Misconception(
+                                subject = payload.subject,
+                                claim = payload.claim,
+                                truth = payload.truth,
+                                at = current.worldClock.now,
+                                via = payload.via,
+                            ),
+                        )
+                    },
+                )
+                changes += "${payload.characterId.value} is wrong about ${payload.subject} (in fact: ${payload.truth})"
+            }
+
+            is MisconceptionCorrected -> {
+                val mind = current.knowledge.mind(payload.characterId)
+                val misconception = mind.misconceptionAbout(payload.subject)
+                current = current.evolved(
+                    knowledge = current.knowledge.updateMind(payload.characterId) { existing ->
+                        var next = existing.copy(
+                            // Retire the error rather than editing it: the story having
+                            // held a false belief is itself information, and quietly
+                            // deleting it makes the correction look like nothing happened.
+                            misconceptions = existing.misconceptions
+                                .filterNot { it.subject.equals(payload.subject, ignoreCase = true) },
+                        )
+                        val corrected = payload.correctedBelief.ifBlank { misconception?.truth.orEmpty() }
+                        if (corrected.isNotBlank()) {
+                            next = next.withBelief(
+                                dev.charaly.runtime.domain.knowledge.Belief(
+                                    subject = payload.subject,
+                                    claim = corrected,
+                                    confidence = payload.confidence.coerceIn(0, 100),
+                                    at = current.worldClock.now,
+                                    via = payload.via,
+                                ),
+                            )
+                        }
+                        // A correction resolves whatever suspicion produced the error:
+                        // leaving it in place means the character is still wondering about
+                        // something the story has just answered for them.
+                        next = next.copy(
+                            suspicions = next.suspicions.filterNot {
+                                it.subject.equals(payload.subject, ignoreCase = true)
+                            },
+                        )
+                        next
+                    },
+                )
+                changes += "${payload.characterId.value}'s belief about ${payload.subject} is corrected"
+            }
+
+            is MemoryUpdated -> {
+                val existing = current.memories.byId(payload.memoryId)!!
+                current = current.evolved(
+                    memories = current.memories.update(payload.memoryId) {
+                        it.copy(
+                            accessCount = it.accessCount + 1,
+                            supersededBy = null,
+                            validUntil = null,
+                        )
+                    },
+                )
+                changes += "memory ${existing.id.value} refreshed${if (payload.reason.isBlank()) "" else " (${payload.reason})"}"
             }
         }
 

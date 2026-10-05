@@ -112,6 +112,15 @@ data class InitialKnowledge(
     val characterKnowledge: Map<CharacterId, List<String>> = emptyMap(),
     /** Ids of memories seeded into the instance (authored). */
     val authoredMemories: List<dev.charaly.runtime.domain.memory.Memory> = emptyList(),
+    /**
+     * What each character has observed, believes, suspects and is wrong about.
+     *
+     * Seeded alongside the facts rather than derived from them, because a character's
+     * starting position is not a set of true statements: it is what they have seen, the
+     * conclusions they have drawn, the questions they have not resolved, and - for most
+     * interesting characters - at least one thing they have simply got wrong.
+     */
+    val characterMinds: Map<CharacterId, dev.charaly.runtime.domain.knowledge.CharacterMind> = emptyMap(),
 )
 
 /**

@@ -72,6 +72,15 @@ data class KnowledgeStore(
     val truth: Map<FactId, Fact> = emptyMap(),
     /** What each character knows. */
     val knowledge: Map<CharacterId, List<KnowledgeEntry>> = emptyMap(),
+    /**
+     * What each character has established for themselves.
+     *
+     * Separate from [knowledge] on purpose: a fact is true in the world, whereas a
+     * character observing a room empty at midnight, forming a belief from it, or
+     * suspecting someone is a different kind of state with different rules. See
+     * [CharacterMind].
+     */
+    val minds: Map<CharacterId, CharacterMind> = emptyMap(),
 ) {
     val factCount: Int get() = truth.size
 
@@ -115,6 +124,42 @@ data class KnowledgeStore(
     /** Characters who know a given fact - used by the debug inspector. */
     fun knownBy(factId: FactId): List<CharacterId> =
         knowledge.entries.filter { (_, entries) -> entries.any { it.factId == factId } }.map { it.key }
+
+    // ------------------------------------------------------------------
+    // Minds: observation, belief, suspicion, error
+    // ------------------------------------------------------------------
+
+    /** A character's mind, or an empty one. Never null, so callers cannot skip a check. */
+    fun mind(characterId: CharacterId): CharacterMind =
+        minds[characterId] ?: CharacterMind.empty(characterId)
+
+    fun hasMind(characterId: CharacterId): Boolean = minds[characterId]?.isEmpty() == false
+
+    /** Everyone who holds some state about the world beyond bare facts. */
+    fun charactersWithMinds(): List<CharacterId> =
+        minds.filterValues { !it.isEmpty() }.keys.sortedBy { it.value }
+
+    /** Characters holding a wrong belief about a subject. For reveals and for health. */
+    fun mistakenAbout(subject: String): List<CharacterId> =
+        minds.filterValues { mind -> mind.misconceptionAbout(subject) != null }
+            .keys
+            .sortedBy { it.value }
+
+    fun withMind(mind: CharacterMind): KnowledgeStore =
+        copy(minds = minds + (mind.characterId to mind))
+
+    /**
+     * Applies a transformation to one character's mind, creating it if absent.
+     *
+     * The single write path. A direct `copy(minds = ...)` from outside would work too,
+     * which is exactly why this exists as the documented way in and the only one with a
+     * test on it.
+     */
+    fun updateMind(characterId: CharacterId, transform: (CharacterMind) -> CharacterMind): KnowledgeStore =
+        copy(minds = minds + (characterId to transform(mind(characterId))))
+
+    /** Forgets a character's entire mind, e.g. on a scripted amnesia event. */
+    fun clearMind(characterId: CharacterId): KnowledgeStore = copy(minds = minds - characterId)
 
     companion object {
         val EMPTY = KnowledgeStore()

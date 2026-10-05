@@ -21,10 +21,14 @@ import dev.charaly.runtime.domain.WorldClock
 import dev.charaly.runtime.domain.WorldDefinition
 import dev.charaly.runtime.domain.WorldState
 import dev.charaly.runtime.domain.WorldVariable
+import dev.charaly.runtime.domain.events.BeliefFormed
 import dev.charaly.runtime.domain.events.CharacterActivityChanged
 import dev.charaly.runtime.domain.events.CharacterMoved
+import dev.charaly.runtime.domain.events.CharacterObserved
 import dev.charaly.runtime.domain.events.EventOrigin
 import dev.charaly.runtime.domain.events.KnowledgeDiscovered
+import dev.charaly.runtime.domain.events.MisconceptionFormed
+import dev.charaly.runtime.domain.events.SuspicionRaised
 import dev.charaly.runtime.domain.events.WorldVariableSet
 import dev.charaly.runtime.domain.knowledge.KnowledgeStore
 import dev.charaly.runtime.domain.memory.MemoryStore
@@ -141,6 +145,67 @@ object StoryInstanceFactory {
                 instance = engine.applyImmediately(
                     instance,
                     KnowledgeDiscovered(characterId, factId, via = "story pack start"),
+                    EventOrigin.STORY_PACK,
+                ).applied()
+            }
+        }
+
+        // Seed minds through the engine rather than writing them straight into the
+        // store. An authored belief is still world state, and seeding it by direct
+        // assignment would mean the one thing that is supposed to make this engine
+        // trustworthy - everything arrives as a validated, replayable event - did not
+        // hold for a character's starting mind.
+        pack.initialKnowledge.characterMinds.forEach { (characterId, mind) ->
+            if (definition.character(characterId) == null) return@forEach
+            val via = "story pack start"
+            mind.observations.forEach { observation ->
+                instance = engine.applyImmediately(
+                    instance,
+                    CharacterObserved(
+                        characterId = characterId,
+                        description = observation.description,
+                        locationId = observation.locationId,
+                        witnesses = observation.witnesses,
+                    ),
+                    EventOrigin.STORY_PACK,
+                ).applied()
+            }
+            mind.beliefs.forEach { belief ->
+                instance = engine.applyImmediately(
+                    instance,
+                    BeliefFormed(
+                        characterId = characterId,
+                        subject = belief.subject,
+                        claim = belief.claim,
+                        confidence = belief.confidence,
+                        via = belief.via.ifBlank { via },
+                    ),
+                    EventOrigin.STORY_PACK,
+                ).applied()
+            }
+            mind.suspicions.forEach { suspicion ->
+                instance = engine.applyImmediately(
+                    instance,
+                    SuspicionRaised(
+                        characterId = characterId,
+                        subject = suspicion.subject,
+                        claim = suspicion.claim,
+                        strength = suspicion.strength,
+                        via = suspicion.via.ifBlank { via },
+                    ),
+                    EventOrigin.STORY_PACK,
+                ).applied()
+            }
+            mind.misconceptions.forEach { error ->
+                instance = engine.applyImmediately(
+                    instance,
+                    MisconceptionFormed(
+                        characterId = characterId,
+                        subject = error.subject,
+                        claim = error.claim,
+                        truth = error.truth,
+                        via = error.via.ifBlank { via },
+                    ),
                     EventOrigin.STORY_PACK,
                 ).applied()
             }

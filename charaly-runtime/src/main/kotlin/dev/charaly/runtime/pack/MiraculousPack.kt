@@ -62,6 +62,14 @@ object MiraculousPack {
      */
     const val MIN_NPCS = 8
 
+    /**
+     * How much of the cast must start with a written mind.
+     *
+     * Every lead plus every NPC you can actually have a conversation with. A world where
+     * only the protagonists have opinions is a chat app with scenery.
+     */
+    const val MIN_MIND_BEARERS = 14
+
     // Character ids
     private const val MARINETTE = "marinette"
     private const val ADRIEN = "adrien"
@@ -1827,6 +1835,283 @@ object MiraculousPack {
             PackAuthoring.knows(GABRIEL, F_AKUMA, F_AMOK, F_MUSEUM, F_GABRIEL_MOTIVE),
             PackAuthoring.knows(MARINETTE, F_SECOND_LADYBUG),
             PackAuthoring.knows(ADRIEN, F_MUSEUM),
+        ),
+        // ---- what everyone has worked out for themselves --------------------
+        //
+        // This is the section that makes the cast feel like people rather than
+        // definitions. Facts are what is *true*; these are what each character has
+        // seen, concluded, failed to conclude, and - in four cases - simply got
+        // wrong. Written by hand because a mind cannot be derived: only an author
+        // knows that Marinette has worked out the akuma come from grief, and only an
+        // author can decide that Alya has *not*.
+        minds = listOf(
+            PackAuthoring.mind(
+                MARINETTE,
+                observations = listOf(
+                    PackAuthoring.observed(MARINETTE, "an empty east wing with the display case already open", at = MUSEUM),
+                    PackAuthoring.observed(MARINETTE, "Nathalie at the west wing case, not the east one", at = MUSEUM),
+                    PackAuthoring.observed(MARINETTE, "Gabriel standing in the dark after the lights went off", at = MUSEUM),
+                ),
+                beliefs = listOf(
+                    PackAuthoring.believes(
+                        MARINETTE,
+                        "the akuma",
+                        "are made from one emotion at one moment, usually at night",
+                        confidence = 85,
+                        via = "watched them form more than once",
+                    ),
+                    PackAuthoring.believes(
+                        MARINETTE,
+                        "the thief",
+                        "was already inside, because nothing was forced",
+                        confidence = 70,
+                        via = "the case was open, not broken",
+                    ),
+                    PackAuthoring.believes(
+                        MARINETTE,
+                        "Nathalie",
+                        "was protecting someone, not the brooch",
+                        confidence = 45,
+                        via = "she was in the wrong wing and looked frightened",
+                    ),
+                ),
+                suspicions = listOf(
+                    PackAuthoring.suspects(
+                        MARINETTE,
+                        "the watch",
+                        "is reacting to something that is not in this room",
+                        strength = 65,
+                    ),
+                ),
+                // The load-bearing one. She is certain, and wrong, and the whole
+                // partner mystery is built on the fact that nobody corrects her.
+                misconceptions = listOf(
+                    PackAuthoring.misconception(
+                        MARINETTE,
+                        "the masked hero who fights with her",
+                        "is just a friend from another school who is very good at rooftops",
+                        truth = "is Adrien Agreste, who sits behind her in class",
+                    ),
+                ),
+            ),
+            PackAuthoring.mind(
+                ADRIEN,
+                observations = listOf(
+                    PackAuthoring.observed(ADRIEN, "his father come out of the east wing after hours", at = MUSEUM),
+                    PackAuthoring.observed(ADRIEN, "the akuma on the school roof, and no sign of how it got there", at = ROOFTOP),
+                ),
+                beliefs = listOf(
+                    PackAuthoring.believes(
+                        ADRIEN,
+                        "his father",
+                        "is genuinely trying to recover the Miraculous, and hiding why",
+                        confidence = 80,
+                    ),
+                    PackAuthoring.believes(
+                        ADRIEN,
+                        "the akuma",
+                        "come from whoever is holding the Miraculous at the time",
+                        confidence = 75,
+                    ),
+                ),
+                misconceptions = listOf(
+                    PackAuthoring.misconception(
+                        ADRIEN,
+                        "the girl he fights beside",
+                        "is someone he met once and has not identified",
+                        truth = "is Marinette Dupain-Cheng, two rows in front of him",
+                    ),
+                ),
+            ),
+            PackAuthoring.mind(
+                ALYA,
+                observations = listOf(
+                    PackAuthoring.observed(ALYA, "a roof open that should be locked, four nights running", at = ROOFTOP),
+                    PackAuthoring.observed(ALYA, "Nino unable to finish a sentence whenever Marinette walks past"),
+                ),
+                beliefs = listOf(
+                    PackAuthoring.believes(
+                        ALYA,
+                        "Marinette",
+                        "is keeping something enormous from everyone, and it is wearing her out",
+                        confidence = 95,
+                        via = "nobody cries at breakfast that often for nothing",
+                    ),
+                ),
+                suspicions = listOf(
+                    PackAuthoring.suspects(ALYA, "the rooftop figure", "is Marinette", strength = 70),
+                    PackAuthoring.suspects(ALYA, "Nathalie", "knows far more about the east wing than she says", strength = 65),
+                ),
+                misconceptions = listOf(
+                    PackAuthoring.misconception(
+                        ALYA,
+                        "Nino",
+                        "has been in love with her for months",
+                        truth = "has only just noticed her at all",
+                    ),
+                ),
+            ),
+            PackAuthoring.mind(
+                NINO,
+                observations = listOf(
+                    PackAuthoring.observed(NINO, "Marinette apologising to a statue as though it were a person"),
+                ),
+                beliefs = listOf(
+                    PackAuthoring.believes(NINO, "himself", "is better at talking to people when he is not trying", confidence = 60),
+                ),
+                suspicions = listOf(
+                    PackAuthoring.suspects(NINO, "the quiet girl", "is the bravest person he knows and nobody has noticed", strength = 80),
+                ),
+            ),
+            PackAuthoring.mind(
+                GABRIEL,
+                observations = listOf(
+                    PackAuthoring.observed(GABRIEL, "the east wing case opened with a key that exists", at = MUSEUM),
+                    PackAuthoring.observed(GABRIEL, "the watch on his desk go quiet the moment the akuma is destroyed"),
+                ),
+                beliefs = listOf(
+                    PackAuthoring.believes(GABRIEL, "the akuma", "are the only leverage anyone has ever let him have", confidence = 95),
+                    PackAuthoring.believes(GABRIEL, "his son", "is safer not knowing what this house is for", confidence = 70),
+                ),
+                suspicions = listOf(
+                    PackAuthoring.suspects(GABRIEL, "the pair of heroes", "are students, and neither of them goes home", strength = 75),
+                ),
+            ),
+            PackAuthoring.mind(
+                ANDRE,
+                observations = listOf(
+                    PackAuthoring.observed(ANDRE, "the same two figures on the roof past the west windows at eleven"),
+                    PackAuthoring.observed(ANDRE, "a black thing with a face, floating, and no one else in the street"),
+                ),
+                beliefs = listOf(
+                    PackAuthoring.believes(
+                        ANDRE,
+                        "whatever is happening on that roof",
+                        "is the business of people far younger and far braver than he is",
+                        confidence = 80,
+                    ),
+                    PackAuthoring.believes(ANDRE, "his regulars", "would help each other if it ever came to it", confidence = 85),
+                ),
+                suspicions = listOf(
+                    PackAuthoring.suspects(ANDRE, "the tall one", "is someone he has served a hundred times", strength = 55),
+                ),
+            ),
+            PackAuthoring.mind(
+                TEACHER_MME_ROSA,
+                beliefs = listOf(
+                    PackAuthoring.believes(
+                        TEACHER_MME_ROSA,
+                        "this class",
+                        "is the most argumentative and the least dishonest she has ever taught",
+                        confidence = 90,
+                    ),
+                ),
+                suspicions = listOf(
+                    PackAuthoring.suspects(TEACHER_MME_ROSA, "the principal", "is frightened of something above his rank", strength = 75),
+                    PackAuthoring.suspects(TEACHER_MME_ROSA, "the art room", "has been locked longer than any art room should be", strength = 60),
+                ),
+            ),
+            PackAuthoring.mind(
+                TEACHER_MR_KLEIN,
+                beliefs = listOf(
+                    PackAuthoring.believes(
+                        TEACHER_MR_KLEIN,
+                        "the watch",
+                        "is not a watch, and has never been",
+                        confidence = 70,
+                        via = "it does not lose eleven seconds a day, it loses them on purpose",
+                    ),
+                ),
+                suspicions = listOf(
+                    PackAuthoring.suspects(TEACHER_MR_KLEIN, "the science club", "has an attendance problem only after dark", strength = 50),
+                ),
+            ),
+            PackAuthoring.mind(
+                RECEPTIONIST,
+                beliefs = listOf(
+                    PackAuthoring.believes(RECEPTIONIST, "the school", "runs on the post, not on the timetable", confidence = 95),
+                ),
+                suspicions = listOf(
+                    PackAuthoring.suspects(RECEPTIONIST, "the letters from the Agreste office", "are opened before they reach him", strength = 85),
+                ),
+            ),
+            PackAuthoring.mind(
+                CARETAKER,
+                beliefs = listOf(
+                    PackAuthoring.believes(CARETAKER, "the gates", "are the only honest thing about this building", confidence = 80),
+                ),
+                suspicions = listOf(
+                    PackAuthoring.suspects(CARETAKER, "the roof door", "is being used by people who do not sign out", strength = 90),
+                ),
+            ),
+            PackAuthoring.mind(
+                MUSEUM_GUIDE,
+                observations = listOf(
+                    PackAuthoring.observed(MUSEUM_GUIDE, "the east wing inventory missing a brooch that is still in the case", at = MUSEUM),
+                    PackAuthoring.observed(MUSEUM_GUIDE, "the catalogue listing the brooch twice, on two different pages", at = MUSEUM),
+                ),
+                beliefs = listOf(
+                    PackAuthoring.believes(MUSEUM_GUIDE, "the catalogue", "has been altered by someone with a key", confidence = 85),
+                ),
+                suspicions = listOf(
+                    PackAuthoring.suspects(MUSEUM_GUIDE, "his employer", "knows what was taken and when", strength = 80),
+                ),
+            ),
+            PackAuthoring.mind(
+                POLICE_OFFICER,
+                beliefs = listOf(
+                    PackAuthoring.believes(POLICE_OFFICER, "this arrondissement", "has more disappearances than the reports admit", confidence = 75),
+                ),
+                suspicions = listOf(
+                    PackAuthoring.suspects(POLICE_OFFICER, "his own station", "is filing these under accidents", strength = 70),
+                ),
+            ),
+            PackAuthoring.mind(
+                CAFE_OWNER,
+                beliefs = listOf(
+                    PackAuthoring.believes(CAFE_OWNER, "her regulars", "tell her everything at least once a week", confidence = 90),
+                ),
+                suspicions = listOf(
+                    PackAuthoring.suspects(CAFE_OWNER, "the quiet boy", "pays in coins and never stays after seven", strength = 45),
+                ),
+            ),
+            PackAuthoring.mind(
+                LADYBUG,
+                beliefs = listOf(
+                    PackAuthoring.believes(
+                        LADYBUG,
+                        "the yo-yo",
+                        "never breaks, which means someone is looking after it",
+                        confidence = 90,
+                    ),
+                    PackAuthoring.believes(
+                        LADYBUG,
+                        "Cat Noir",
+                        "is the best partner she could possibly have, and reckless beyond reason",
+                        confidence = 95,
+                    ),
+                ),
+                suspicions = listOf(
+                    PackAuthoring.suspects(LADYBUG, "the watch", "is telling her there is another one of her somewhere", strength = 60),
+                ),
+                misconceptions = listOf(
+                    PackAuthoring.misconception(
+                        LADYBUG,
+                        "Cat Noir",
+                        "has no idea who she is either, and never wants to know",
+                        truth = "is Adrien Agreste, who has known for some time",
+                    ),
+                ),
+            ),
+            PackAuthoring.mind(
+                CATNOIR,
+                beliefs = listOf(
+                    PackAuthoring.believes(CATNOIR, "himself", "is the funny one, and that is a job", confidence = 85),
+                ),
+                suspicions = listOf(
+                    PackAuthoring.suspects(CATNOIR, "the villain", "is doing this on purpose to somebody specific", strength = 65),
+                ),
+            ),
         ),
         threads = listOf(
             PackAuthoring.thread(

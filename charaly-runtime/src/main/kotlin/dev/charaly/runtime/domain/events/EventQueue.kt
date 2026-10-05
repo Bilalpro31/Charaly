@@ -56,6 +56,16 @@ data class EventQueue(
                 is MemoryCreated -> p.memory.characterId == characterId
                 is RelationshipChanged -> p.sourceId == characterId || p.targetId == characterId
                 is SceneStarted -> characterId in p.participants
+                // Mind events are about one character, so "what is pending for this
+                // character" has to include them. Falling through to `else -> false`
+                // would silently hide every pending belief and observation from the
+                // inspector, which is the one place they need to be visible.
+                is CharacterObserved -> p.characterId == characterId
+                is BeliefFormed -> p.characterId == characterId
+                is SuspicionRaised -> p.characterId == characterId
+                is MisconceptionFormed -> p.characterId == characterId
+                is MisconceptionCorrected -> p.characterId == characterId
+                is MemoryUpdated -> false
                 else -> false
             }
         }

@@ -241,6 +241,17 @@ class ContextBudgetInspector(
                 dropped = 0,
             ),
             ContextSection(
+                id = "mind",
+                title = "What you have worked out",
+                priority = 6,
+                // Rendered exactly as it reaches the model, including the "believes
+                // (wrongly)" wording. Showing it here in a tidier form than the model
+                // receives would defeat the point of an inspector.
+                rendered = context.mind?.promptLines()?.joinToString("\n") { "- $it" }.orEmpty(),
+                itemCount = context.mind?.size ?: 0,
+                dropped = 0,
+            ),
+            ContextSection(
                 id = "threads",
                 title = "Active threads",
                 priority = 7,

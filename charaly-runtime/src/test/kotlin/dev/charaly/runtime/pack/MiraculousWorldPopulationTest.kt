@@ -134,6 +134,103 @@ class MiraculousWorldPopulationTest {
         }
     }
 
+    // ---- minds ------------------------------------------------------------
+
+    @Test
+    fun `most of the cast starts with something they have worked out`() {
+        // Facts are what is true. A mind is what a character has seen, concluded,
+        // failed to conclude, and - the interesting part - got wrong. A cast of
+        // definitions with no minds behind them is a cast of vending machines.
+        val story = StoryInstanceFactory.create(
+            pack,
+            StoryCreationOptions(
+                instanceId = StoryInstanceId("story-minds"),
+                title = "Minds",
+                scenario = pack.defaultScenario(),
+                focusCharacterId = CharacterId("marinette"),
+                castCharacterIds = listOf(CharacterId("marinette")),
+                nowEpochMs = 1_700_000_000_000L,
+            ),
+        )
+        val withMinds = story.knowledge.charactersWithMinds()
+        assertTrue(
+            "expected a substantial cast with minds, found ${withMinds.size}: $withMinds",
+            withMinds.size >= MiraculousPack.MIN_MIND_BEARERS,
+        )
+    }
+
+    @Test
+    fun `somebody is wrong about something, and the truth is recorded`() {
+        // Without this the pack has no reveal available to it at all.
+        val story = StoryInstanceFactory.create(
+            pack,
+            StoryCreationOptions(
+                instanceId = StoryInstanceId("story-wrong"),
+                title = "Wrong",
+                scenario = pack.defaultScenario(),
+                focusCharacterId = CharacterId("marinette"),
+                castCharacterIds = listOf(CharacterId("marinette")),
+                nowEpochMs = 1_700_000_000_000L,
+            ),
+        )
+        val mistaken = story.knowledge.minds
+            .filterValues { it.misconceptions.isNotEmpty() }
+            .flatMap { (owner, mind) -> mind.misconceptions.map { owner to it } }
+
+        assertTrue("at least one character must hold a wrong belief", mistaken.isNotEmpty())
+        mistaken.forEach { (owner, error) ->
+            assertTrue(
+                "${owner.value}'s error about ${error.subject} must record the truth",
+                error.truth.isNotBlank(),
+            )
+            assertFalse(
+                "${owner.value} cannot be wrong about something that is true",
+                error.claim.trim().equals(error.truth.trim(), ignoreCase = true),
+            )
+        }
+    }
+
+    @Test
+    fun `minds are seeded through validated events, not written directly`() {
+        val story = StoryInstanceFactory.create(
+            pack,
+            StoryCreationOptions(
+                instanceId = StoryInstanceId("story-events"),
+                title = "Events",
+                scenario = pack.defaultScenario(),
+                focusCharacterId = CharacterId("marinette"),
+                castCharacterIds = listOf(CharacterId("marinette")),
+                nowEpochMs = 1_700_000_000_000L,
+            ),
+        )
+        // Every authored belief should be traceable in the event log, exactly as every
+        // authored fact is. State that appears without an event is the thing this whole
+        // engine is built to prevent, and it would be no exemption for starting minds.
+        assertTrue(
+            "authored minds must leave a trail of events",
+            story.worldState.eventLog.size > story.knowledge.factCount,
+        )
+    }
+
+    @Test
+    fun `an npc has a mind too, not only the leads`() {
+        val story = StoryInstanceFactory.create(
+            pack,
+            StoryCreationOptions(
+                instanceId = StoryInstanceId("story-npc-mind"),
+                title = "NPC minds",
+                scenario = pack.defaultScenario(),
+                focusCharacterId = CharacterId("marinette"),
+                castCharacterIds = listOf(CharacterId("marinette")),
+                nowEpochMs = 1_700_000_000_000L,
+            ),
+        )
+        // The whole point of a populated world: Andre works things out too.
+        val andreMind = story.knowledge.mind(CharacterId("andre"))
+        assertFalse("Andre must have observed something", andreMind.observations.isEmpty())
+        assertFalse("Andre must have drawn a conclusion", andreMind.beliefs.isEmpty())
+    }
+
     // ---- locations ------------------------------------------------------
 
     @Test

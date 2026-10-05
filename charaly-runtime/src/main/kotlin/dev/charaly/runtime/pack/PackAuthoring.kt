@@ -627,6 +627,94 @@ object PackAuthoring {
             relatedLocationId = at?.let(::LocationId),
         )
 
+    // ---- minds: what a character has worked out for themselves -------------
+    //
+    // Read like a script supervisor's notes rather than a character sheet. The
+    // distinction that makes this worth writing down is between the three kinds:
+    //
+    //  * `saw` - witnessed, so it survives them being wrong about what it meant
+    //  * `believes` - a conclusion, with how firmly they hold it
+    //  * `suspects` - undecided, and therefore the most interesting thing to give a
+    //    model, because a character who acts on a suspicion asks a question
+    //
+    // `misconception` is the fourth and the sharpest: a claim the character is *wrong*
+    // about, with the truth recorded alongside. That is what makes a reveal an event
+    // rather than a hope.
+
+    fun observed(
+        character: String,
+        description: String,
+        at: String? = null,
+        with: List<String> = emptyList(),
+    ): dev.charaly.runtime.domain.knowledge.Observation =
+        dev.charaly.runtime.domain.knowledge.Observation(
+            description = description,
+            at = StoryTime.START,
+            locationId = at?.let(::LocationId),
+            witnesses = with.map(::CharacterId),
+        )
+
+    fun believes(
+        character: String,
+        subject: String,
+        claim: String,
+        confidence: Int = 80,
+        via: String = "",
+    ): dev.charaly.runtime.domain.knowledge.Belief =
+        dev.charaly.runtime.domain.knowledge.Belief(
+            subject = subject,
+            claim = claim,
+            confidence = confidence,
+            at = StoryTime.START,
+            via = via,
+        )
+
+    fun suspects(
+        character: String,
+        subject: String,
+        claim: String,
+        strength: Int = 60,
+        via: String = "",
+    ): dev.charaly.runtime.domain.knowledge.Suspicion =
+        dev.charaly.runtime.domain.knowledge.Suspicion(
+            subject = subject,
+            claim = claim,
+            strength = strength,
+            at = StoryTime.START,
+            via = via,
+        )
+
+    fun misconception(
+        character: String,
+        subject: String,
+        claim: String,
+        truth: String,
+        via: String = "",
+    ): dev.charaly.runtime.domain.knowledge.Misconception =
+        dev.charaly.runtime.domain.knowledge.Misconception(
+            subject = subject,
+            claim = claim,
+            truth = truth,
+            at = StoryTime.START,
+            via = via,
+        )
+
+    /** A character's starting mind, for [pack]'s `minds` argument. */
+    fun mind(
+        character: String,
+        observations: List<dev.charaly.runtime.domain.knowledge.Observation> = emptyList(),
+        beliefs: List<dev.charaly.runtime.domain.knowledge.Belief> = emptyList(),
+        suspicions: List<dev.charaly.runtime.domain.knowledge.Suspicion> = emptyList(),
+        misconceptions: List<dev.charaly.runtime.domain.knowledge.Misconception> = emptyList(),
+    ): dev.charaly.runtime.domain.knowledge.CharacterMind =
+        dev.charaly.runtime.domain.knowledge.CharacterMind(
+            characterId = CharacterId(character),
+            observations = observations,
+            beliefs = beliefs,
+            suspicions = suspicions,
+            misconceptions = misconceptions,
+        )
+
     // ---- pack assembly ---------------------------------------------------
 
     /**
@@ -657,6 +745,7 @@ object PackAuthoring {
         relationships: List<Relationship> = emptyList(),
         facts: List<Fact> = emptyList(),
         characterKnowledge: List<Pair<String, List<String>>> = emptyList(),
+        minds: List<dev.charaly.runtime.domain.knowledge.CharacterMind> = emptyList(),
         threads: List<StoryThread> = emptyList(),
         authoredMemories: List<Memory> = emptyList(),
         defaultModelProfileId: String = "",
@@ -718,6 +807,18 @@ object PackAuthoring {
             requireCharacter(character, "character knowledge")
             granted.forEach { factId ->
                 require(factId in factIds) { "[$id] grants unknown fact '$factId' to $character" }
+            }
+        }
+        val mindOwners = minds.map { it.characterId.value }.toSet()
+        require(mindOwners.size == minds.size) { "[$id] declares two minds for the same character" }
+        minds.forEach { mind ->
+            requireCharacter(mind.characterId.value, "character mind")
+            mind.observations.forEach { observation ->
+                requireLocation(observation.locationId?.value, "observation by ${mind.characterId.value}")
+                observation.witnesses.forEach { requireCharacter(it.value, "observation witness") }
+            }
+            mind.beliefs.forEach { belief ->
+                requireLocation(belief.locationId?.value, "belief by ${mind.characterId.value}")
             }
         }
         threads.forEach { thread ->
@@ -857,6 +958,7 @@ object PackAuthoring {
                 facts = facts,
                 characterKnowledge = characterKnowledge.toMap().mapKeys { CharacterId(it.key) }
                     .mapValues { it.value },
+                characterMinds = minds.associateBy { it.characterId },
             ),
             initialStoryThreads = threads,
             tags = identity.genres,

@@ -64,6 +64,10 @@ class ContextBuilder(
             recentTranscript = transcript,
             userInput = userInput,
             worldFacts = observableVariables(instance, scene.locationId),
+            // Read for this character only. There is no bulk accessor on the store
+            // that returns everyone's minds, so getting this wrong requires going out
+            // of the store's way on purpose.
+            mind = instance.knowledge.mind(characterId).takeIf { !it.isEmpty() },
         )
     }
 

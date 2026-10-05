@@ -275,11 +275,123 @@ data class WorldVariableSet(
 }
 
 /** Explicitly registers a new fact in world truth (does not teach it to anyone). */
-/** Explicitly registers a new fact in world truth (teaches it to nobody). */
 @Serializable
 @SerialName("FactRevealed")
 data class FactRevealed(
     val fact: dev.charaly.runtime.domain.knowledge.Fact,
 ) : EventPayload {
     override val summary: String get() = "fact ${fact.id.value} becomes part of world truth"
+}
+
+// ---------------------------------------------------------------------------
+// Character minds: observation, belief, suspicion, error
+//
+// Four distinct payloads rather than one "Learned" event because the four behave
+// differently, and one of them - a misconception - can only exist alongside a truth.
+// ---------------------------------------------------------------------------
+
+/**
+ * A character witnessed something.
+ *
+ * An observation is a record of a thing that happened, not a conclusion drawn from it.
+ * Keeping them apart is what lets a character see an empty museum and still be wrong
+ * about what it meant.
+ */
+@Serializable
+@SerialName("CharacterObserved")
+data class CharacterObserved(
+    val characterId: CharacterId,
+    val description: String,
+    val locationId: LocationId? = null,
+    val witnesses: List<CharacterId> = emptyList(),
+) : EventPayload {
+    override val summary: String
+        get() = "${characterId.value} observes: $description"
+}
+
+/** A character came to hold a claim, with how firmly. */
+@Serializable
+@SerialName("BeliefFormed")
+data class BeliefFormed(
+    val characterId: CharacterId,
+    val subject: String,
+    val claim: String,
+    val confidence: Int = 100,
+    val via: String = "",
+    val locationId: LocationId? = null,
+) : EventPayload {
+    override val summary: String
+        get() = "${characterId.value} believes ($confidence%) that $subject $claim"
+}
+
+/** A character became suspicious of something they cannot dismiss. */
+@Serializable
+@SerialName("SuspicionRaised")
+data class SuspicionRaised(
+    val characterId: CharacterId,
+    val subject: String,
+    val claim: String,
+    val strength: Int = 50,
+    val via: String = "",
+) : EventPayload {
+    override val summary: String
+        get() = "${characterId.value} suspects ($strength%) that $subject $claim"
+}
+
+/**
+ * A character came to hold a claim that is not true.
+ *
+ * [truth] is required, not optional, because a misconception without the truth attached
+ * is a bug the engine cannot detect: nothing else records what is actually so, so a
+ * reveal could not find it later.
+ */
+@Serializable
+@SerialName("MisconceptionFormed")
+data class MisconceptionFormed(
+    val characterId: CharacterId,
+    val subject: String,
+    val claim: String,
+    val truth: String,
+    val via: String = "",
+) : EventPayload {
+    override val summary: String
+        get() = "${characterId.value} believes wrongly that $subject $claim (in fact: $truth)"
+}
+
+/**
+ * A character's wrong belief was corrected.
+ *
+ * A separate event rather than "remove the misconception", because a reveal is the most
+ * interesting thing that can happen to a mind: the engine has to retire the false belief
+ * *and* leave behind the fact that the character now knows differently, or the
+ * correction is invisible in the prompt.
+ */
+@Serializable
+@SerialName("MisconceptionCorrected")
+data class MisconceptionCorrected(
+    val characterId: CharacterId,
+    val subject: String,
+    /** What the character was wrongly sure of. */
+    val wrongClaim: String = "",
+    /** What they now hold instead. */
+    val correctedBelief: String = "",
+    val confidence: Int = 100,
+    val via: String = "",
+) : EventPayload {
+    override val summary: String
+        get() = "${characterId.value}'s belief about $subject is corrected"
+}
+
+/** Someone told a character something they already knew. A no-op, deliberately. */
+@Serializable
+@SerialName("MemoryUpdated")
+data class MemoryUpdated(
+    val memoryId: MemoryId,
+    /** Why it changed, for the audit trail. */
+    val reason: String = "",
+    /** Story time the update takes effect. */
+    val at: StoryTime = StoryTime.START,
+) : EventPayload {
+    override val summary: String
+        get() = "memory ${memoryId.value} is updated${if (reason.isBlank()) "" else " ($reason)"}"
 }

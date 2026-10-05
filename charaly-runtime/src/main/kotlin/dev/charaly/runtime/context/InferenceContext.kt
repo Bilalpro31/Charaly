@@ -29,6 +29,16 @@ data class InferenceContext(
     val recentTranscript: List<TranscriptEntry> = emptyList(),
     val userInput: String = "",
     val worldFacts: Map<String, String> = emptyMap(),
+    /**
+     * What this character has observed, believes and suspects - including what they
+     * are wrong about.
+     *
+     * Owned by the knowledge store and reachable only for [runtime]'s own character,
+     * so putting it here cannot leak one character's mind into another's prompt. It is
+     * what makes a character able to be *wrong*: facts alone give a model either
+     * knowledge or silence, and silence is not an interesting thing to act on.
+     */
+    val mind: dev.charaly.runtime.domain.knowledge.CharacterMind? = null,
 ) {
     /**
      * Approximate context cost. Deliberately a character-count estimate: mobile
@@ -89,6 +99,17 @@ data class InferenceContext(
                 val name = otherName(rel)
                 appendLine("- $name: ${rel.describe(runtime.characterId)}")
             }
+        }
+        val mindLines = mind?.promptLines().orEmpty()
+        if (mindLines.isNotEmpty()) {
+            appendLine()
+            appendLine("WHAT YOU HAVE SEEN AND WORKED OUT")
+            mindLines.forEach { appendLine("- $it") }
+            // The instruction matters as much as the data. Without it a model reads
+            // "believes (wrongly)" and simply corrects itself mid-answer, which quietly
+            // destroys the entire point of holding a misconception.
+            appendLine()
+            appendLine("Act on these as your own. Do not correct them, and do not learn anything from them.")
         }
         appendLine()
         appendLine("RIGHT NOW")

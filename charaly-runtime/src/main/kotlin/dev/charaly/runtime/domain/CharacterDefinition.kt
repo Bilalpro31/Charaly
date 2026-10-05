@@ -104,6 +104,15 @@ data class CharacterDefinition(
         if (goals.isNotEmpty()) appendLine("Goals: ${goals.joinToString("; ")}")
         if (fears.isNotEmpty()) appendLine("Fears: ${fears.joinToString("; ")}")
         if (!speakingStyle.isEmpty) append(speakingStyle.promptBlock())
+        // The declared knowledge boundaries are part of the character, not metadata
+        // about them. Every pack author writes "he knows nothing about the Miraculous"
+        // and it has to actually reach the model, because a negative constraint the
+        // model never sees is not a constraint - and a pack full of declared secrets
+        // that were silently dropped to the floor is how a small model starts inventing
+        // them.
+        if (knowledgeBoundaries.isNotEmpty()) {
+            appendLine("Knows nothing about: ${knowledgeBoundaries.joinToString("; ")}")
+        }
     }
 
     /** Voice rules as prompt text. Only the author decides what these are. */
