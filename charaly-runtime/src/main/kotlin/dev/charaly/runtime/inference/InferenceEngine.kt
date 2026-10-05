@@ -74,6 +74,7 @@ data class GenerationParams(
     val temperature: Float = 0.8f,
     val topP: Float = 0.95f,
     val topK: Int = 40,
+    val minP: Float = 0.05f,
     val repeatPenalty: Float = 1.1f,
     val seed: Long = -1L,
     val stopSequences: List<String> = emptyList(),

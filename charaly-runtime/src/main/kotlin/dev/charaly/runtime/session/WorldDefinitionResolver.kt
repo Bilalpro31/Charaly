@@ -32,6 +32,17 @@ class WorldDefinitionResolver(
     fun forPack(pack: StoryPack): WorldDefinition =
         WorldDefinition(pack.characters, pack.locations).also { cache[pack.id] = it }
 
+    /**
+     * Non-suspend peek at the same cache.
+     *
+     * Used by read-only diagnostics (the developer panel), which must never trigger
+     * storage IO. Falls back to a runtime-derived definition, exactly like the
+     * suspending path.
+     */
+    fun peek(instance: StoryInstance): WorldDefinition =
+        cache[instance.storyPackId]
+            ?: fallback(instance).also { cache[instance.storyPackId] = it }
+
     fun invalidate(packId: StoryPackId) {
         cache.remove(packId)
     }

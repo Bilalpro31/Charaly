@@ -31,6 +31,15 @@ set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
 set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
+# 32-bit armeabi-v7a: llama.cpp's llamafile sgemm uses ARM fp16 vector
+# intrinsics (vld1q_f16) that clang only declares for AArch64, so the file
+# cannot be compiled for this ABI. Turning the optimisation off keeps the ABI
+# in the APK; ggml then uses its generic GEMM path, which is correct on every
+# ABI. arm64-v8a keeps the full llamafile path.
+if(ANDROID AND ANDROID_ABI STREQUAL "armeabi-v7a")
+    set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)
+endif()
+
 add_subdirectory("${LLAMA_CPP_DIR}" llama.cpp EXCLUDE_FROM_ALL)
 
 add_library(charaly_llama SHARED charaly_jni.cpp)

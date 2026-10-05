@@ -165,24 +165,50 @@ class ActionValidator(
     }
 
     private fun parseDelta(raw: String): dev.charaly.runtime.domain.RelationshipDelta {
-        // Accepts "trust+5,affinity+10" or a plain "5".
-        val deltas = dev.charaly.runtime.domain.RelationshipDelta()
+        // Accepts "trust:5,affinity:10", "trust+5,affinity+10", or a bare "5" meaning
+        // affinity. Small models produce all three shapes, so all three are read
+        // rather than insisting on one and silently dropping the others.
         var trust = 0
         var familiarity = 0
         var affinity = 0
+        var tension = 0
+        var respect = 0
+        var fear = 0
+        var dependency = 0
         raw.split(',').forEach { part ->
-            val (key, value) = part.split(':', limit = 2).let {
-                if (it.size == 2) it[0].trim().lowercase() to it[1].trim()
-                else "affinity" to part.trim()
+            val cleaned = part.trim()
+            if (cleaned.isEmpty()) return@forEach
+            // Split on the first ':' or '+'/'-', whichever comes first.
+            val separatorIndex = cleaned.indexOfFirst { it == ':' || it == '+' || (it == '-' && cleaned.startsWith("-")) }
+            val key: String
+            val rawValue: String
+            if (separatorIndex > 0) {
+                key = cleaned.take(separatorIndex).trim().lowercase()
+                rawValue = cleaned.drop(separatorIndex).trim().removePrefix(":")
+            } else {
+                key = "affinity"
+                rawValue = cleaned
             }
-            val delta = value.toIntOrNull() ?: return@forEach
+            val delta = rawValue.toIntOrNull() ?: return@forEach
             when (key) {
                 "trust" -> trust += delta
                 "familiarity" -> familiarity += delta
                 "affinity" -> affinity += delta
+                "tension" -> tension += delta
+                "respect" -> respect += delta
+                "fear" -> fear += delta
+                "dependency" -> dependency += delta
             }
         }
-        return deltas.copy(trust = trust, familiarity = familiarity, affinity = affinity)
+        return dev.charaly.runtime.domain.RelationshipDelta(
+            trust = trust,
+            familiarity = familiarity,
+            affinity = affinity,
+            tension = tension,
+            respect = respect,
+            fear = fear,
+            dependency = dependency,
+        )
     }
 
     private fun String.toRelationshipTypeOrNull(): dev.charaly.runtime.domain.RelationshipType? =

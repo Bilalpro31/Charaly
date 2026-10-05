@@ -17,6 +17,24 @@ data class CharacterRuntime(
     val name: String,
     val locationId: LocationId? = null,
     val activity: CharacterActivity = CharacterActivity.IDLE,
+    /**
+     * Display wording for [activity], e.g. "serving customers".
+     *
+     * Presentation only - the engine never reads it. It exists so a character profile
+     * can answer "what is he doing?" in the world's language instead of printing an
+     * enum constant.
+     */
+    val activityLabel: String = "",
+    /**
+     * The routine entry (minutes-of-day) this character last followed, or -1 when
+     * they have never been placed by their schedule.
+     *
+     * This is what makes a routine a *default* rather than a leash: the engine only
+     * re-places a character when their schedule actually moves on to the next entry.
+     * A story event that deliberately puts someone somewhere off-routine is therefore
+     * respected until the next entry boundary, instead of being undone on every tick.
+     */
+    val routineEntryMinute: Int = -1,
     val mood: String = "",
     val activeGoals: List<String> = emptyList(),
     val sceneIds: List<SceneId> = emptyList(),

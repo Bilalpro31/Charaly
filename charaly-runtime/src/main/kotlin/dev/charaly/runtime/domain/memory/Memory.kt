@@ -1,19 +1,155 @@
 package dev.charaly.runtime.domain.memory
 
 import dev.charaly.runtime.domain.CharacterId
+import dev.charaly.runtime.domain.EventId
 import dev.charaly.runtime.domain.FactId
 import dev.charaly.runtime.domain.LocationId
 import dev.charaly.runtime.domain.MemoryId
 import dev.charaly.runtime.domain.StoryTime
+import dev.charaly.runtime.domain.ThreadId
 import kotlinx.serialization.Serializable
 
 /**
- * A persistent memory owned by one character.
+ * Who a memory belongs to in the hierarchy of knowledge.
  *
- * Structured and explicit at MVP level. No embeddings: retrieval is importance +
- * recency + explicit scene/character filters, which is deterministic and
- * testable. If embeddings are ever added they belong *here* (behind
- * [MemoryStore]) and must not change the ownership rules.
+ * Charaly's memory is layered, not a flat list of the last N messages. Each tier
+ * answers a different question and has a different lifetime:
+ *
+ * ```
+ *  WORKING      the scene in progress.        minutes.  dies with the scene.
+ *  SCENE        what happened in one scene.   hours.    the summary.
+ *  EPISODIC     a specific thing that happened. days.   "the player found my notebook".
+ *  CANON        a stable fact about the world. permanent. "Andre runs the shop".
+ *  RELATIONSHIP what one character knows about another. permanent.
+ * ```
+ *
+ * The tier is assigned deterministically by the runtime. The model may *propose*
+ * content, but it never decides what tier something becomes or whether it survives
+ * consolidation - otherwise a hallucination could quietly promote itself to canon.
+ */
+@Serializable
+enum class MemoryTier {
+    /** Immediate context for the scene being generated. */
+    WORKING,
+
+    /** The durable summary of one completed scene. */
+    SCENE,
+
+    /** A specific past event, with a time and a place. */
+    EPISODIC,
+
+    /**
+     * A distilled fact that no longer belongs to one moment.
+     *
+     * Distinct from [CANON] because a semantic memory is still *this character's*
+     * understanding - they may be wrong - whereas canon is what the world actually
+     * holds. Collapsing the two is how a character's mistake becomes permanent truth.
+     */
+    SEMANTIC,
+
+    /** Authoritative world truth. Merged and superseded rather than accumulated. */
+    CANON,
+
+    /** Character-specific history: "the player has bought ice cream three times". */
+    RELATIONSHIP,
+
+    /**
+     * Something this character learned about *someone*.
+     *
+     * Character-scoped by construction: a [CHARACTER] memory about Ladybug's identity
+     * is retrievable by its owner and nobody else, which is the same rule
+     * [MemoryVisibility] enforces. The tier records the *kind* of claim; visibility
+     * decides who may read it.
+     */
+    CHARACTER,
+
+    /** Something about the world as such: "the museum wing closed in March". */
+    WORLD,
+
+    /** Progress and state of one [dev.charaly.runtime.domain.StoryThread]. */
+    THREAD,
+
+    /** A secret. Always paired with a restrictive visibility. */
+    SECRET,
+
+    /** A commitment made by someone, still outstanding. */
+    PROMISE,
+
+    /** An objective someone is currently pursuing. */
+    GOAL,
+
+    /** A decision the player made that will have an effect later. */
+    CONSEQUENCE,
+    ;
+
+    /** Whether memories in this tier are expected to be kept indefinitely. */
+    val isDurable: Boolean
+        get() = this == CANON || this == RELATIONSHIP || this == CHARACTER ||
+            this == THREAD || this == PROMISE || this == GOAL
+
+    /**
+     * Whether this tier describes something the character believes rather than
+     * something the world asserts.
+     *
+     * Only [CANON] and [WORLD] are authoritative; everything else is one character's
+     * understanding and may be mistaken. Presentation uses this to phrase a memory
+     * as belief rather than fact.
+     */
+    val isSubjective: Boolean
+        get() = this != CANON && this != WORLD
+
+    /** Tiers that are only worth keeping while the scene they belong to is live. */
+    val isEphemeral: Boolean get() = this == WORKING || this == SCENE
+}
+
+/**
+ * Who may retrieve a memory.
+ *
+ * This is the single most important field in the memory system: it is what stops a
+ * secret told to one character from surfacing in another character's prompt.
+ *
+ * Ownership alone is not enough, because the player is not a character and must be
+ * able to see things no character knows. So visibility is stated explicitly and
+ * checked explicitly, rather than inferred.
+ */
+@Serializable
+enum class MemoryVisibility {
+    /**
+     * Anyone at all. Only for things that are simply true and public - the shop
+     * exists, the school is closed on Sundays.
+     */
+    WORLD,
+
+    /** The owner, plus anyone named in `visibleTo`. */
+    CHARACTER,
+
+    /** The player, plus anyone named in `visibleTo`. */
+    PLAYER,
+
+    /**
+     * The owner and explicitly named characters only.
+     *
+     * Behaves like [CHARACTER] for retrieval, but additionally guarantees the memory
+     * is never surfaced as ambient world colour, however relevant it looks.
+     */
+    SECRET,
+
+    /** The owner alone. Nothing can widen this. */
+    PRIVATE,
+    ;
+
+    /** Whether this visibility may ever be granted to a third party. */
+    val isGrantable: Boolean get() = this != PRIVATE
+}
+
+/**
+ * A persistent memory owned by one character (or by the player).
+ *
+ * Retrieval is importance + recency + explicit scene/character filters, all
+ * deterministic and testable with no device, no embeddings and no network. If
+ * vector embeddings are ever added they belong behind [MemoryStore] and must not
+ * change the ownership or visibility rules - those are what make knowledge boundaries
+ * *provable* rather than statistically guessed.
  */
 @Serializable
 data class Memory(
@@ -28,10 +164,125 @@ data class Memory(
     val relatedLocationId: LocationId? = null,
     val relatedFactIds: List<FactId> = emptyList(),
     val sceneId: String? = null,
+    // ---- layered memory --------------------------------------------------
+    val tier: MemoryTier = MemoryTier.EPISODIC,
+    val visibility: MemoryVisibility = MemoryVisibility.CHARACTER,
+    /** Explicit additional grants. The union of these and the owner may retrieve it. */
+    val visibleTo: List<CharacterId> = emptyList(),
+    /** 0..5. How strongly this memory carries feeling, independent of importance. */
+    val emotionalWeight: Int = 0,
+    /**
+     * 0..100. How sure the owner is that this is true.
+     *
+     * Separate from [importance] on purpose: "I am certain the akuma was in the
+     * museum" and "this barely matters to me" are independent claims, and conflating
+     * them makes a vital half-belief indistinguishable from small talk.
+     *
+     * Nothing about retrieval *trusts* this number. It is the author's stated
+     * confidence, used for scoring and for the developer inspector; a low-confidence
+     * memory is still a real memory and is never silently dropped.
+     */
+    val confidence: Int = 100,
+    /** The world event that produced this memory, for "inspect source". */
+    val sourceEventId: EventId? = null,
+    /**
+     * The transcript line this memory came from, when it came from dialogue.
+     *
+     * "Explainable memory" depends on this: without it a memory has a source *kind*
+     * but not a source, and the inspector can only say "from a conversation".
+     */
+    val sourceMessageId: String? = null,
+    val relatedThreadIds: List<ThreadId> = emptyList(),
+    /**
+     * Subject/predicate of the claim this memory makes.
+     *
+     * Two memories with the same subject and predicate are in tension; the newer one
+     * supersedes the older rather than both being kept as equally current.
+     */
+    val subject: String = "",
+    val predicate: String = "",
+    // ---- lifecycle -------------------------------------------------------
+    /** Memories this one replaced. Empty for ordinary memories. */
+    val supersedes: List<MemoryId> = emptyList(),
+    /** Set when a newer memory has replaced this one. */
+    val supersededBy: MemoryId? = null,
+    val validFrom: StoryTime = StoryTime.START,
+    /** Null while the memory is still current. */
+    val validUntil: StoryTime? = null,
+    /** Lower-tier memories rolled up into this one by consolidation. */
+    val consolidatedFrom: List<MemoryId> = emptyList(),
+    /** How often this memory has been folded into a prompt; drives frequency weight. */
+    val accessCount: Int = 0,
+    /** User pin: survives consolidation and pruning. */
+    val pinned: Boolean = false,
 ) {
     init {
         require(content.isNotBlank()) { "Memory $id must have content" }
         require(importance in 1..5) { "importance must be in 1..5, was $importance" }
+        require(emotionalWeight in 0..5) { "emotionalWeight must be in 0..5, was $emotionalWeight" }
+        require(confidence in 0..100) { "confidence must be in 0..100, was $confidence" }
+    }
+
+    /** A superseded memory is history, not current truth. */
+    val isCurrent: Boolean get() = supersededBy == null
+
+    /**
+     * Whether [viewer] is allowed to retrieve this memory.
+     *
+     * This is the knowledge boundary. It is a closed, total function - there is no
+     * "probably fine" branch - and it is enforced here rather than at the call site so
+     * no caller can forget it.
+     */
+    fun visibleTo(viewer: MemorySubject): Boolean = when (visibility) {
+        MemoryVisibility.PRIVATE -> viewer.matchesOwner(characterId)
+        MemoryVisibility.PLAYER -> viewer.isPlayer || viewer.matchesOwner(characterId) || viewer.id in visibleTo
+        MemoryVisibility.CHARACTER -> viewer.matchesOwner(characterId) || viewer.id in visibleTo
+        MemoryVisibility.SECRET -> viewer.matchesOwner(characterId) || viewer.id in visibleTo
+        MemoryVisibility.WORLD -> true
+    }
+
+    /** True when [other] and this memory make incompatible claims about the same thing. */
+    fun contradicts(other: Memory): Boolean =
+        subject.isNotBlank() && other.subject.isNotBlank() &&
+            subject.equals(other.subject, ignoreCase = true) &&
+            predicate.equals(other.predicate, ignoreCase = true) &&
+            !content.trim().equals(other.content.trim(), ignoreCase = true)
+
+    fun supersedeBy(newer: MemoryId, at: StoryTime): Memory = copy(
+        supersededBy = newer,
+        validUntil = at,
+    )
+
+    fun withAccess(): Memory = copy(accessCount = accessCount + 1)
+}
+
+/**
+ * Who is asking for a memory.
+ *
+ * The player is deliberately *not* a [CharacterId]: the player has no
+ * [dev.charaly.runtime.domain.CharacterRuntime], nothing to move and nothing for the
+ * engine to validate about them. Modelling them as a first-class subject here keeps
+ * the visibility rules total.
+ */
+@Serializable
+sealed interface MemorySubject {
+
+    val isPlayer: Boolean get() = false
+
+    /** The owning character id, or null for the player. */
+    val id: CharacterId?
+
+    fun matchesOwner(owner: CharacterId): Boolean = id == owner
+
+    data class Character(override val id: CharacterId) : MemorySubject
+
+    data object Player : MemorySubject {
+        override val id: CharacterId? get() = null
+        override val isPlayer: Boolean get() = true
+    }
+
+    companion object {
+        fun of(id: CharacterId?): MemorySubject = if (id == null) Player else Character(id)
     }
 }
 
@@ -45,68 +296,8 @@ enum class MemorySource {
     USER_INPUT,
     /** Authored by hand in the story pack. */
     AUTHORED,
+    /** Produced by consolidation rolling lower tiers together. */
+    CONSOLIDATED,
+    /** Imported from outside Charaly. */
     IMPORTED,
-}
-
-/**
- * Persistent memory store. Owned by the [dev.charaly.runtime.domain.StoryInstance];
- * nothing else may hold authoritative memory state.
- */
-@Serializable
-data class MemoryStore(
-    val memories: Map<MemoryId, Memory> = emptyMap(),
-) {
-    val size: Int get() = memories.size
-
-    fun byId(id: MemoryId): Memory? = memories[id]
-
-    fun of(characterId: CharacterId): List<Memory> =
-        memories.values.filter { it.characterId == characterId }.sortedWith(DETERMINISTIC)
-
-    fun all(): List<Memory> = memories.values.sortedWith(DETERMINISTIC)
-
-    fun add(memory: Memory): MemoryStore = copy(memories = memories + (memory.id to memory))
-
-    fun addAll(items: Collection<Memory>): MemoryStore {
-        if (items.isEmpty()) return this
-        val merged = memories.toMutableMap()
-        items.forEach { merged[it.id] = it }
-        return copy(memories = merged)
-    }
-
-    fun remove(id: MemoryId): MemoryStore = copy(memories = memories - id)
-
-    fun idsOf(characterId: CharacterId): List<MemoryId> = of(characterId).map { it.id }
-
-    /**
-     * Deterministic selection used by the ContextBuilder: highest importance
-     * first, then most recent, then id for stability.
-     */
-    fun select(
-        characterId: CharacterId,
-        limit: Int = 8,
-        minImportance: Int = 1,
-        atLocation: LocationId? = null,
-        involving: Set<CharacterId> = emptySet(),
-    ): List<Memory> {
-        if (limit <= 0) return emptyList()
-        return of(characterId)
-            .asSequence()
-            .filter { it.importance >= minImportance }
-            .filter { atLocation == null || it.relatedLocationId == null || it.relatedLocationId == atLocation }
-            .filter { involving.isEmpty() || it.relatedCharacterIds.any { id -> id in involving } || it.characterId in involving }
-            .sortedWith(
-                compareByDescending<Memory> { it.importance }
-                    .thenByDescending { it.createdAt }
-                    .thenBy { it.id.value },
-            )
-            .take(limit)
-            .toList()
-    }
-
-    companion object {
-        val EMPTY = MemoryStore()
-
-        val DETERMINISTIC: Comparator<Memory> = compareBy({ it.createdAt }, { it.id.value })
-    }
 }

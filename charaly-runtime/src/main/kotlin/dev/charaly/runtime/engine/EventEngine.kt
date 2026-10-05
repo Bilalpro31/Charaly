@@ -3,6 +3,7 @@ package dev.charaly.runtime.engine
 import dev.charaly.runtime.domain.CharacterActivity
 import dev.charaly.runtime.domain.CharacterId
 import dev.charaly.runtime.domain.EntityId
+import dev.charaly.runtime.domain.LocationId
 import dev.charaly.runtime.domain.Relationship
 import dev.charaly.runtime.domain.RelationshipKey
 import dev.charaly.runtime.domain.Scene
@@ -17,7 +18,9 @@ import dev.charaly.runtime.domain.events.CharacterActivityChanged
 import dev.charaly.runtime.domain.events.CharacterEnteredScene
 import dev.charaly.runtime.domain.events.CharacterLeftScene
 import dev.charaly.runtime.domain.events.CharacterMoved
+import dev.charaly.runtime.domain.events.CharacterRoutineApplied
 import dev.charaly.runtime.domain.events.EventOrigin
+import dev.charaly.runtime.domain.events.LocationEntered
 import dev.charaly.runtime.domain.events.EventPayload
 import dev.charaly.runtime.domain.events.FactRevealed
 import dev.charaly.runtime.domain.events.KnowledgeDiscovered
@@ -324,6 +327,39 @@ class EventEngine(val definition: WorldDefinition) {
                 runtimeOf(payload.characterId)
             }
 
+            is CharacterRoutineApplied -> {
+                if (definition.character(payload.characterId) == null) {
+                    errors += EventRejection.UNKNOWN_CHARACTER
+                }
+                if (definition.location(payload.to) == null) errors += EventRejection.UNKNOWN_LOCATION
+                val runtime = runtimeOf(payload.characterId)
+                // A stale `from` means the world moved on since this was computed, so
+                // the routine placement is based on a world that no longer exists.
+                if (runtime != null && runtime.locationId != payload.from) {
+                    errors += EventRejection.STALE_FROM_LOCATION
+                }
+                // Nothing to do when the character is already where the routine says.
+                if (runtime != null && runtime.locationId == payload.to &&
+                    runtime.activity == payload.activity &&
+                    runtime.activityLabel == payload.activityLabel
+                ) {
+                    notes += "${payload.characterId.value} is already following this part of their routine"
+                    noOp = true
+                }
+            }
+
+            is LocationEntered -> {
+                if (definition.location(payload.locationId) == null) errors += EventRejection.UNKNOWN_LOCATION
+                if (payload.sceneId != null && instance.worldState.activeScenes[payload.sceneId] == null) {
+                    errors += EventRejection.UNKNOWN_SCENE
+                }
+                val already = currentPlayerLocation(instance)
+                if (already == payload.locationId) {
+                    notes += "the player is already at ${payload.locationId.value}"
+                    noOp = true
+                }
+            }
+
             is WorldVariableSet -> {
                 if (payload.key.isBlank()) errors += EventRejection.EMPTY_CHANGE
             }
@@ -583,12 +619,60 @@ class EventEngine(val definition: WorldDefinition) {
                     worldState = current.worldState.withCharacter(
                         runtime.copy(
                             activity = payload.activity,
+                            activityLabel = payload.activityLabel.ifBlank { runtime.activityLabel },
                             mood = payload.mood.ifBlank { runtime.mood },
                             lastUpdatedAt = current.worldClock.now,
                         ),
                     ),
                 )
                 changes += "${runtime.name} activity -> ${payload.activity.name.lowercase()}"
+            }
+
+            is LocationEntered -> {
+                // Recorded as a world variable so the player's position is ordinary,
+                // inspectable world state that pack events can condition on - the same
+                // mechanism any other flag uses.
+                current = current.evolved(
+                    worldState = current.worldState.withVariable(
+                        (current.worldState.variables[PLAYER_LOCATION]
+                            ?: WorldVariable(
+                                key = PLAYER_LOCATION,
+                                description = "Where the player currently is",
+                            )).copy(value = payload.locationId.value),
+                    ),
+                )
+                changes += "the player entered ${definition.nameOf(payload.locationId)}"
+            }
+
+            is CharacterRoutineApplied -> {
+                val runtime = current.characters.getValue(payload.characterId)
+                val from = runtime.locationId
+                current = current.evolved(
+                    worldState = current.worldState.withCharacter(
+                        runtime.copy(
+                            locationId = payload.to,
+                            activity = payload.activity,
+                            activityLabel = payload.activityLabel,
+                            lastUpdatedAt = current.worldClock.now,
+                        ),
+                    ),
+                )
+                // Leaving a place means leaving the scenes that happened there.
+                current.worldState.activeScenes.values
+                    .filter { from != null && it.locationId == from && payload.characterId in it.participants }
+                    .forEach { scene ->
+                        current = current.evolved(
+                            worldState = current.worldState
+                                .withScene(scene.copy(participants = scene.participants - payload.characterId))
+                                .withCharacter(
+                                    current.characters.getValue(payload.characterId)
+                                        .leaveScene(scene.id, current.worldClock.now),
+                                ),
+                        )
+                        changes += "${payload.characterId.value} left scene ${scene.id.value} (routine)"
+                    }
+                changes += "${runtime.name} routine -> ${definition.nameOf(payload.to)}" +
+                    if (payload.activityLabel.isNotBlank()) " (${payload.activityLabel})" else ""
             }
 
             is WorldVariableSet -> {
@@ -678,7 +762,74 @@ class EventEngine(val definition: WorldDefinition) {
 
     /** Convenience wrapper: advance by a duration and drain due events. */
     fun advanceClock(instance: StoryInstance, by: StoryDuration): EventBatchResult =
-        processEventsUntil(instance, instance.worldClock.now.plusMinutes(by.minutes))
+        advanceTime(instance, instance.worldClock.now.plusMinutes(by.minutes))
+
+    /**
+     * Moves story time to [target] and brings the world along with it.
+     *
+     * This is the *complete* time transition, and it is what every caller should use:
+     *
+     *  1. the clock advances and everything already scheduled becomes due, in
+     *     deterministic order;
+     *  2. scheduled characters are moved to where their routine now says they are.
+     *
+     * Step 2 lives here rather than in the session layer on purpose. An NPC schedule is
+     * authoritative world behaviour, not a UI concern: if it only ran in
+     * [dev.charaly.runtime.session.CharalyRuntime.advance], then any other caller of
+     * [advanceClockOnly] - a test, a future tool, a replay - would move time without
+     * moving the world with it, and the two would disagree.
+     *
+     * Still a pure function of (definition, instance, target): no wall clock, no
+     * randomness, no model.
+     */
+    fun advanceTime(instance: StoryInstance, target: StoryTime): EventBatchResult {
+        val clocked = advanceClockOnly(instance, target)
+        val (withPresence, presenceEvents) = applyPresence(clocked.instance)
+        return EventBatchResult(
+            instance = withPresence,
+            applied = clocked.applied + presenceEvents,
+            rejected = clocked.rejected,
+        )
+    }
+
+    /**
+     * Relocates every scheduled character whose routine entry has moved on.
+     *
+     * Rejected relocations are dropped, never retried: one impossible schedule must not
+     * be able to wedge the world's clock.
+     */
+    private fun applyPresence(instance: StoryInstance): Pair<StoryInstance, List<ScheduledEvent>> {
+        val proposals = PresenceEngine(definition).relocationsFor(instance)
+        if (proposals.isEmpty()) return instance to emptyList()
+        var current = instance
+        val appliedEvents = mutableListOf<ScheduledEvent>()
+        proposals.forEach { payload ->
+            when (val scheduled = scheduleEvent(
+                instance = current,
+                payload = payload,
+                at = current.worldClock.now,
+                origin = EventOrigin.ENGINE,
+                note = payload.summary,
+            )) {
+                is ScheduleResult.Rejected -> Unit
+                is ScheduleResult.Scheduled -> {
+                    val event = scheduled.events.first()
+                    when (val applied = applyEvent(scheduled.instance, event)) {
+                        is EventApplication.Applied -> {
+                            current = applied.instance
+                            if (!applied.noOp) appliedEvents += event
+                        }
+                        is EventApplication.Rejected -> Unit
+                    }
+                }
+            }
+        }
+        return current to appliedEvents
+    }
+
+    /** The clock-and-drain half of [advanceTime], kept separate for clarity. */
+    private fun advanceClockOnly(instance: StoryInstance, target: StoryTime): EventBatchResult =
+        processEventsUntil(instance, target)
 
     /** Convenience: build and apply an ad-hoc event without queueing it. */
     fun applyImmediately(
@@ -701,6 +852,20 @@ class EventEngine(val definition: WorldDefinition) {
 
     companion object {
         const val MAX_EVENTS_PER_PASS = 500
+
+        /**
+         * The world variable that records where the player is.
+         *
+         * Kept as a plain world variable rather than a field on the instance so that
+         * pack events can condition on the player's position with the same
+         * `EventCondition` machinery every other flag uses.
+         */
+        const val PLAYER_LOCATION = "player_location"
+
+        /** The player's recorded location, or null if they have not moved yet. */
+        fun currentPlayerLocation(instance: StoryInstance): LocationId? =
+            instance.worldState.variables[PLAYER_LOCATION]?.value?.takeIf { it.isNotBlank() }
+                ?.let(::LocationId)
 
         fun activityOf(name: String): CharacterActivity =
             CharacterActivity.entries.firstOrNull { it.name.equals(name, ignoreCase = true) } ?: CharacterActivity.UNKNOWN

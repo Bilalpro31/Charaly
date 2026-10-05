@@ -26,11 +26,42 @@ data class StoryPack(
     /** Events applied (and/or scheduled) when a StoryInstance is created. */
     val initialEvents: List<SeedEvent> = emptyList(),
     val tags: List<String> = emptyList(),
+    // ---- first-class content (see StoryPackContent.kt) ---------------------
+    val identity: PackIdentity = PackIdentity(),
+    val factions: List<Faction> = emptyList(),
+    val lore: List<WorldLoreEntry> = emptyList(),
+    /** Authored events with triggers, conditions and structured effects. */
+    val events: List<PackEventDefinition> = emptyList(),
+    /** Ways of opening this world. */
+    val scenarios: List<StartingScenario> = emptyList(),
+    /** Roles the player may take. */
+    val personas: List<PersonaTemplate> = emptyList(),
+    /**
+     * Default model profile for stories from this pack. A StoryInstance copies the
+     * *resolved* configuration, so changing a global default later cannot silently
+     * change an existing story's behaviour.
+     */
+    val defaultModelProfileId: String = "",
+    val defaultNarrativeStyle: String = "",
+    /**
+     * Pack-level visual assets: cover, banner, event art, hook art.
+     *
+     * Presentation metadata only. This is deliberately *not* world state - nothing here
+     * can affect what a character knows, where anyone is, or what has happened. A pack
+     * with no assets is entirely valid and renders as generated artwork.
+     */
+    val visualAssets: List<VisualAsset> = emptyList(),
 ) {
     init {
         require(title.isNotBlank()) { "StoryPack $id needs a title" }
         val dupes = characters.groupBy { it.id }.filterValues { it.size > 1 }
         require(dupes.isEmpty()) { "Duplicate character ids in pack $id: ${dupes.keys.map { it.value }}" }
+        val eventDupes = events.groupBy { it.id }.filterValues { it.size > 1 }
+        require(eventDupes.isEmpty()) { "Duplicate event ids in pack $id: ${eventDupes.keys}" }
+        val scenarioDupes = scenarios.groupBy { it.id }.filterValues { it.size > 1 }
+        require(scenarioDupes.isEmpty()) { "Duplicate scenario ids in pack $id: ${scenarioDupes.keys}" }
+        val assetDupes = visualAssets.groupBy { it.assetId }.filterValues { it.size > 1 }
+        require(assetDupes.isEmpty()) { "Duplicate visual asset ids in pack $id: ${assetDupes.keys}" }
     }
 
     fun character(id: CharacterId): CharacterDefinition? = characters.firstOrNull { it.id == id }
@@ -45,6 +76,31 @@ data class StoryPack(
 
     /** Where a character starts, as declared by the pack. */
     fun startLocationOf(characterId: CharacterId): LocationId? = initialWorldState.startLocations[characterId]
+
+    // ---- content lookups ------------------------------------------------
+
+    fun event(id: String): PackEventDefinition? = events.firstOrNull { it.id == id }
+
+    fun scenario(id: String): StartingScenario? = scenarios.firstOrNull { it.id == id }
+
+    fun persona(id: String): PersonaTemplate? = personas.firstOrNull { it.id == id }
+
+    fun faction(id: String): Faction? = factions.firstOrNull { it.id == id }
+
+    fun loreEntry(id: String): WorldLoreEntry? = lore.firstOrNull { it.id == id }
+
+    /** The opening to use when the user does not pick one. */
+    fun defaultScenario(): StartingScenario? = scenarios.firstOrNull()
+
+    fun defaultPersona(): PersonaTemplate? = personas.firstOrNull()
+
+    /** Genres and tags, deduplicated, for chips. */
+    fun genreChips(): List<String> =
+        (identity.genres + tags).map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+
+    /** Characters that share a starting location, ordered for a stable UI. */
+    fun charactersAt(locationId: LocationId): List<CharacterDefinition> =
+        characters.filter { startLocationOf(it.id) == locationId }
 }
 
 /** World facts authored by the pack, plus who starts out knowing them. */

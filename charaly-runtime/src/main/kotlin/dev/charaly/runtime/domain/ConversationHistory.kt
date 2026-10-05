@@ -36,6 +36,24 @@ data class ConversationHistory(
 
     fun sinceTurn(turn: Int): List<TranscriptEntry> = entries.filter { it.turn >= turn }
 
+    /**
+     * Drops every line from [turn] onwards.
+     *
+     * Used by "regenerate": the previous attempt at a reply is removed from the
+     * transcript so the model can take another run at it. This is a *transcript*
+     * operation, not a world operation: nothing in world state is undone, because
+     * what the world did already happened.
+     */
+    fun dropFrom(turn: Int): ConversationHistory =
+        copy(entries = entries.filter { it.turn < turn })
+
+    /** The last line spoken by the user, which is what a regeneration re-sends. */
+    fun lastUserEntry(): TranscriptEntry? =
+        entries.lastOrNull { it.role == TranscriptRole.USER }
+
+    fun lastCharacterEntry(): TranscriptEntry? =
+        entries.lastOrNull { it.role == TranscriptRole.CHARACTER }
+
     fun forScene(sceneId: SceneId): List<TranscriptEntry> = entries.filter { it.sceneId == sceneId }
 
     fun nextTurn(): Int = (entries.maxOfOrNull { it.turn } ?: 0) + 1

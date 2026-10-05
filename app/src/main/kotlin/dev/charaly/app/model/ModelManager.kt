@@ -6,6 +6,7 @@ import dev.charaly.runtime.compat.GgufMetadataReader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.abs
 
 /**
  * Local model management.
@@ -14,7 +15,9 @@ import java.io.File
  *  * nothing is downloaded, ever;
  *  * no desktop-style paths are hardcoded - Android storage APIs only;
  *  * the selected model survives an application restart (persisted path);
- *  * a model is referenced by a real file the app can actually read.
+ *  * a model is referenced by a real file the app can actually read;
+ *  * imported files and catalog models end up in ONE registry, so the library has a
+ *    single list instead of "imported models" and "downloaded models".
  */
 class ModelManager(
     private val context: Context,
@@ -32,6 +35,109 @@ class ModelManager(
         ?.map { it.toEntry() }
         ?.sortedBy { it.displayName.lowercase() }
         .orEmpty()
+
+    /**
+     * Reconciles the files on disk with the registry.
+     *
+     * Called on every launch. A file the user deleted externally disappears from
+     * the library; a file that exists but has no registry entry gets added. That is
+     * what makes "installed" mean something.
+     */
+    suspend fun syncRegistry(registry: dev.charaly.runtime.model.ModelRegistry) {
+        val onDisk = managedModels().associateBy { it.absolutePath }
+        val registered = registry.list().associateBy { it.absolutePath }
+
+        // Drop registry entries whose file is gone.
+        registered.keys.filterNot { it in onDisk }.forEach { path ->
+            registry.remove(registered.getValue(path).id)
+        }
+
+        // Add registry entries for files that are not registered yet.
+        onDisk.keys.filterNot { it in registered }.forEach { path ->
+            val entry = onDisk.getValue(path)
+            registry.register(toInstalled(entry, dev.charaly.runtime.model.ModelOrigin.IMPORTED, registry))
+        }
+    }
+
+    /**
+     * Registers an imported file as an [dev.charaly.runtime.model.InstalledModel].
+     *
+     * The id is derived from the absolute path, so re-importing the same file is
+     * idempotent and a StoryInstance bound to it keeps working.
+     */
+    suspend fun registerImported(
+        entry: ModelEntry,
+        registry: dev.charaly.runtime.model.ModelRegistry,
+        catalog: dev.charaly.runtime.model.ModelCatalog,
+    ): dev.charaly.runtime.model.InstalledModel = toInstalled(
+        entry = entry,
+        origin = dev.charaly.runtime.model.ModelOrigin.IMPORTED,
+        registry = registry,
+        catalogHint = catalog.byId(catalogEntryIdFor(entry.displayName)),
+    )
+
+    /** Records a successful header read, so the detail screen can show real metadata. */
+    suspend fun verifyInRegistry(
+        registry: dev.charaly.runtime.model.ModelRegistry,
+        modelId: String,
+        architecture: String,
+        quantization: String,
+        contextLength: Int,
+    ) {
+        val model = registry.get(modelId) ?: return
+        registry.update(
+            model.copy(
+                architecture = architecture.ifBlank { model.architecture },
+                quantization = quantization.ifBlank { model.quantization },
+                contextLength = contextLength.takeIf { it > 0 } ?: model.contextLength,
+                verified = true,
+                sha256 = model.sha256.ifBlank { "header-read" },
+                compatibility = model.compatibility.copy(loadFailed = false),
+            ),
+        )
+    }
+
+    /** Marks a model as failed, with a human reason rather than an engine error. */
+    suspend fun markLoadFailure(
+        registry: dev.charaly.runtime.model.ModelRegistry,
+        modelId: String,
+        reason: String,
+    ) {
+        val model = registry.get(modelId) ?: return
+        registry.update(
+            model.copy(
+                compatibility = model.compatibility.copy(loadFailed = true, failureReason = reason),
+            ),
+        )
+    }
+
+    /** Marks a model as successfully loaded at least once. */
+    suspend fun markLoadSuccess(
+        registry: dev.charaly.runtime.model.ModelRegistry,
+        modelId: String,
+    ) {
+        val model = registry.get(modelId) ?: return
+        registry.update(
+            model.copy(
+                compatibility = model.compatibility.copy(
+                    loadFailed = false,
+                    failureReason = "",
+                    lastLoadedAtEpochMs = System.currentTimeMillis(),
+                ),
+            ),
+        )
+    }
+
+    /**
+     * Best-effort free memory, used only to warn about a model that clearly will
+     * not fit. Never used to refuse to try a load.
+     */
+    fun availableRamBytes(): Long = runCatching {
+        val info = android.app.ActivityManager.MemoryInfo()
+        val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        manager.getMemoryInfo(info)
+        info.availMem
+    }.getOrDefault(0L)
 
     /**
      * The currently selected model, or null.
@@ -100,7 +206,82 @@ class ModelManager(
         if (selectedModel()?.absolutePath == model.absolutePath) clearSelection()
     }
 
+    /** Removes the file behind a registry entry, and forgets the selection. */
+    fun delete(model: dev.charaly.runtime.model.InstalledModel) {
+        val file = File(model.absolutePath)
+        if (file.parentFile == managedDir.absoluteFile) {
+            file.delete()
+        }
+        if (selectedModel()?.absolutePath == model.absolutePath) clearSelection()
+    }
+
     fun importedSizeBytes(): Long = managedModels().sumOf { it.sizeBytes }
+
+    // ---- registry mapping ------------------------------------------------
+
+    /**
+     * A stable id for a file.
+     *
+     * Derived from the absolute path, so importing the same model twice reuses the
+     * same registry entry and existing story bindings stay valid.
+     */
+    private fun entryId(entry: ModelEntry): String {
+        val slug = entry.displayName.lowercase()
+            .map { if (it.isLetterOrDigit()) it else '-' }
+            .joinToString("")
+            .split('-')
+            .filter { it.isNotEmpty() }
+            .joinToString("-")
+            .take(48)
+            .ifBlank { "model" }
+        return "local-$slug-${abs(entry.absolutePath.hashCode())}"
+    }
+
+    private fun catalogEntryIdFor(displayName: String): String {
+        val head = displayName.lowercase().substringBefore(' ')
+        if (head.isBlank()) return ""
+        return dev.charaly.runtime.model.BuiltInModelCatalog.DEFAULT
+            .firstOrNull { candidate -> candidate.name.lowercase().contains(head) }
+            ?.id
+            .orEmpty()
+    }
+
+    /**
+     * Maps a file on disk to a registry entry.
+     *
+     * File size is real. Architecture and quantization are filled in from the GGUF
+     * header when [verifyInRegistry] runs; until then they stay unknown rather than
+     * being guessed from the file name.
+     */
+    private suspend fun toInstalled(
+        entry: ModelEntry,
+        origin: dev.charaly.runtime.model.ModelOrigin,
+        registry: dev.charaly.runtime.model.ModelRegistry,
+        catalogHint: dev.charaly.runtime.model.ModelCatalogItem? = null,
+    ): dev.charaly.runtime.model.InstalledModel {
+        val id = entryId(entry)
+        val existing = registry.get(id)
+        val model = existing?.copy(
+            displayName = entry.displayName,
+            sizeBytes = entry.sizeBytes,
+            origin = origin,
+        ) ?: dev.charaly.runtime.model.InstalledModel(
+            id = id,
+            displayName = entry.displayName,
+            absolutePath = entry.absolutePath,
+            sizeBytes = entry.sizeBytes,
+            origin = origin,
+            catalogId = catalogHint?.id.orEmpty(),
+            contextLength = catalogHint?.contextLength ?: 2048,
+            parameterCount = catalogHint?.parameterCount ?: 0L,
+            installedAtEpochMs = System.currentTimeMillis(),
+            profiles = dev.charaly.runtime.model.ModelProfileLibrary.all
+                .map { it.copy(id = "${it.id}-$id", isBuiltIn = false, storyPackId = null) }
+                .take(3),
+        )
+        select(ModelEntry(entry.absolutePath, entry.displayName, entry.sizeBytes))
+        return registry.register(model)
+    }
 
     private fun uniqueFile(candidate: File): File {
         if (!candidate.exists()) return candidate

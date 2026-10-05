@@ -28,6 +28,19 @@ class JsonCharalyRepository(
     private val packsFlow = MutableStateFlow<List<StoryPack>>(emptyList())
     private val instancesFlow = MutableStateFlow<List<StoryInstance>>(emptyList())
 
+    /**
+     * Migrations this repository performed or observed, for the UI to report.
+     *
+     * Reading a save is never destructive: an older document is decoded as-is and only
+     * stamped on the next write. The record exists so the user can be *told* their
+     * library was upgraded rather than discovering it silently.
+     */
+    private val _migrations = MutableStateFlow<List<Migration>>(emptyList())
+    val migrations: Flow<List<Migration>> = _migrations.asStateFlow()
+
+    /** The migrations observed by the most recent [restoreAll], for tests and diagnostics. */
+    fun observedMigrations(): List<Migration> = _migrations.value
+
     // ---- packs ---------------------------------------------------------
 
     override fun observePacks(): Flow<List<StoryPack>> = packsFlow.asStateFlow()
@@ -41,7 +54,7 @@ class JsonCharalyRepository(
         packsFlow.value.firstOrNull { it.id == id } ?: decodePack(storage.read(packDoc(id)))
 
     override suspend fun savePack(pack: StoryPack) {
-        storage.write(packDoc(pack.id), json.encodeToString(StoryPack.serializer(), pack))
+        writeDocument(packDoc(pack.id), json.encodeToString(StoryPack.serializer(), pack))
         refreshPacks()
     }
 
@@ -63,7 +76,7 @@ class JsonCharalyRepository(
         instancesFlow.value.firstOrNull { it.id == id } ?: decodeInstance(storage.read(instanceDoc(id)))
 
     override suspend fun saveInstance(instance: StoryInstance) {
-        storage.write(instanceDoc(instance.id), json.encodeToString(StoryInstance.serializer(), instance))
+        writeDocument(instanceDoc(instance.id), json.encodeToString(StoryInstance.serializer(), instance))
         refreshInstances()
     }
 
@@ -90,19 +103,40 @@ class JsonCharalyRepository(
 
     override suspend fun restoreAll(): RestoredWorld {
         val failures = mutableListOf<StorageFailure>()
+        val observedMigrations = linkedSetOf<Migration>()
+
         val restoredPacks = mutableListOf<StoryPack>()
         storage.list("$PACK_DIR/").forEach { doc ->
-            val pack = storage.read(doc)?.let { decodePack(it) }
+            val raw = storage.read(doc) ?: return@forEach
+            noteMigration(doc, raw, observedMigrations)
+            val pack = decodePack(raw)
             if (pack == null) failures += StorageFailure(doc, "unreadable story pack document") else restoredPacks += pack
         }
+
         val restoredInstances = mutableListOf<StoryInstance>()
         storage.list("$INSTANCE_DIR/").forEach { doc ->
-            val instance = storage.read(doc)?.let { decodeInstance(it) }
+            val raw = storage.read(doc) ?: return@forEach
+            noteMigration(doc, raw, observedMigrations)
+            val instance = decodeInstance(raw)
             if (instance == null) failures += StorageFailure(doc, "unreadable story document") else restoredInstances += instance
         }
+
         packsFlow.value = restoredPacks.sortedBy { it.title.lowercase() }
         instancesFlow.value = restoredInstances.sortedByDescending { it.updatedAt }
+        _migrations.value = observedMigrations.toList()
         return RestoredWorld(packsFlow.value, instancesFlow.value, failures)
+    }
+
+    /**
+     * Records that a document was written by an older schema.
+     *
+     * Nothing is rewritten here. An older document decodes correctly as-is because
+     * every field added since has a default, and rewriting on read would risk a user's
+     * stories for no benefit.
+     */
+    private fun noteMigration(doc: String, raw: String, into: MutableSet<Migration>) {
+        val migration = SchemaMigration.needsWork(SchemaMigration.versionOf(raw))
+        if (migration.isRequired) into += migration
     }
 
     // ---- internals -----------------------------------------------------
@@ -122,6 +156,17 @@ class JsonCharalyRepository(
 
     private fun decodeInstance(raw: String?): StoryInstance? =
         raw?.let { runCatching { json.decodeFromString(StoryInstance.serializer(), it) }.getOrNull() }
+
+    /**
+     * Writes a document with its schema version stamped in.
+     *
+     * Stamping happens here rather than at each call site so no document can be written
+     * unversioned by omission, and stamping is non-destructive: the document body is
+     * unchanged, only annotated.
+     */
+    private suspend fun writeDocument(name: String, body: String) {
+        storage.write(name, SchemaMigration.stamp(body))
+    }
 
     private fun packDoc(id: StoryPackId) = "$PACK_DIR/${sanitizeId(id)}.json"
 

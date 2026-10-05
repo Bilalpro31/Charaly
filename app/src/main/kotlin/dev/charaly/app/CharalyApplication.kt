@@ -5,6 +5,9 @@ import dev.charaly.app.inference.LocalLlamaInferenceEngine
 import dev.charaly.app.model.ModelManager
 import dev.charaly.runtime.inference.GenerationParams
 import dev.charaly.runtime.inference.InferenceEngine
+import dev.charaly.runtime.model.BuiltInModelCatalog
+import dev.charaly.runtime.model.JsonModelRegistry
+import dev.charaly.runtime.model.ModelCatalog
 import dev.charaly.runtime.persistence.FileCharalyStorage
 import dev.charaly.runtime.persistence.JsonCharalyRepository
 import dev.charaly.runtime.session.CharalyRuntime
@@ -29,7 +32,22 @@ class CharalyApplication : Application() {
         JsonCharalyRepository(FileCharalyStorage(File(filesDir, "charaly")))
     }
 
+    /**
+     * The single model registry.
+     *
+     * Imported GGUFs and catalog models are both [dev.charaly.runtime.model.InstalledModel]
+     * entries here, so the library has one list instead of two parallel systems.
+     */
+    val modelRegistry by lazy {
+        JsonModelRegistry(FileCharalyStorage(File(filesDir, "charaly")))
+    }
+
+    /** Ready-made models Charaly knows about. Metadata only: no binaries ship. */
+    val modelCatalog: ModelCatalog by lazy { BuiltInModelCatalog() }
+
     val modelManager: ModelManager by lazy { ModelManager(this) }
+
+    val preferences: AppPreferences by lazy { AppPreferences(this) }
 
     /**
      * Local llama.cpp. If the native library is missing from the build, the
@@ -53,6 +71,7 @@ class CharalyApplication : Application() {
                 temperature = 0.85f,
                 topP = 0.95f,
                 topK = 40,
+                minP = 0.05f,
                 repeatPenalty = 1.1f,
             ),
         )

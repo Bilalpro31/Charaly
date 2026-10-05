@@ -200,8 +200,69 @@ data class CharacterActivityChanged(
     val characterId: CharacterId,
     val activity: dev.charaly.runtime.domain.CharacterActivity,
     val mood: String = "",
+    /** Display wording for the activity, e.g. "serving customers". Never parsed. */
+    val activityLabel: String = "",
 ) : EventPayload {
     override val summary: String get() = "${characterId.value} is now ${activity.name.lowercase()}"
+}
+
+/**
+ * The player arrived somewhere.
+ *
+ * Distinct from [CharacterMoved] on purpose. Movement says "a character is now here";
+ * arrival says "the player is here, so whoever is in this place has just been
+ * encountered". That second claim is what makes an ice-cream vendor discoverable by
+ * walking into his shop, rather than by being added to a conversation - so it needs its
+ * own event to be authored, observed and replayed independently.
+ */
+@Serializable
+@SerialName("LocationEntered")
+data class LocationEntered(
+    val locationId: LocationId,
+    /** Scene opened by arriving, when the pack authorises one. */
+    val sceneId: SceneId? = null,
+    /** What the player noticed on the way in, for the narration prompt. */
+    val observation: String = "",
+) : EventPayload {
+    override val summary: String
+        get() = "the player entered ${locationId.value}" +
+            if (observation.isNotBlank()) " ($observation)" else ""
+}
+
+/**
+ * A scheduled character is moved to where their routine says they belong.
+ *
+ * This is deliberately a *separate payload* from [CharacterMoved] rather than a flag
+ * on it, because the two express genuinely different authority:
+ *
+ *  * [CharacterMoved] is a traversal. It is validated against the location graph
+ *    ([dev.charaly.runtime.domain.WorldDefinition.isAdjacent]), because a character
+ *    cannot walk from the bakery to the museum in one step.
+ *  * This is not a traversal. Nobody walked anywhere: the clock passed 19:00, the
+ *    ice-cream vendor's routine says he closes up and goes home, and his
+ *    authoritative state is now his flat. Demanding graph adjacency here would make
+ *    authored schedules unimplementable, and expressing it as [CharacterMoved] would
+ *    make the engine's movement rule dishonest.
+ *
+ * It is still a structured, validated, logged, replayable event - the world is only
+ * ever changed this way. It is produced exclusively by
+ * [dev.charaly.runtime.engine.PresenceEngine] from authored routine data, never from
+ * model output.
+ */
+@Serializable
+@SerialName("CharacterRoutineApplied")
+data class CharacterRoutineApplied(
+    val characterId: CharacterId,
+    val from: LocationId?,
+    val to: LocationId,
+    val activity: dev.charaly.runtime.domain.CharacterActivity,
+    val activityLabel: String = "",
+    /** The routine entry (minutes-of-day) that produced this relocation. */
+    val routineEntryMinute: Int = 0,
+) : EventPayload {
+    override val summary: String
+        get() = "${characterId.value} follows their routine to ${to.value}" +
+            if (activityLabel.isNotBlank()) " ($activityLabel)" else ""
 }
 
 @Serializable
