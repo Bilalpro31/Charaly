@@ -711,6 +711,48 @@ object PackAuthoring {
             via = via,
         )
 
+    // ---- canon bible ----------------------------------------------------
+    //
+    // Authored as structured assertions rather than prose, because a bible a model can
+    // quote is worth much less than one the engine can check. `forbids` in particular is
+    // the load-bearing field: it is what turns "there is no daylight patrol" from a line
+    // of flavour into a rule that a later pack edit can be tested against.
+
+    fun canonEra(
+        id: String,
+        title: String,
+        summary: String = "",
+        distinguishing: List<String> = emptyList(),
+    ) = dev.charaly.runtime.domain.CanonEra(id, title, summary, distinguishing)
+
+    fun canonRule(
+        id: String,
+        statement: String,
+        forbids: List<String> = emptyList(),
+        secret: Boolean = false,
+    ) = dev.charaly.runtime.domain.CanonRule(id, statement, forbids, secret)
+
+    fun canonOrg(
+        id: String,
+        name: String,
+        purpose: String = "",
+        seat: String? = null,
+        members: List<String> = emptyList(),
+    ) = dev.charaly.runtime.domain.CanonOrganization(
+        id = id,
+        name = name,
+        purpose = purpose,
+        seatLocationId = seat?.let(::LocationId),
+        memberCharacterIds = members.map(::CharacterId),
+    )
+
+    fun canonObject(
+        id: String,
+        name: String,
+        description: String = "",
+        knownTo: List<String> = emptyList(),
+    ) = dev.charaly.runtime.domain.CanonObject(id, name, description, knownTo.map(::CharacterId))
+
     /** A character's starting mind, for [pack]'s `minds` argument. */
     fun mind(
         character: String,
@@ -761,6 +803,7 @@ object PackAuthoring {
         threads: List<StoryThread> = emptyList(),
         authoredMemories: List<Memory> = emptyList(),
         defaultModelProfileId: String = "",
+        canon: dev.charaly.runtime.domain.CanonBible = dev.charaly.runtime.domain.CanonBible(),
         visualAssets: List<VisualAsset> = emptyList(),
     ): StoryPack {
         val characterIds = characters.map { it.id }.map { it.value }.toSet()
@@ -942,6 +985,20 @@ object PackAuthoring {
             faction.memberCharacterIds.forEach { requireCharacter(it.value, "faction ${faction.id}") }
             requireLocation(faction.seatLocationId?.value, "faction ${faction.id}")
         }
+        // The bible indexes the pack, so every id it names has to exist. A bible
+        // pointing at a deleted character is exactly the kind of rot that is invisible
+        // until something reads the bible and produces a confidently wrong answer.
+        canon.factIds.forEach {
+            require(it.value in factIds) { "[$id] canon names unknown fact '${it.value}'" }
+        }
+        canon.majorArcThreadIds.forEach { requireThread(it.value, "canon major arc") }
+        canon.organizations.forEach { org ->
+            requireLocation(org.seatLocationId?.value, "canon organization ${org.id}")
+            org.memberCharacterIds.forEach { requireCharacter(it.value, "canon organization ${org.id}") }
+        }
+        canon.importantObjects.forEach { obj ->
+            obj.knownToCharacterIds.forEach { requireCharacter(it.value, "canon object ${obj.id}") }
+        }
 
         return StoryPack(
             id = StoryPackId(id),
@@ -957,6 +1014,7 @@ object PackAuthoring {
             scenarios = scenarios,
             personas = personas,
             defaultModelProfileId = defaultModelProfileId,
+            canon = canon,
             visualAssets = visualAssets,
             initialWorldState = dev.charaly.runtime.domain.InitialWorldState(
                 startTime = startTime,

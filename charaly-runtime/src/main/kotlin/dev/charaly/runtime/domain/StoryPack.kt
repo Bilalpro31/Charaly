@@ -44,6 +44,23 @@ data class StoryPack(
     val defaultModelProfileId: String = "",
     val defaultNarrativeStyle: String = "",
     /**
+     * Authoritative canon: what is true of the setting whatever the player does.
+     *
+     * Immutable by construction - it lives on the pack and is never copied into an
+     * instance or edited by playing. What a *story* does to canon is recorded
+     * separately as deviations, which is what makes "is this still the canon version?"
+     * a question with an answer.
+     */
+    val canon: dev.charaly.runtime.domain.CanonBible = dev.charaly.runtime.domain.CanonBible(),
+    /**
+     * The model profile *presets* referenced by [defaultModelProfileId].
+     *
+     * A pack points at a profile by id rather than embedding it, so a profile can be
+     * corrected for every pack at once. Profiles know how to talk to a model file and
+     * nothing about any world, which is why they are not part of canon.
+     */
+    val modelProfileIds: List<String> = emptyList(),
+    /**
      * Pack-level visual assets: cover, banner, event art, hook art.
      *
      * Presentation metadata only. This is deliberately *not* world state - nothing here

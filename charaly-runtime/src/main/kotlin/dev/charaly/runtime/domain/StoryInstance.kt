@@ -55,6 +55,15 @@ data class StoryInstance(
     val chapterCounter: Int = 0,
     /** Set when this story was branched or duplicated from another. */
     val branchOrigin: BranchOrigin = BranchOrigin.NONE,
+    /**
+     * What this playthrough did to canon.
+     *
+     * The counterweight to the pack's [dev.charaly.runtime.domain.CanonBible]. Canon is
+     * what the author asserted; this is what *this* story is doing instead, and who it
+     * affects. Keeping them apart is what stops a story from quietly rewriting the
+     * setting and having no way to notice that it has.
+     */
+    val canonDeviations: CanonLedger = CanonLedger.EMPTY,
     /** Where a branched story came from, when there is one. */
     val branchedFrom: BranchOriginInfo? = null,
     /** packEventId -> story time it last fired. Drives "already fired" and cooldowns. */

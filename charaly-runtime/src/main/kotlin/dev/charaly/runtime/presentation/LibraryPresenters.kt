@@ -517,6 +517,26 @@ object LibraryPresenter {
 // Pack detail
 // ---------------------------------------------------------------------------
 
+/**
+ * A pack's canon, flattened into lines a screen can show.
+ *
+ * Rules first, then the timeline, because the rules are what actually constrains what
+ * can happen in the story and the timeline is context for them.
+ */
+private fun canonLinesOf(canon: dev.charaly.runtime.domain.CanonBible): List<String> = buildList {
+    if (canon.universe.isNotBlank()) add("Setting: ${canon.universe}")
+    canon.worldRules.forEach { rule ->
+        add(if (rule.secret) "Secret rule: ${rule.statement}" else "Rule: ${rule.statement}")
+        rule.forbids.forEach { add("  never: $it") }
+    }
+    canon.timeline.forEach { era ->
+        add("${era.title}: ${era.summary}")
+        era.distinguishingFacts.forEach { add("  $it") }
+    }
+    canon.organizations.forEach { org -> add("${org.name}: ${org.purpose}") }
+    canon.importantObjects.forEach { obj -> add("${obj.name} - ${obj.description}") }
+}
+
 data class PackDetailSnapshot(
     val id: String,
     val title: String,
@@ -542,6 +562,16 @@ data class PackDetailSnapshot(
     val stats: List<StatChip>,
     val defaultProfileName: String,
     val canContinue: Boolean,
+    /**
+     * The pack's canon, in the user's words.
+     *
+     * Shown because "is this still the author's version of the world?" is a question a
+     * player of a media pack genuinely has, and answering it from the pack rather than
+     * from a running story is the whole point of separating the two.
+     */
+    val canonLines: List<String> = emptyList(),
+    /** The pack's explicit rights/attribution notice, if it declares one. */
+    val canonNotice: String = "",
 )
 
 data class FactionCard(
@@ -689,6 +719,8 @@ object PackDetailPresenter {
             ),
             defaultProfileName = defaultProfileName,
             canContinue = packSessions.isNotEmpty(),
+            canonLines = canonLinesOf(pack.canon),
+            canonNotice = pack.canon.rightsNotice,
         )
     }
 

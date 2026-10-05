@@ -1,7 +1,10 @@
 package dev.charaly.runtime.pack
 
+import dev.charaly.runtime.domain.CanonBible
 import dev.charaly.runtime.domain.CharacterActivity
 import dev.charaly.runtime.domain.CharacterRole
+import dev.charaly.runtime.domain.FactId
+import dev.charaly.runtime.domain.ThreadId
 import dev.charaly.runtime.domain.RelationshipType
 import dev.charaly.runtime.domain.StoryThreadStatus
 import dev.charaly.runtime.domain.StoryTime
@@ -2234,5 +2237,148 @@ object MiraculousPack {
             ),
         ),
         defaultModelProfileId = ModelProfileLibrary.BALANCED,
+        // ---- the canon ----------------------------------------------------
+        //
+        // This is the part of the pack a playthrough cannot change. Marinette is
+        // Marinette, the akuma come from a single emotion in a single moment, and the
+        // school has one roof that is locked. What a *story* does to any of it is
+        // recorded as a deviation on the instance instead - which is what makes "is
+        // this still the canon version?" a question with an answer.
+        //
+        // Written as structured assertions rather than prose. A bible a model can quote
+        // is worth much less than one the engine can check, and the `forbids` field is
+        // the load-bearing one: it turns "the akuma are born of one emotion at night"
+        // from flavour into a rule a later pack edit can be tested against.
+        canon = CanonBible(
+            universe = "Contemporary Paris, and what is done on its roofs",
+            era = "The present day, in a Paris with a very specific kind of night",
+            tone = "Warm, breathless, funny at the top and quietly sad underneath.",
+            visualIdentity = "Violet and rose over slate rooftops, red suit and black against a " +
+                "blue-black Paris. Paris is always drawn from above the parapet, never from the street.",
+            eraMetadata = listOf("Contemporary", "No seasonal arc", "School-year continuity"),
+            timeline = listOf(
+                PackAuthoring.canonEra(
+                    id = "era-ordinary",
+                    title = "The ordinary weeks",
+                    summary = "School, bakery, museum, and a city that looks after itself. This is " +
+                        "the Paris the pack assumes before anything goes wrong, and it is a real " +
+                        "Paris, not a thin one.",
+                    distinguishing = listOf(
+                        "No akuma have formed in weeks.",
+                        "Adrien sits behind Marinette in class and neither has said anything.",
+                    ),
+                ),
+                PackAuthoring.canonEra(
+                    id = "era-after",
+                    title = "After the museum",
+                    summary = "The east wing is short one brooch and the catalogue says otherwise. " +
+                        "From here the night hours stop being empty, and nobody can prove whose fault " +
+                        "that is.",
+                    distinguishing = listOf(
+                        "Gabriel is spending more time in the museum after hours.",
+                        "Nathalie has stopped answering questions about the east wing.",
+                    ),
+                ),
+            ),
+            factIds = listOf(F_AKUMA, F_AMOK, F_MUSEUM, F_GABRIEL_MOTIVE, F_ADRIEN_ID, F_SECOND_LADYBUG)
+                .map(::FactId),
+            worldRules = listOf(
+                PackAuthoring.canonRule(
+                    id = "rule-akuma-origin",
+                    statement = "An akuma is a corrupted spirit born when one person gives in to a " +
+                        "single emotion in a single moment, usually alone, usually at night.",
+                    forbids = listOf(
+                        "An akuma that needs nobody to have given in to anything.",
+                        "An akuma forming in daylight, which has never once been recorded.",
+                    ),
+                ),
+                PackAuthoring.canonRule(
+                    id = "rule-kwami-pairing",
+                    statement = "A Miraculous holds one power and demands one discipline, and the " +
+                        "pairing with a kwami is chosen rather than forced.",
+                    forbids = listOf(
+                        "A Miraculous that grants a second power.",
+                        "A kwami that transfers by force.",
+                    ),
+                ),
+                PackAuthoring.canonRule(
+                    id = "rule-de-mask",
+                    statement = "A Miraculous holder loses their power and forgets everything while " +
+                        "detransformed, which is why a civilian on a rooftop has no memory of it.",
+                    forbids = listOf(
+                        "A character remembering a patrol while transformed and civilian.",
+                    ),
+                ),
+                PackAuthoring.canonRule(
+                    id = "rule-public-cover",
+                    statement = "The pair never appear in the same daytime scene as themselves: the " +
+                        "Miraculous cannot be worn twice in one person's life, and neither can it be " +
+                        "handed on.",
+                    forbids = listOf(
+                        "A third Miraculous holder appearing as a permanent civilian.",
+                    ),
+                ),
+                PackAuthoring.canonRule(
+                    id = "rule-secret-volumes",
+                    statement = "The akuma business is invisible to adults by default. Nobody in " +
+                        "authority acts on it, and the police treat the disappearances as accidents.",
+                    secret = true,
+                ),
+                PackAuthoring.canonRule(
+                    id = "rule-quiet-hour",
+                    statement = "Between 01:00 and 04:00 the streets belong to the ones still " +
+                        "working. Villains choose this hour because there is nobody around to notice.",
+                    forbids = listOf("A civilian witness to anything that happens in it."),
+                    secret = true,
+                ),
+            ),
+            organizations = listOf(
+                PackAuthoring.canonOrg(
+                    id = "org-college",
+                    name = "Collège Françoise Dupont",
+                    purpose = "An ordinary Paris secondary school that is the only place in the city " +
+                        "nobody looks at twice.",
+                    seat = SCHOOL,
+                    members = listOf(MARINETTE, ADRIEN, ALYA, NINO, PRINCIPAL, TEACHER_MME_ROSA, TEACHER_MR_KLEIN),
+                ),
+                PackAuthoring.canonOrg(
+                    id = "org-museum",
+                    name = "Musée des Arts Décoratifs",
+                    purpose = "A provincial museum with a very good east wing and a security log that " +
+                        "records nobody entering it.",
+                    seat = MUSEUM,
+                    members = listOf(GABRIEL, MUSEUM_GUIDE),
+                ),
+            ),
+            importantObjects = listOf(
+                PackAuthoring.canonObject(
+                    id = "obj-brooch",
+                    name = "The ladybird brooch",
+                    description = "Held in the east wing case, and the object the whole museum thread " +
+                        "is about.",
+                    knownTo = listOf(GABRIEL, MUSEUM_GUIDE),
+                ),
+                PackAuthoring.canonObject(
+                    id = "obj-yo-yo",
+                    name = "Cat Noir's yo-yo",
+                    description = "It never breaks. Nobody has explained why, which has bothered " +
+                        "Ladybug for some time.",
+                    knownTo = listOf(LADYBUG, CATNOIR),
+                ),
+                PackAuthoring.canonObject(
+                    id = "obj-watch",
+                    name = "The pocket watch",
+                    description = "Points at whoever is holding a Miraculous, and has started " +
+                        "responding to a second one.",
+                    knownTo = listOf(LADYBUG),
+                ),
+            ),
+            majorArcThreadIds = listOf(T_AKUMA, T_MUSEUM, T_GABRIEL, T_PARTNER, T_MEMORY)
+                .map(::ThreadId),
+            rightsNotice = "Fan-made demonstration pack for Charaly. Original text and generated " +
+                "artwork only; not affiliated with or endorsed by the rights holders of the " +
+                "Miraculous Ladybug setting. Canon summarised from public reference; no " +
+                "copyrighted screenplay, episode text or dialogue is reproduced.",
+        ),
     )
 }
