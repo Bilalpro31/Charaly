@@ -59,6 +59,17 @@ data class ScheduledEvent(
     override val payload: EventPayload,
     val sequence: Long,
     val note: String = "",
+    /**
+     * What set this event off.
+     *
+     * Carried on the event rather than supplied at apply time because by the time an
+     * event runs, the thing that scheduled it may be long gone from the queue. Storing
+     * the cause on the event is what lets [dev.charaly.runtime.domain.WorldState] hold
+     * a graph rather than a list.
+     */
+    val causeId: EventId? = null,
+    val causeReason: dev.charaly.runtime.domain.CausalReason? = null,
+    val causeDetail: String = "",
 ) : WorldEvent {
     val isDue: Boolean get() = true
 
@@ -504,4 +515,27 @@ data class ConsequenceFired(
 ) : EventPayload {
     override val summary: String
         get() = "consequence ${consequenceId.value} lands${if (detail.isBlank()) "" else ": $detail"}"
+}
+
+/**
+ * A secret became common knowledge.
+ *
+ * Deliberately not the same as [FactRevealed]. A secret becoming known is an event
+ * with *audiences*: everyone told now knows it, and everyone not told still does not.
+ * Modelling that as "the fact exists" is how a reveal quietly becomes omnipotent, so
+ * the payload carries who was told and the engine grants knowledge one recipient at a
+ * time like anything else.
+ */
+@Serializable
+@SerialName("SecretRevealed")
+data class SecretRevealed(
+    val factId: FactId,
+    val revealedBy: CharacterId,
+    /** Everyone who now knows. */
+    val recipients: List<CharacterId> = emptyList(),
+    val detail: String = "",
+) : EventPayload {
+    override val summary: String
+        get() = "${revealedBy.value} reveals ${factId.value} to " +
+            (if (recipients.isEmpty()) "nobody in particular" else recipients.joinToString { it.value })
 }

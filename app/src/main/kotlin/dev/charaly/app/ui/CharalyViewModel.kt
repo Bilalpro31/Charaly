@@ -1082,6 +1082,97 @@ class CharalyViewModel(
      * which sections survived, what they cost, and what was cut. A dropped section is
      * invisible in the assembled prompt and is exactly the thing worth finding.
      */
+    /**
+ * The causal graph, in plain text.
+ *
+ * Shown in developer mode only. The point of it is that "why did this happen?" has an
+ * answer from the world rather than from the model's narration - so the graph has to be
+ * inspectable, not merely present.
+ */
+fun causalityGraph(): String {
+        val story = _state.value.story ?: return "No story open."
+        val state = story.worldState
+        if (state.causality.isEmpty()) {
+            return "No causal links recorded yet. Every event starts as a cause rather than a reason."
+        }
+        return buildString {
+            appendLine("${state.causality.size} links from ${state.eventLog.size} events")
+            state.causality.values
+                .sortedWith(compareBy({ it.reason.ordinal }, { it.effectId.value }))
+                .take(CAUSAL_LIMIT)
+                .forEach { link ->
+                    appendLine("${link.reason.label}")
+                    appendLine("  ${link.causeId.value} -> ${link.effectId.value}${link.detail}")
+                }
+        }
+    }
+
+    /** Threads, with the structure that says whether one is drifting. */
+    fun storyThreads(): String {
+        val story = _state.value.story ?: return "No story open."
+        val threads = story.storyThreads.values.sortedWith(
+            compareByDescending<dev.charaly.runtime.domain.StoryThread> { it.priority }.thenBy { it.id.value },
+        )
+        if (threads.isEmpty()) return "No story threads."
+        return threads.joinToString("\n\n") { thread ->
+            buildString {
+                appendLine("${thread.title}  [${thread.kind.label}, ${thread.status.name.lowercase()}]")
+                appendLine("  priority ${thread.priority}  stage ${thread.stage}  progress ${thread.progress}%")
+                if (thread.nextBeat.isNotBlank()) appendLine("  next: ${thread.nextBeat}")
+                if (thread.resolutionCondition.isNotBlank()) appendLine("  ends when: ${thread.resolutionCondition}")
+                if (thread.consequenceIfAbandoned.isNotBlank()) {
+                    appendLine("  if dropped: ${thread.consequenceIfAbandoned}")
+                }
+            }.trimEnd()
+        }
+    }
+
+    /** What one character has worked out, for the inspector. */
+    fun characterMinds(): String {
+        val story = _state.value.story ?: return "No story open."
+        val withMinds = story.knowledge.charactersWithMinds()
+        if (withMinds.isEmpty()) return "Nobody has worked anything out yet."
+        return withMinds.joinToString("\n\n") { id ->
+            val mind = story.knowledge.mind(id)
+            val name = story.characters[id]?.name ?: id.value
+            buildString {
+                appendLine("$name")
+                mind.observations.forEach { appendLine("  saw: ${it.description}") }
+                mind.beliefs.forEach { appendLine("  believes (${it.confidence}%): ${it.subject} ${it.claim}") }
+                mind.suspicionList().forEach { appendLine("  suspects (${it.strength}%): ${it.subject} ${it.claim}") }
+                mind.misconceptions.forEach {
+                    appendLine("  WRONG: ${it.subject} ${it.claim} - actually, ${it.truth}")
+                }
+            }.trimEnd()
+        }
+    }
+
+    /** Promises, goals and armed consequences. */
+    fun commitments(): String {
+        val story = _state.value.story ?: return "No story open."
+        val ledger = story.worldState.commitments
+        if (ledger.promises.isEmpty() && ledger.goals.isEmpty() && ledger.consequences.isEmpty()) {
+            return "Nothing has been promised, pursued or set off yet."
+        }
+        return buildString {
+            if (ledger.promises.isNotEmpty()) {
+                appendLine("PROMISES")
+                ledger.promises.forEach {
+                    appendLine("  ${it.keeperId.value} -> ${it.beneficiaryId.value}: \"${it.text}\" [${it.status.name.lowercase()}]")
+                }
+            }
+            if (ledger.goals.isNotEmpty()) {
+                appendLine("GOALS")
+                ledger.goals.forEach { appendLine("  ${it.ownerId.value}: ${it.describe()}") }
+            }
+            val pending = ledger.pendingConsequences()
+            if (pending.isNotEmpty()) {
+                appendLine("ARMED CONSEQUENCES")
+                pending.forEach { appendLine("  ${it.describe()}") }
+            }
+        }.trimEnd()
+    }
+
     fun contextSectionBreakdown(): String {
         val story = _state.value.story ?: return "No story open."
         val sections = runCatching { runtime.contextSections(story) }.getOrNull()
@@ -1131,6 +1222,9 @@ class CharalyViewModel(
     companion object {
         /** Findings show at most this much evidence, so one finding cannot flood the panel. */
         private const val EVIDENCE_LIMIT = 4
+
+        /** Causal links shown at most. The full graph belongs in a log, not a panel. */
+        private const val CAUSAL_LIMIT = 40
 
         fun factory(application: CharalyApplication): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {

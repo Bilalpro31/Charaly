@@ -224,6 +224,10 @@ object StoryInstanceFactory {
         // appear in the audit trail like every other world change.
         val seeds = openingSeedEvents(pack, scenario, instance) +
             EventProgram.compile(pack, scenario, instance)
+        // The cause of the very first world change. Everything at story start hangs off
+        // the story beginning, which gives the causal graph a root instead of a cloud
+        // of unconnected nodes.
+        var originEvent: dev.charaly.runtime.domain.EventId? = null
         seeds.forEach { seed ->
             val scheduled = engine.scheduleEvent(
                 instance = instance,
@@ -231,9 +235,14 @@ object StoryInstanceFactory {
                 at = startTime.plusMinutes(seed.delayMinutes),
                 origin = EventOrigin.STORY_PACK,
                 note = seed.note.ifBlank { "from story pack" },
+                causedBy = originEvent,
+                because = seed.because,
             )
             instance = when (scheduled) {
                 is ScheduleResult.Scheduled -> {
+                    if (originEvent == null) {
+                        originEvent = scheduled.events.first().id
+                    }
                     // Record the authored event id so cooldowns and one-shot
                     // triggers behave exactly like runtime-scheduled events.
                     val key = seed.note.removePrefix(EventProgram.EVENT_NOTE_PREFIX)

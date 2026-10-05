@@ -97,6 +97,9 @@ class StoryHealthAnalyzer(private val definition: WorldDefinition) {
 
         /** A goal nobody has moved for a very long time. */
         ABANDONED_GOAL,
+
+        /** A thread that declares no way of being finished. */
+        UNRESOLVABLE_THREAD,
     }
 
     /**
@@ -155,6 +158,7 @@ class StoryHealthAnalyzer(private val definition: WorldDefinition) {
             addAll(unauthorisedKnowledge(instance))
             addAll(secretLeakage(instance))
             addAll(deadThreads(instance))
+            addAll(unresolvableThreads(instance))
             addAll(orphanedThreads(instance))
             addAll(missingParticipants(instance))
             addAll(staleGoals(instance))
@@ -413,16 +417,45 @@ class StoryHealthAnalyzer(private val definition: WorldDefinition) {
         val now = instance.worldClock.now
         return instance.storyThreads.values
             .filter { it.isOpen() }
+            // Judged by kind, because "no news for a week" means different things for a
+            // mystery and for background colour, and a monitor that reports both with
+            // the same urgency is a monitor people learn to ignore.
+            .filter { it.kind.stalenessMatters }
             .filter { it.updatedAt.minutesUntil(now) >= DEAD_THREAD_MINUTES }
             .map { thread ->
                 Finding(
                     kind = Kind.DEAD_THREAD,
-                    severity = Status.WARNING,
-                    summary = "thread '${thread.title}' has not advanced for ${thread.updatedAt.minutesUntil(now) / 60} story hours",
-                    evidence = listOf("stage ${thread.stage}", thread.id.value),
+                    severity = if (thread.kind.requiresProgress) Status.ERROR else Status.WARNING,
+                    summary = "${thread.kind.label} '${thread.title}' has not advanced for " +
+                        "${thread.updatedAt.minutesUntil(now) / 60} story hours",
+                    evidence = listOf(
+                        "stage ${thread.stage}, ${thread.progress}% done",
+                        "next: ${thread.nextBeat.ifBlank { "unstated" }}",
+                        thread.id.value,
+                    ),
                 )
             }
     }
+
+    /**
+     * A thread that declares what it needs and is being given none of it.
+     *
+     * A mystery with no [dev.charaly.runtime.domain.StoryThread.resolutionCondition]
+     * is a thread that cannot be finished, however long the player works at it. Worth
+     * naming, because the author almost certainly forgot the field rather than meant it.
+     */
+    private fun unresolvableThreads(instance: StoryInstance): List<Finding> =
+        instance.storyThreads.values
+            .filter { it.kind.requiresProgress }
+            .filter { it.resolutionCondition.isBlank() }
+            .map { thread ->
+                Finding(
+                    kind = Kind.UNRESOLVABLE_THREAD,
+                    severity = Status.WARNING,
+                    summary = "'${thread.title}' is a ${thread.kind.label} that says nothing would finish it",
+                    evidence = listOf("stage ${thread.stage}", thread.id.value),
+                )
+            }
 
     /**
      * A thread that points at a character or place the pack does not contain.

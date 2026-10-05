@@ -98,6 +98,9 @@ data class CharacterMind(
     fun suspicionAbout(subject: String): Suspicion? =
         suspicions.firstOrNull { it.subject.equals(subject, ignoreCase = true) }
 
+    /** Suspicions, for a caller that has no business iterating the field directly. */
+    fun suspicionList(): List<Suspicion> = suspicions
+
     /** Whether this character believes [claim] about [subject], wrongly or not. */
     fun believes(subject: String, claim: String): Boolean =
         beliefAbout(subject)?.claim?.equals(claim, ignoreCase = true) == true ||

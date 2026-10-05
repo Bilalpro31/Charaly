@@ -361,6 +361,10 @@ fun CharalyApp(
                             eventLog = viewModel.eventLog(),
                             storyHealth = viewModel.storyHealth(),
                             storyHealthStatus = viewModel.storyHealthStatus(),
+                            causality = viewModel.causalityGraph(),
+                            threads = viewModel.storyThreads(),
+                            minds = viewModel.characterMinds(),
+                            commitments = viewModel.commitments(),
                             stories = state.instances.map { it.id.value },
                             instanceId = state.story?.id?.value.orEmpty(),
                         )

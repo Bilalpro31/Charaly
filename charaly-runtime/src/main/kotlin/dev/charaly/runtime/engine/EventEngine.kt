@@ -3,6 +3,7 @@ package dev.charaly.runtime.engine
 import dev.charaly.runtime.domain.CharacterActivity
 import dev.charaly.runtime.domain.CharacterId
 import dev.charaly.runtime.domain.EntityId
+import dev.charaly.runtime.domain.EventId
 import dev.charaly.runtime.domain.LocationId
 import dev.charaly.runtime.domain.Relationship
 import dev.charaly.runtime.domain.RelationshipKey
@@ -29,6 +30,7 @@ import dev.charaly.runtime.domain.events.MisconceptionFormed
 import dev.charaly.runtime.domain.events.PromiseForgotten
 import dev.charaly.runtime.domain.events.PromiseMade
 import dev.charaly.runtime.domain.events.PromiseResolved
+import dev.charaly.runtime.domain.events.SecretRevealed
 import dev.charaly.runtime.domain.events.SuspicionRaised
 import dev.charaly.runtime.domain.events.CharacterRoutineApplied
 import dev.charaly.runtime.domain.events.EventOrigin
@@ -155,6 +157,8 @@ class EventEngine(val definition: WorldDefinition) {
         at: StoryTime,
         origin: EventOrigin = EventOrigin.USER,
         note: String = "",
+        causedBy: EventId? = null,
+        because: dev.charaly.runtime.domain.CausalReason? = null,
     ): ScheduleResult {
         var counter = instance.idCounter
         val event = ScheduledEvent(
@@ -164,6 +168,8 @@ class EventEngine(val definition: WorldDefinition) {
             payload = payload,
             sequence = instance.eventQueue.nextSequence,
             note = note,
+            causeId = causedBy,
+            causeReason = because,
         )
         val queued = instance.copy(
             eventQueue = instance.eventQueue.enqueue(event),
@@ -178,7 +184,41 @@ class EventEngine(val definition: WorldDefinition) {
         by: StoryDuration,
         origin: EventOrigin = EventOrigin.USER,
         note: String = "",
-    ): ScheduleResult = scheduleEvent(instance, payload, instance.worldClock.scheduleAfter(by), origin, note)
+        causedBy: EventId? = null,
+        because: dev.charaly.runtime.domain.CausalReason? = null,
+    ): ScheduleResult = scheduleEvent(
+        instance,
+        payload,
+        instance.worldClock.scheduleAfter(by),
+        origin,
+        note,
+        causedBy,
+        because,
+    )
+
+    /**
+     * Schedules a payload as a consequence of the event currently being applied.
+     *
+     * The one way to create a causal chain: the cause is recorded at *scheduling* time
+     * rather than guessed at apply time, because by the time the effect runs the cause
+     * has usually left the queue and nothing would be left to attribute it to.
+     */
+    fun scheduleAsConsequenceOf(
+        instance: StoryInstance,
+        payload: EventPayload,
+        cause: EventId,
+        because: dev.charaly.runtime.domain.CausalReason,
+        by: StoryDuration = StoryDuration.ZERO,
+        note: String = "",
+    ): ScheduleResult = scheduleAfter(
+        instance = instance,
+        payload = payload,
+        by = by,
+        origin = EventOrigin.ENGINE,
+        note = note,
+        causedBy = cause,
+        because = because,
+    )
 
     fun scheduleAll(
         instance: StoryInstance,
@@ -383,6 +423,28 @@ class EventEngine(val definition: WorldDefinition) {
             }
 
             is FactRevealed -> Unit
+
+            is SecretRevealed -> {
+                if (definition.character(payload.revealedBy) == null) errors += EventRejection.UNKNOWN_CHARACTER
+                if (instance.knowledge.fact(payload.factId) == null) errors += EventRejection.UNKNOWN_FACT
+                if (payload.recipients.isEmpty()) {
+                    // A reveal to nobody is a contradiction: a secret that came out has
+                    // an audience, and letting this through would register the fact as
+                    // revealed while teaching it to no one.
+                    errors += EventRejection.EMPTY_CHANGE
+                }
+                payload.recipients.forEach {
+                    if (definition.character(it) == null) errors += EventRejection.UNKNOWN_CHARACTER
+                }
+                if (payload.recipients.distinct().size != payload.recipients.size) {
+                    errors += EventRejection.EMPTY_CHANGE
+                }
+                val alreadyKnown = payload.recipients.count { instance.knowledge.knows(it, payload.factId) }
+                if (payload.recipients.isNotEmpty() && alreadyKnown == payload.recipients.size) {
+                    notes += "everyone it was revealed to already knew"
+                    noOp = true
+                }
+            }
 
             is CharacterObserved -> {
                 if (definition.character(payload.characterId) == null) errors += EventRejection.UNKNOWN_CHARACTER
@@ -1196,12 +1258,128 @@ class EventEngine(val definition: WorldDefinition) {
                 )
                 changes += "consequence ${consequence.id.value} lands: ${consequence.outcome}"
             }
+
+            is SecretRevealed -> {
+                val fact = current.knowledge.fact(payload.factId)!!
+                val at = current.worldClock.now
+                // Everyone told, one grant at a time, exactly as knowledge is normally
+                // granted. A reveal is not a special case that bypasses the boundary.
+                payload.recipients.distinct().forEach { recipient ->
+                    val known = current.knowledge.knows(recipient, payload.factId)
+                    current = current.evolved(
+                        knowledge = current.knowledge.withKnowledge(
+                            recipient,
+                            listOf(
+                                KnowledgeEntry(
+                                    factId = payload.factId,
+                                    learnedAt = at,
+                                    confidence = 100,
+                                    via = "${payload.revealedBy.value} told them",
+                                ),
+                            ),
+                        ),
+                    )
+                    if (!known) {
+                        val runtime = current.characters[recipient]
+                        if (runtime != null) {
+                            current = current.evolved(
+                                worldState = current.worldState.withCharacter(
+                                    runtime.copy(
+                                        knownFactIds = runtime.knownFactIds + payload.factId,
+                                        lastUpdatedAt = at,
+                                    ),
+                                ),
+                            )
+                        }
+                        current = remember(
+                            current,
+                            "secret-${payload.factId.value}-${recipient.value}",
+                            { memoryId ->
+                                dev.charaly.runtime.domain.memory.Memory(
+                                    id = memoryId,
+                                    characterId = recipient,
+                                    content = "${payload.revealedBy.value} told you: ${fact.render()}",
+                                    importance = 5,
+                                    createdAt = at,
+                                    source = dev.charaly.runtime.domain.memory.MemorySource.EVENT,
+                                    tier = dev.charaly.runtime.domain.memory.MemoryTier.SECRET,
+                                    relatedFactIds = listOf(payload.factId),
+                                    sourceEventId = scheduled.id,
+                                    // Secret, not world: a thing that has been told to
+                                    // somebody is not thereby public, and marking it WORLD
+                                    // would hand it to every bystander in the story.
+                                    visibility = dev.charaly.runtime.domain.memory.MemoryVisibility.SECRET,
+                                    visibleTo = listOf(recipient, payload.revealedBy),
+                                )
+                            },
+                            changes,
+                        )
+                    }
+                }
+                changes += "${payload.revealedBy.value} revealed ${payload.factId.value} to " +
+                    payload.recipients.joinToString { it.value }
+            }
         }
 
+        // The causal edge is recorded only when the event actually changed something and
+        // declared a cause. A no-op did not happen, so it cannot have caused anything,
+        // and recording it as a node that everything else points at would make the graph
+        // lie in the one way that matters.
+        val wasNoOp = changes.any { it.startsWith("no change") }
+        val withEvent = current.worldState.recordEvent(scheduled.id, stillActive)
+        val link = if (wasNoOp) null else scheduled.causalLink()
         val recorded = current.evolved(
-            worldState = current.worldState.recordEvent(scheduled.id, stillActive),
+            worldState = if (link == null) withEvent else withEvent.recordCausality(link),
         )
         return EventApplication.Applied(recorded, scheduled, changes)
+    }
+
+    /**
+     * The causal edge this event implies, or null when it has no declared cause.
+     *
+     * Inferred from the payload *and* the origin, because the same event type means
+     * different things depending on who asked for it: a `CharacterMoved` caused by the
+     * clock is a routine, and the identical payload caused by a player's decision is
+     * something they did. Reading the origin as well as the type is what keeps those
+     * apart.
+     */
+    private fun ScheduledEvent.causalLink(): dev.charaly.runtime.domain.CausalLink? {
+        val cause = causeId ?: return null
+        val reason = causeReason ?: defaultReason() ?: return null
+        return dev.charaly.runtime.domain.CausalLink(
+            causeId = cause,
+            effectId = id,
+            reason = reason,
+            at = scheduledAt,
+            detail = note,
+        )
+    }
+
+    /** The reason implied by an event's own shape, when the caller gave none. */
+    private fun ScheduledEvent.defaultReason(): dev.charaly.runtime.domain.CausalReason? = when (payload) {
+        is CharacterRoutineApplied -> dev.charaly.runtime.domain.CausalReason.ROUTINE
+        is TimeAdvanced -> dev.charaly.runtime.domain.CausalReason.CLOCK
+        is CharacterMoved -> if (origin == EventOrigin.MODEL_PROPOSAL) {
+            dev.charaly.runtime.domain.CausalReason.MODEL_PROPOSAL
+        } else {
+            dev.charaly.runtime.domain.CausalReason.MOVEMENT
+        }
+        is RelationshipChanged -> dev.charaly.runtime.domain.CausalReason.ENCOUNTER
+        is KnowledgeDiscovered -> dev.charaly.runtime.domain.CausalReason.KNOWLEDGE_GAINED
+        is SecretRevealed -> dev.charaly.runtime.domain.CausalReason.SECRET_REVEALED
+        is PromiseResolved -> if (payload.status == dev.charaly.runtime.domain.CommitmentStatus.BROKEN) {
+            dev.charaly.runtime.domain.CausalReason.PROMISE_BROKEN
+        } else {
+            dev.charaly.runtime.domain.CausalReason.PROMISE_KEPT
+        }
+        is GoalUpdated -> dev.charaly.runtime.domain.CausalReason.GOAL_PROGRESS
+        is ConsequenceFired -> dev.charaly.runtime.domain.CausalReason.CONSEQUENCE
+        is SecretRevealed -> dev.charaly.runtime.domain.CausalReason.SECRET_REVEALED
+        else -> if (origin == EventOrigin.STORY_PACK) {
+            dev.charaly.runtime.domain.CausalReason.SCRIPTED
+        } else {
+            null
+        }
     }
 
     /**
@@ -1373,6 +1551,11 @@ class EventEngine(val definition: WorldDefinition) {
                 at = current.worldClock.now,
                 origin = EventOrigin.ENGINE,
                 note = payload.summary,
+                // The clock is what moved everyone. Chaining every relocation to the
+                // single TimeAdvanced event is what lets "why was he here?" be
+                // answered with "because it is his day" rather than invented.
+                causedBy = current.worldState.eventLog.lastOrNull(),
+                because = dev.charaly.runtime.domain.CausalReason.CLOCK,
             )) {
                 is ScheduleResult.Rejected -> Unit
                 is ScheduleResult.Scheduled -> {

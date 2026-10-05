@@ -255,9 +255,16 @@ class ContextBudgetInspector(
                 id = "threads",
                 title = "Active threads",
                 priority = 7,
-                rendered = scene.activeThreadIds.mapNotNull { instance.storyThreads[it] }
+                // Ordered by the thread's own declared priority, not by iteration
+                // order. Author order is alphabetical by id, so a low-priority thread
+                // whose id sorts early would otherwise win a contested context slot from
+                // the thread the author actually cares about.
+                rendered = scene.activeThreadIds
+                    .mapNotNull { instance.storyThreads[it] }
+                    .sortedByDescending { it.priority }
                     .joinToString("\n") { thread ->
-                        "- ${thread.title} (stage ${thread.stage}): ${thread.description}"
+                        "- ${thread.promptLine()}" +
+                            if (thread.description.isBlank()) "" else ": ${thread.description}"
                     },
                 itemCount = scene.activeThreadIds.size,
                 dropped = 0,

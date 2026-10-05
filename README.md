@@ -46,12 +46,25 @@ walking into his shop.
 **Knowledge is character-scoped.** A secret told to one character is not merely hidden
 from another's prompt; it is unreachable by construction. `Memory.visibleTo(subject)`
 is a closed, total function, and a memory a character may not see can never be returned
-by retrieval regardless of how relevant it scores.
+by retrieval regardless of how relevant it scores. Facts are not enough on their own,
+so a character also has a *mind* - what they witnessed, concluded, cannot dismiss, and
+are wrong about. Fifteen of the nineteen characters in the Miraculous pack start with
+one, four of them holding something false.
 
 **The world changes only through validated events.** The model proposes; the engine
 disposes. A routine relocation is a distinct payload from a movement for a real reason -
 `CharacterMoved` is a traversal validated against the location graph, while a schedule
 is authoritative world data - and both are logged and replayable.
+
+**The world knows why.** An event log answers "in what order". It cannot answer "why",
+which is the only question a story is made of - so every applied event may carry a typed
+causal link, and `WorldState.causality` is a graph that can be walked in both
+directions. The reason is a closed enum rather than prose, because "what did my choices
+actually do" is not answerable on a graph of free text.
+
+**Promises outlive being forgotten.** A promise, a goal and an armed consequence are
+world state, not memories, because all three have to be *checkable*. A character who
+has forgotten their promise still owes it; the story does not forget on their behalf.
 
 ### Where each guarantee is tested
 
@@ -168,6 +181,11 @@ author - or a prompt - can smuggle an arbitrary state change past the engine.
 | Who knows what | `KnowledgeStore` | World truth **separate** from per-character knowledge |
 | Who is where | `Routine` / `PresenceEngine` | An NPC's day, resolved into relocations when story time moves |
 | Persistent memory | `MemoryStore` / `MemoryConsolidator` | Layered memories with visibility, scored deterministically, merged and de-contradicted |
+| Writing memory | `MemoryWriter` | The gated pipeline: candidates, importance, visibility, dedup, canon, contradiction |
+| What a character knows | `KnowledgeStore` / `CharacterMind` | World truth, granted knowledge, and per-character observation, belief, suspicion, error |
+| Commitments | `CommitmentLedger` | Promises, goals and armed consequences, kept out of memory because they must survive forgetting |
+| Why things happened | `CausalLink` / `WorldState.causality` | A typed cause graph, walkable in both directions |
+| Consistency | `StoryHealthAnalyzer` | Sixteen read-only checks. Never shown outside developer mode |
 | Current moment | `Scene` / `SceneDirector` | Who is present, where, and which threads matter. Not prose |
 | The world as a place | `WorldPresenter` | Places and people, straight from authoritative state |
 | Prompt selection | `ContextBuilder` | The **only** class that turns world state into text |
@@ -183,8 +201,8 @@ author - or a prompt - can smuggle an arbitrary state change past the engine.
 ```
 StoryInstance          owns world state, knowledge, memories, queue, transcript
   └ WorldState         owns clock, locations, variables, character runtimes,
-                       relationships, threads, scenes
-  ├ KnowledgeStore     owns world truth + per-character knowledge
+                       relationships, threads, scenes, commitments, causality
+  ├ KnowledgeStore     owns world truth + per-character knowledge + minds
   ├ MemoryStore        owns persistent memories
   ├ EventQueue         owns pending events
   └ Conversation       owns the transcript (NOT world truth)
@@ -216,7 +234,7 @@ network fetch.
 
 | Pack | Characters | Of those, NPCs | Locations | Events | Openings |
 |---|---|---|---|---|---|
-| Miraculous: Shadows of Paris | 19 | 12 | 21 | 9 | 3 |
+| Miraculous: Shadows of Paris | 19 | 12 | 26 | 9 | 3 |
 | Neon District: Afterlight | 5 | 0 | 6 | 9 | 3 |
 | The Last Kingdom | 5 | 0 | 6 | 9 | 3 |
 
@@ -227,6 +245,18 @@ with a routine, a personality, knowledge boundaries and their own place to be fo
 `MiraculousWorldPopulationTest` asserts the cast size, that every scheduled character has
 a valid placement at every hour, and that walking into the ice-cream shop finds the
 vendor there without anyone summoning him.
+
+It also asserts that every NPC has their *own* home, which is a bug that was actually
+there: every routine had "18:00 - at home" pointing at André's flat, so at closing time
+the school staff, the shopkeepers, the museum guide and André were all standing in one
+two-room flat. Each of the nine has a home of their own now, and the evening scatters.
+
+Fifteen of the nineteen characters start with a written **mind** - what they
+witnessed, what they concluded, what they suspect, and in four cases what they have
+simply got wrong, with the truth recorded alongside. Marinette is certain the masked hero
+who fights beside her is "a friend from another school". She is not, and the story's
+central reveal is the engine retiring that belief rather than the model happening to
+notice.
 
 Isolation is structural, not conventional: each pack owns its own ids, world state,
 relationships, knowledge, memories, events, threads and sessions. A `StoryInstance`
@@ -347,26 +377,31 @@ included in device backup; imported `.gguf` models are excluded.
 
 ## Testing
 
-552 JVM tests, no device, no emulator, no model download.
+787 JVM tests, no device, no emulator, no model download.
 
 ```
 Domain          RoutineTest                  LayeredMemoryTest
                 CharacterRuntimeTest         RelationshipTest
+                RelationshipAxesTest         CommitmentTest
                 StoryInstanceTest            WorldStateTest
                 WorldClockTest               StoryThreadTest
+                StoryThreadStructureTest     CausalGraphTest
                 KnowledgeTest                MemoryTest
+                CharacterMindTest            MemoryWriterTest
 Engine          EventEngineTest              MemoryLifecycleTest
-                WorldSimulationTest
+                WorldSimulationTest          StoryHealthAnalyzerTest
 Content         StoryPackTest                PackInventoryTest
                 PackSmokeTest                MiraculousWorldPopulationTest
                 DemoPackBehaviourTest        LastKingdomPackSmokeTest
                 NeonDistrictPackSmokeTest
-Presentation    ContextBuilderTest           SceneDirectorTest
+Presentation    ContextBuilderTest           ContextBudgetInspectorTest
+                CommitmentContextTest        SceneDirectorTest
                 StoryPipelineIntegrationTest LibraryPresentersTest
                 WorldPresenterTest           MemoryPanelPresenterTest
                 HeroPresenterTest            LayoutPolicyTest
-                MotionPolicyTest              VisualResolverTest
-                ModelLibraryPresenterTest
+                MotionPolicyTest             VisualResolverTest
+                DemoPackVisualIdentityTest   ModelLibraryPresenterTest
+Session         MemoryLifecycleTest          MemoryWritePipelineTest
 Persistence     PersistenceTest             SchemaMigrationTest
 Models          ModelEngineCompatibilityTest
 Compatibility   CompatibilityTest
@@ -385,7 +420,42 @@ into the ice-cream shop and find the vendor, advance time and watch the city mov
 tell one character a secret and prove another cannot know it, restart and find the world
 unchanged.
 
-`NestedScrollGuardTest` deserves a note. The "Story Packs" tab used to crash **on
+### Five tests that exist because a bug got through
+
+A test suite is mostly evidence that the obvious things work. These five are evidence
+about this codebase specifically, and each one is here because the thing it guards was
+*wrong at some point*.
+
+**`MiraculousWorldPopulationTest.every npc has their own home, not a shared one`.**
+Every NPC routine pointed "18:00 - at home" at Andre's flat, because a routine had been
+copied and the destination had not. The world looked correct all day and then, at six in
+the evening, the principal, two teachers, the receptionist, the caretaker and the museum
+guide were all standing in a two-room flat above an ice-cream shop. Nothing crashed. A
+player who walked in at closing time just found seven strangers in André's kitchen.
+
+**`MemoryWriterTest.greetings and weather are small talk`.** The first version of the
+importance gate consulted the tier floor, so "hi" - tagged EPISODIC by the extractor -
+scored 2 and was stored. Every greeting in every conversation became a permanent
+retrieval slot. A floor is a floor, not a promotion, and the gate now reads the words
+alone.
+
+**`CommitmentContextTest.a forgotten promise is still in the prompt`.** A promise
+built out of memories looks correct right up until a character forgets, at which point
+the obligation quietly evaporates - which is the exact opposite of what a promise is.
+Commitments are world state precisely so that this cannot happen, and this test is what
+stops someone "simplifying" it back into memories later.
+
+**`CharacterMindTest.the prompt tells the model not to correct its own beliefs`.** The
+misconception machinery worked perfectly and was still producing nothing, because a model
+given "believes (wrongly) that the new student is nobody" helpfully corrects itself
+mid-answer. The instruction in the prompt is not decoration; it is the feature.
+
+**`DemoPackVisualIdentityTest.the declared portrait is what actually gets resolved`.** The
+resolver drew from the entity id and silently ignored the seed the pack had declared, so
+every generated pack looked correct in tests and drew the wrong picture at runtime - a
+seed is a choice, and a resolver that discards it is a resolver nobody can art-direct.
+
+`NestedScrollGuardTest` deserves a note too. The "Story Packs" tab used to crash **on
 tablets only**: a `LazyVerticalGrid` was nested inside a `LazyColumn` item, which Compose
 measures with an infinite max height and refuses. Because it was width-dependent, it
 looked like a tablet bug rather than a code bug. The guard now scans the Kotlin sources

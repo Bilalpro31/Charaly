@@ -61,6 +61,10 @@ fun DeveloperScreen(
     eventLog: String,
     storyHealth: String,
     storyHealthStatus: String,
+    causality: String,
+    threads: String,
+    minds: String,
+    commitments: String,
     stories: List<String>,
     instanceId: String,
 ) {
@@ -159,6 +163,72 @@ fun DeveloperScreen(
                 Column {
                     Eyebrow("WorldState")
                     Monospace(worldState.ifBlank { "open a story to inspect its world" })
+                }
+            }
+        }
+
+        item(key = "threads") {
+            CharalyCard(container = MaterialTheme.colorScheme.surfaceContainer) {
+                Column {
+                    Eyebrow("Story threads")
+                    Text(
+                        text = "Each thread with its priority, progress, what it needs next and what " +
+                            "would finish it. A thread that cannot be finished is a thread nobody " +
+                            "ever will.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
+                    Monospace(threads, maxLines = 60)
+                }
+            }
+        }
+
+        item(key = "minds") {
+            CharalyCard(container = MaterialTheme.colorScheme.surfaceContainer) {
+                Column {
+                    Eyebrow("Character minds")
+                    Text(
+                        text = "What each character has seen, concluded, cannot dismiss, and is " +
+                            "wrong about. A character with no mind cannot be anything but a " +
+                            "list of facts.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
+                    Monospace(minds, maxLines = 60)
+                }
+            }
+        }
+
+        item(key = "commitments") {
+            CharalyCard(container = MaterialTheme.colorScheme.surfaceContainer) {
+                Column {
+                    Eyebrow("Commitments")
+                    Text(
+                        text = "Promises, goals and consequences. Kept separately from memory " +
+                            "because they have to survive being forgotten.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
+                    Monospace(commitments)
+                }
+            }
+        }
+
+        item(key = "causality") {
+            CharalyCard(container = MaterialTheme.colorScheme.surfaceContainer) {
+                Column {
+                    Eyebrow("Causal graph")
+                    Text(
+                        text = "Why each event happened, as recorded by the engine rather than " +
+                            "narrated by the model.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
+                    Monospace(causality, maxLines = 60)
                 }
             }
         }

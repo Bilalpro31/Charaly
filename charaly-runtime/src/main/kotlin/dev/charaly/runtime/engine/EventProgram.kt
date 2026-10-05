@@ -78,11 +78,16 @@ object EventProgram {
             val payloads = definition.effects.mapNotNull { it.toPayload(context) } +
                 definition.threadChanges.mapNotNull { it.toPayload() }
             val delay = (at.totalMinutes - start.totalMinutes).coerceAtLeast(0L)
+            // Every payload a trigger produces is caused by that trigger, and the reason
+            // comes from the trigger itself. This is what puts typed edges into the
+            // causal graph from authored content rather than only from runtime decisions.
+            val reason = definition.trigger.causalReason()
             payloads.forEach { payload ->
                 seeds += SeedEvent(
                     payload = payload,
                     delayMinutes = delay,
                     note = "$EVENT_NOTE_PREFIX${definition.id}",
+                    because = reason,
                 )
             }
             if (depth >= MAX_NESTED_DEPTH) return
@@ -135,6 +140,21 @@ object EventProgram {
      * The runtime schedules these through the event engine, so even an
      * "automatic" world change is validated exactly like a user action.
      */
+    /**
+     * The causal reason a trigger implies.
+     *
+     * A trigger is *how* something was set going, which is exactly what a causal edge
+     * wants to record: "because the clock reached six", "because a condition came
+     * true", "because the story says so". Deriving it here rather than asking pack
+     * authors to fill in a second, redundant field is why the two cannot drift apart.
+     */
+    private fun EventTrigger.causalReason(): dev.charaly.runtime.domain.CausalReason? = when (this) {
+        is EventTrigger.AtStoryTime -> dev.charaly.runtime.domain.CausalReason.CLOCK
+        is EventTrigger.AfterDelay -> dev.charaly.runtime.domain.CausalReason.CLOCK
+        is EventTrigger.WhenConditionMet -> dev.charaly.runtime.domain.CausalReason.TRIGGERED
+        is EventTrigger.StoryStart -> dev.charaly.runtime.domain.CausalReason.SCRIPTED
+    }
+
     fun conditionalCandidates(
         pack: StoryPack,
         instance: StoryInstance,

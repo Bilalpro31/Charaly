@@ -147,6 +147,15 @@ data class SeedEvent(
     val payload: dev.charaly.runtime.domain.events.EventPayload,
     val delayMinutes: Long = 0L,
     val note: String = "",
+    /**
+     * What set this off, when the pack says so.
+     *
+     * The causal reason only - the cause *event* is resolved at instance creation, where
+     * ids actually exist. A pack cannot name an event id it does not own, but it can
+     * say "this happened because the clock reached six", and that is enough for the
+     * graph to have typed edges instead of a flat log.
+     */
+    val because: dev.charaly.runtime.domain.CausalReason? = null,
 ) {
     init {
         require(delayMinutes >= 0) { "delayMinutes must not be >= 0" }
