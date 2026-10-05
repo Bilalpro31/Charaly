@@ -5,6 +5,7 @@ import dev.charaly.runtime.domain.CharacterId
 import dev.charaly.runtime.domain.LocationId
 import dev.charaly.runtime.domain.Scene
 import dev.charaly.runtime.domain.SceneId
+import dev.charaly.runtime.domain.SceneTempo
 import dev.charaly.runtime.domain.StoryInstance
 import dev.charaly.runtime.domain.StoryTime
 import dev.charaly.runtime.domain.StoryThread
@@ -91,8 +92,25 @@ class SceneDirector(private val definition: WorldDefinition) {
             mood = moodOf(instance, locationId, participants.toSet(), activeThreads),
             possibleArrivals = arrivals,
             possibleDepartures = departures,
+            tempo = tempoFor(0, activeThreads),
             startedAt = instance.worldClock.now,
         )
+    }
+
+    /**
+     * How fast this scene may move.
+     *
+     * `incidentCount` counts validated world changes involving anyone present, not
+     * turns - a turn where nobody moved anything is precisely the case [SceneTempo]
+     * exists to represent.
+     */
+    private fun tempoFor(incidentCount: Int, threads: List<StoryThread>): SceneTempo {
+        val pressing = threads.any { thread -> thread.isOpen() && thread.priority >= PRESSING_PRIORITY }
+        return when {
+            pressing && incidentCount >= 2 -> SceneTempo.ESCALATING
+            pressing -> SceneTempo.BUILDING
+            else -> SceneTempo.QUIET
+        }
     }
 
     /**
@@ -112,6 +130,13 @@ class SceneDirector(private val definition: WorldDefinition) {
         }.sortedBy { it.value }
 
         val activeThreads = relevantThreads(instance, scene.locationId, participants.toSet())
+        // Incidents are counted from the world's own knowledge - what has actually
+        // changed to the people standing here - rather than from the turn count, because
+        // a turn in which nobody did anything is not an incident.
+        val incidents = instance.memories.current().count { memory ->
+            memory.characterId in participants &&
+                memory.tier == dev.charaly.runtime.domain.memory.MemoryTier.SCENE
+        }
         return scene.copy(
             participants = participants,
             activeThreadIds = activeThreads.map { it.id },
@@ -119,6 +144,8 @@ class SceneDirector(private val definition: WorldDefinition) {
             mood = moodOf(instance, scene.locationId, participants.toSet(), activeThreads),
             possibleArrivals = arrivals(instance, scene.locationId, participants.toSet()),
             possibleDepartures = departures(instance, scene.locationId, participants.toSet()),
+            incidents = incidents,
+            tempo = tempoFor(incidents, activeThreads),
             focusCharacterId = scene.focusCharacterId ?: focus,
         )
     }
@@ -297,5 +324,14 @@ class SceneDirector(private val definition: WorldDefinition) {
 
         /** Fear at or above this is worth telling the model about. */
         const val FEAR_THRESHOLD = 60
+
+        /**
+         * A thread at or above this priority counts as pressing.
+         *
+         * Above the ambient band, so a background thread cannot push every scene into
+         * "building" - which would make the tempo instruction useless by making it
+         * always the same word.
+         */
+        const val PRESSING_PRIORITY = 60
     }
 }

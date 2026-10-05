@@ -378,7 +378,7 @@ included in device backup; imported `.gguf` models are excluded.
 
 ## Testing
 
-829 JVM tests, no device, no emulator, no model download.
+839 JVM tests, no device, no emulator, no model download.
 
 ```
 Domain          RoutineTest                  LayeredMemoryTest
@@ -398,6 +398,7 @@ Content         StoryPackTest                PackInventoryTest
                 NeonDistrictPackSmokeTest
 Presentation    ContextBuilderTest           ContextBudgetInspectorTest
                 CommitmentContextTest        SceneDirectorContextTest
+                SceneTempoTest
                 SceneDirectorTest            StoryPipelineIntegrationTest
                 LibraryPresentersTest        WorldPresenterTest
                 MemoryPanelPresenterTest     HeroPresenterTest

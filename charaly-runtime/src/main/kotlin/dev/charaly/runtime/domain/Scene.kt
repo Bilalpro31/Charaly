@@ -51,6 +51,27 @@ data class Scene(
      */
     val possibleDepartures: List<CharacterId> = emptyList(),
 
+    /**
+     * How much has already happened in this scene, and how fast it should now move.
+     *
+     * ## Why this exists
+     *
+     * A small model handed an open-ended scene reliably escalates on every turn: two
+     * people talk, an alarm goes off, someone confesses, the roof collapses. Nothing in
+     * the prompt says otherwise, so the model invents momentum it was never given - and
+     * a scene that cannot be *in* a quiet moment is a scene where every conversation
+     * costs the same.
+     *
+     * Real scenes spend most of their time doing very little. So the engine says
+     * explicitly how much has happened, and whether anything is expected to happen at
+     * all. [SceneTempo.QUIET] is a legitimate and common answer, and it is the one that
+     * makes ordinary conversation playable.
+     */
+    val tempo: SceneTempo = SceneTempo.QUIET,
+
+    /** How many times something actually changed in this scene. Not the turn count. */
+    val incidents: Int = 0,
+
     val state: SceneState = SceneState.ACTIVE,
     val startedAt: StoryTime = StoryTime.START,
     val endedAt: StoryTime? = null,
@@ -58,6 +79,32 @@ data class Scene(
 ) {
     init {
         require(turnCount >= 0) { "turnCount must not be negative" }
+        require(incidents >= 0) { "incidents must not be negative" }
+    }
+
+    /**
+     * What to do when something actually happens in this scene.
+     *
+     * Counts *incidents* - validated world changes - rather than turns, because a turn
+     * where nobody moved anything is exactly the case this is here to model.
+     */
+    fun withIncident(): Scene = copy(incidents = incidents + 1)
+
+    /**
+     * The tempo this scene has reached.
+     *
+     * Not a dial a caller sets: a function of how much has happened and whether anything
+     * live is pressing, so that a scene cannot be *told* to be exciting when the world
+     * has not given it a reason to be.
+     */
+    fun currentTempo(hasLivePressure: Boolean): SceneTempo = when {
+        // Something is unresolved and the scene has already gone somewhere. Keep going.
+        hasLivePressure && incidents >= 2 -> SceneTempo.ESCALATING
+        // Something is live but nothing has happened yet. Let it breathe, but be ready.
+        hasLivePressure -> SceneTempo.BUILDING
+        // Nothing live at all, however many turns have passed. This is the case that
+        // stops a model from manufacturing an emergency to fill an empty scene.
+        else -> SceneTempo.QUIET
     }
 
     fun isActive(): Boolean = state == SceneState.ACTIVE
@@ -91,4 +138,39 @@ enum class SceneState {
     ACTIVE,
     SUSPENDED,
     ENDED,
+}
+
+/**
+ * How fast a scene is allowed to move.
+ *
+ * An instruction to the model rather than a throttle on the engine. The engine does not
+ * stop a character from doing something dramatic; it tells the model that nothing is
+ * currently pressing, so a dramatic thing has to come from the characters rather than
+ * from the model needing the scene to be interesting.
+ */
+@Serializable
+enum class SceneTempo(val instruction: String) {
+    /**
+     * Nothing live, nothing expected.
+     *
+     * The default, and the most common state of a real scene. Talk, be ordinary, let
+     * the conversation be the point.
+     */
+    QUIET(
+        "Nothing is happening and nothing needs to. This is an ordinary conversation. " +
+            "Do not introduce an event, a crisis, a confession or a sound in the corridor. " +
+            "Let the scene be uneventful.",
+    ),
+
+    /** Something unresolved is live but has not started moving yet. */
+    BUILDING(
+        "Something is unresolved, but it has not started moving. Let the characters " +
+            "come nearer to it in their own time rather than forcing it.",
+    ),
+
+    /** Something has happened, at least twice, and something is still live. */
+    ESCALATING(
+        "This scene is already under way and something is still unresolved. Let it " +
+            "continue at the pace it has reached.",
+    ),
 }

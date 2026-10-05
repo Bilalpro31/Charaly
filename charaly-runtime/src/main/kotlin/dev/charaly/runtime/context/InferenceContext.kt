@@ -163,6 +163,14 @@ data class InferenceContext(
         if (scene.possibleDepartures.isNotEmpty()) {
             appendLine("- who is likely to leave soon: ${scene.possibleDepartures.joinToString { it.value }}")
         }
+        // The tempo instruction is the one part of this prompt that exists to stop
+        // something rather than to start it. A small model handed an open scene reliably
+        // escalates every turn - two people talk, an alarm goes off, someone confesses,
+        // the roof collapses - because nothing tells it that an uneventful scene is
+        // allowed. This does.
+        appendLine()
+        appendLine("PACE")
+        append(scene.tempo.instruction)
         appendLine()
         appendLine("Stay in character. Reply as ${character.name} would, in the present tense.")
     }
