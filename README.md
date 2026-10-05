@@ -173,6 +173,7 @@ author - or a prompt - can smuggle an arbitrary state change past the engine.
 | Layer | Class | Responsibility |
 |---|---|---|
 | Static definition | `StoryPack` | Immutable authoring data: characters, places, events, lore, openings, roles |
+| What is true regardless | `CanonBible` | The setting's assertions: timeline, world rules, organisations, objects. Never edited by playing |
 | Running story | `StoryInstance` | One playthrough: world state + knowledge + memories + queue + transcript + chapters + model binding |
 | World truth | `WorldState` | Clock, locations, variables, character runtimes, relationships, threads, scenes |
 | Story time | `WorldClock` / `StoryTime` | A *logical* clock. Time moves only when the runtime says so |
@@ -186,7 +187,7 @@ author - or a prompt - can smuggle an arbitrary state change past the engine.
 | Commitments | `CommitmentLedger` | Promises, goals and armed consequences, kept out of memory because they must survive forgetting |
 | Why things happened | `CausalLink` / `WorldState.causality` | A typed cause graph, walkable in both directions |
 | Consistency | `StoryHealthAnalyzer` | Sixteen read-only checks. Never shown outside developer mode |
-| Current moment | `Scene` / `SceneDirector` | Who is present, where, and which threads matter. Not prose |
+| Current moment | `Scene` / `SceneDirector` | Who is present, where, which threads are live, how it feels, and who may arrive. Not prose |
 | The world as a place | `WorldPresenter` | Places and people, straight from authoritative state |
 | Prompt selection | `ContextBuilder` | The **only** class that turns world state into text |
 | Narrative | `InferenceEngine` | Replaceable port: load / generate / stream / stop |
@@ -377,7 +378,7 @@ included in device backup; imported `.gguf` models are excluded.
 
 ## Testing
 
-787 JVM tests, no device, no emulator, no model download.
+829 JVM tests, no device, no emulator, no model download.
 
 ```
 Domain          RoutineTest                  LayeredMemoryTest
@@ -388,6 +389,7 @@ Domain          RoutineTest                  LayeredMemoryTest
                 StoryThreadStructureTest     CausalGraphTest
                 KnowledgeTest                MemoryTest
                 CharacterMindTest            MemoryWriterTest
+                CanonBibleTest
 Engine          EventEngineTest              MemoryLifecycleTest
                 WorldSimulationTest          StoryHealthAnalyzerTest
 Content         StoryPackTest                PackInventoryTest
@@ -395,12 +397,13 @@ Content         StoryPackTest                PackInventoryTest
                 DemoPackBehaviourTest        LastKingdomPackSmokeTest
                 NeonDistrictPackSmokeTest
 Presentation    ContextBuilderTest           ContextBudgetInspectorTest
-                CommitmentContextTest        SceneDirectorTest
-                StoryPipelineIntegrationTest LibraryPresentersTest
-                WorldPresenterTest           MemoryPanelPresenterTest
-                HeroPresenterTest            LayoutPolicyTest
-                MotionPolicyTest             VisualResolverTest
-                DemoPackVisualIdentityTest   ModelLibraryPresenterTest
+                CommitmentContextTest        SceneDirectorContextTest
+                SceneDirectorTest            StoryPipelineIntegrationTest
+                LibraryPresentersTest        WorldPresenterTest
+                MemoryPanelPresenterTest     HeroPresenterTest
+                LayoutPolicyTest             MotionPolicyTest
+                VisualResolverTest           DemoPackVisualIdentityTest
+                ModelLibraryPresenterTest
 Session         MemoryLifecycleTest          MemoryWritePipelineTest
 Persistence     PersistenceTest             SchemaMigrationTest
 Models          ModelEngineCompatibilityTest

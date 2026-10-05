@@ -149,6 +149,20 @@ data class InferenceContext(
             appendLine("- present: ${scene.participants.joinToString { it.value }}")
         }
         if (sceneObjective.isNotBlank()) appendLine("- current situation: $sceneObjective")
+        if (scene.mood.isNotBlank()) {
+            appendLine("- how this feels: ${scene.mood}")
+            // Derived by the director, so it is stated as fact rather than suggestion.
+            // Without that instruction a model treats a mood as a suggestion and
+            // cheerfully writes a jolly scene in an empty street at three in the morning.
+            appendLine("Write the scene so that it feels like that.")
+        }
+        if (scene.possibleArrivals.isNotEmpty()) {
+            appendLine("- who might turn up: ${scene.possibleArrivals.joinToString { it.value }}")
+            appendLine("They are not here yet. Do not narrate them as present.")
+        }
+        if (scene.possibleDepartures.isNotEmpty()) {
+            appendLine("- who is likely to leave soon: ${scene.possibleDepartures.joinToString { it.value }}")
+        }
         appendLine()
         appendLine("Stay in character. Reply as ${character.name} would, in the present tense.")
     }
