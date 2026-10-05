@@ -18,11 +18,17 @@ import dev.charaly.runtime.domain.events.CharacterActivityChanged
 import dev.charaly.runtime.domain.events.CharacterEnteredScene
 import dev.charaly.runtime.domain.events.CharacterLeftScene
 import dev.charaly.runtime.domain.events.BeliefFormed
+import dev.charaly.runtime.domain.events.ConsequenceArmed
+import dev.charaly.runtime.domain.events.ConsequenceFired
+import dev.charaly.runtime.domain.events.GoalUpdated
 import dev.charaly.runtime.domain.events.CharacterMoved
 import dev.charaly.runtime.domain.events.CharacterObserved
 import dev.charaly.runtime.domain.events.MemoryUpdated
 import dev.charaly.runtime.domain.events.MisconceptionCorrected
 import dev.charaly.runtime.domain.events.MisconceptionFormed
+import dev.charaly.runtime.domain.events.PromiseForgotten
+import dev.charaly.runtime.domain.events.PromiseMade
+import dev.charaly.runtime.domain.events.PromiseResolved
 import dev.charaly.runtime.domain.events.SuspicionRaised
 import dev.charaly.runtime.domain.events.CharacterRoutineApplied
 import dev.charaly.runtime.domain.events.EventOrigin
@@ -62,6 +68,11 @@ enum class EventRejection {
     STAGE_REGRESSION,
     MISSING_CHARACTER_STATE,
     UNKNOWN_MEMORY,
+    UNKNOWN_PROMISE,
+    UNKNOWN_GOAL,
+    UNKNOWN_CONSEQUENCE,
+    ALREADY_RESOLVED,
+    DUPLICATE_COMMITMENT,
 }
 
 data class EventValidation(
@@ -456,6 +467,81 @@ class EventEngine(val definition: WorldDefinition) {
                 if (payload.at.isBefore(instance.worldClock.now)) errors += EventRejection.TIME_NOT_MONOTONIC
                 if (existing != null && !existing.isCurrent) {
                     notes += "memory ${payload.memoryId.value} is already history"
+                    noOp = true
+                }
+            }
+
+            is PromiseMade -> {
+                if (definition.character(payload.keeperId) == null) errors += EventRejection.UNKNOWN_CHARACTER
+                if (definition.character(payload.beneficiaryId) == null) errors += EventRejection.UNKNOWN_CHARACTER
+                // A promise to oneself is a plan. Refusing it here keeps the ledger
+                // meaningful: every entry has somebody who is waiting on it.
+                if (payload.keeperId == payload.beneficiaryId) errors += EventRejection.SELF_RELATIONSHIP
+                if (payload.text.isBlank()) errors += EventRejection.EMPTY_CHANGE
+                if (payload.dueAtMinuteOfDay !in -1..1439) errors += EventRejection.EMPTY_CHANGE
+                if (instance.worldState.commitments.promise(payload.promiseId) != null) {
+                    errors += EventRejection.DUPLICATE_COMMITMENT
+                }
+            }
+
+            is PromiseResolved -> {
+                val promise = instance.worldState.commitments.promise(payload.promiseId)
+                if (promise == null) errors += EventRejection.UNKNOWN_PROMISE
+                // Resolving something twice is not a no-op, it is a contradiction: the
+                // ledger would have to show both that a promise was kept and broken.
+                if (payload.status.isOpen) errors += EventRejection.EMPTY_CHANGE
+                if (promise != null && promise.status.isResolved) errors += EventRejection.ALREADY_RESOLVED
+                payload.witnessedBy?.let {
+                    if (definition.character(it) == null) errors += EventRejection.UNKNOWN_CHARACTER
+                }
+            }
+
+            is PromiseForgotten -> {
+                val promise = instance.worldState.commitments.promise(payload.promiseId)
+                if (promise == null) errors += EventRejection.UNKNOWN_PROMISE
+                if (promise != null && !promise.rememberedByKeeper) {
+                    notes += "the keeper already forgot promise ${payload.promiseId.value}"
+                    noOp = true
+                }
+            }
+
+            is GoalUpdated -> {
+                if (definition.character(payload.ownerId) == null) errors += EventRejection.UNKNOWN_CHARACTER
+                if (payload.text.isBlank() &&
+                    instance.worldState.commitments.goal(payload.goalId) == null
+                ) {
+                    errors += EventRejection.EMPTY_CHANGE
+                }
+                val existing = instance.worldState.commitments.goal(payload.goalId)
+                if (existing != null && payload.progressDelta == 0 && payload.status == null) {
+                    notes += "nothing to change about goal ${payload.goalId.value}"
+                    noOp = true
+                }
+                if (existing != null && existing.status.isResolved) {
+                    errors += EventRejection.ALREADY_RESOLVED
+                }
+            }
+
+            is ConsequenceArmed -> {
+                if (definition.character(payload.decidedBy) == null) errors += EventRejection.UNKNOWN_CHARACTER
+                if (payload.decision.isBlank() || payload.outcome.isBlank()) errors += EventRejection.EMPTY_CHANGE
+                if (payload.delayMinutes < 0L) errors += EventRejection.EMPTY_CHANGE
+                payload.requiresPresenceOf?.let {
+                    if (definition.character(it) == null) errors += EventRejection.UNKNOWN_CHARACTER
+                }
+                payload.requiresLocationId?.let {
+                    if (definition.location(it) == null) errors += EventRejection.UNKNOWN_LOCATION
+                }
+                if (instance.worldState.commitments.consequence(payload.consequenceId) != null) {
+                    errors += EventRejection.DUPLICATE_COMMITMENT
+                }
+            }
+
+            is ConsequenceFired -> {
+                val consequence = instance.worldState.commitments.consequence(payload.consequenceId)
+                if (consequence == null) errors += EventRejection.UNKNOWN_CONSEQUENCE
+                if (consequence != null && consequence.resolved) {
+                    notes += "consequence ${payload.consequenceId.value} has already landed"
                     noOp = true
                 }
             }
@@ -901,6 +987,215 @@ class EventEngine(val definition: WorldDefinition) {
                 )
                 changes += "memory ${existing.id.value} refreshed${if (payload.reason.isBlank()) "" else " (${payload.reason})"}"
             }
+
+            is PromiseMade -> {
+                val promise = dev.charaly.runtime.domain.Promise(
+                    id = payload.promiseId,
+                    text = payload.text,
+                    keeperId = payload.keeperId,
+                    beneficiaryId = payload.beneficiaryId,
+                    madeAt = current.worldClock.now,
+                    dueAtMinuteOfDay = payload.dueAtMinuteOfDay,
+                    dueOnDay = payload.dueOnDay,
+                    locationId = payload.locationId,
+                )
+                current = current.evolved(
+                    worldState = current.worldState.withCommitments(
+                        current.worldState.commitments.withPromise(promise),
+                    ),
+                )
+                // The beneficiary learns they have been promised something. Without this
+                // the promise exists in the world and in nobody's head, which is the one
+                // outcome that makes the whole feature pointless.
+                val promisedAt = current.worldClock.now
+                current = remember(
+                    current,
+                    "promise-${payload.promiseId.value}",
+                    { memoryId ->
+                        dev.charaly.runtime.domain.memory.Memory(
+                            id = memoryId,
+                            characterId = payload.beneficiaryId,
+                            content = "you were promised: ${payload.text}",
+                            importance = 4,
+                            createdAt = promisedAt,
+                            source = dev.charaly.runtime.domain.memory.MemorySource.EVENT,
+                            tier = dev.charaly.runtime.domain.memory.MemoryTier.PROMISE,
+                            sourceEventId = scheduled.id,
+                            visibility = dev.charaly.runtime.domain.memory.MemoryVisibility.CHARACTER,
+                        )
+                    },
+                    changes,
+                )
+                changes += "${payload.keeperId.value} promised ${payload.beneficiaryId.value}: ${payload.text}"
+            }
+
+            is PromiseResolved -> {
+                val promise = current.worldState.commitments.promise(payload.promiseId)!!
+                current = current.evolved(
+                    worldState = current.worldState.withCommitments(
+                        current.worldState.commitments.withPromise(
+                            promise.resolve(payload.status, current.worldClock.now, payload.note),
+                        ),
+                    ),
+                )
+                // Both parties are told how it ended - the beneficiary especially,
+                // because a broken promise they were not told about is just a plot hole.
+                val resolvedAt = current.worldClock.now
+                listOf(promise.keeperId, promise.beneficiaryId).distinct().forEach { party ->
+                    current = remember(
+                        current,
+                        "promise-resolved-${promise.id.value}-${party.value}",
+                        { memoryId ->
+                            dev.charaly.runtime.domain.memory.Memory(
+                                id = memoryId,
+                                characterId = party,
+                                content = "the promise \"${promise.text}\" was " +
+                                    "${payload.status.name.lowercase()}" +
+                                    if (payload.note.isBlank()) "" else ": ${payload.note}",
+                                importance = 4,
+                                createdAt = resolvedAt,
+                                source = dev.charaly.runtime.domain.memory.MemorySource.EVENT,
+                                tier = dev.charaly.runtime.domain.memory.MemoryTier.PROMISE,
+                                sourceEventId = scheduled.id,
+                                visibility = dev.charaly.runtime.domain.memory.MemoryVisibility.CHARACTER,
+                            )
+                        },
+                        changes,
+                    )
+                }
+                // A witnessed broken promise is a relationship event, not a private one.
+                if (payload.status == dev.charaly.runtime.domain.CommitmentStatus.BROKEN &&
+                    payload.witnessedBy != null
+                ) {
+                    current = current.evolved(
+                        worldState = current.worldState.withRelationship(
+                            dev.charaly.runtime.domain.Relationship(
+                                sourceId = payload.witnessedBy,
+                                targetId = promise.keeperId,
+                            ).apply(
+                                dev.charaly.runtime.domain.RelationshipDelta(tension = 25, trust = -15),
+                                note = "saw promise broken",
+                                at = current.worldClock.now,
+                            ),
+                        ),
+                    )
+                    changes += "${payload.witnessedBy.value} loses trust in ${promise.keeperId.value}"
+                }
+                changes += "promise ${promise.id.value} is ${payload.status.name.lowercase()}"
+            }
+
+            is PromiseForgotten -> {
+                val promise = current.worldState.commitments.promise(payload.promiseId)!!
+                current = current.evolved(
+                    worldState = current.worldState.withCommitments(
+                        current.worldState.commitments.withPromise(
+                            promise.copy(rememberedByKeeper = false),
+                        ),
+                    ),
+                )
+                // The promise stays in the ledger. Forgetting is what the *keeper*
+                // lost, not what the world lost - and that distinction is the entire
+                // reason a broken promise can still be held against someone later.
+                changes += "${promise.keeperId.value} forgets promise ${promise.id.value}"
+            }
+
+            is GoalUpdated -> {
+                val goalStamp = current.worldClock.now
+                val ledger = current.worldState.commitments
+                val existing = ledger.goal(payload.goalId)
+                val goal = existing ?: dev.charaly.runtime.domain.Goal(
+                    id = payload.goalId,
+                    text = payload.text,
+                    ownerId = payload.ownerId,
+                    updatedAt = goalStamp,
+                    createdAt = goalStamp,
+                )
+                val updated = goal.copy(
+                    progress = (goal.progress + payload.progressDelta).coerceIn(0, 100),
+                    status = payload.status ?: goal.status,
+                    updatedAt = goalStamp,
+                    resolutionNote = payload.note.ifBlank { goal.resolutionNote },
+                )
+                current = current.evolved(
+                    worldState = current.worldState.withCommitments(ledger.withGoal(updated)),
+                )
+                // The owner is the only one who can see their own progress.
+                current = remember(
+                    current,
+                    "goal-${payload.goalId.value}",
+                    { memoryId ->
+                        dev.charaly.runtime.domain.memory.Memory(
+                            id = memoryId,
+                            characterId = payload.ownerId,
+                            content = "${updated.text} - ${updated.progress}% there",
+                            importance = 3,
+                            createdAt = goalStamp,
+                            source = dev.charaly.runtime.domain.memory.MemorySource.EVENT,
+                            tier = dev.charaly.runtime.domain.memory.MemoryTier.GOAL,
+                            sourceEventId = scheduled.id,
+                            // Private: nobody else needs to know how far along someone is,
+                            // and a stranger knowing your progress is not information.
+                            visibility = dev.charaly.runtime.domain.memory.MemoryVisibility.PRIVATE,
+                        )
+                    },
+                    changes,
+                )
+                changes += "goal ${updated.id.value}: ${updated.progress}%" +
+                    (payload.status?.let { " (${it.name.lowercase()})" } ?: "")
+            }
+
+            is ConsequenceArmed -> {
+                val consequence = dev.charaly.runtime.domain.Consequence(
+                    id = payload.consequenceId,
+                    decision = payload.decision,
+                    decidedBy = payload.decidedBy,
+                    decidedAt = current.worldClock.now,
+                    outcome = payload.outcome,
+                    delayMinutes = payload.delayMinutes,
+                    requiresPresenceOf = payload.requiresPresenceOf,
+                    requiresLocationId = payload.requiresLocationId,
+                )
+                current = current.evolved(
+                    worldState = current.worldState.withCommitments(
+                        current.worldState.commitments.withConsequence(consequence),
+                    ),
+                )
+                changes += "consequence ${consequence.id.value} armed: ${consequence.decision}"
+            }
+
+            is ConsequenceFired -> {
+                val consequence = current.worldState.commitments.consequence(payload.consequenceId)!!
+                current = current.evolved(
+                    worldState = current.worldState.withCommitments(
+                        current.worldState.commitments.withConsequence(
+                            consequence.copy(resolved = true, firedAt = current.worldClock.now),
+                        ),
+                    ),
+                )
+                // Whoever decided it learns it came to pass. This is what makes a
+                // choice feel like it had weight: the person who made it finds out.
+                val firedAt = current.worldClock.now
+                current = remember(
+                    current,
+                    "consequence-${payload.consequenceId.value}",
+                    { memoryId ->
+                        dev.charaly.runtime.domain.memory.Memory(
+                            id = memoryId,
+                            characterId = consequence.decidedBy,
+                            content = "because you chose to ${consequence.decision}, " +
+                                "the result was: ${consequence.outcome}",
+                            importance = 5,
+                            createdAt = firedAt,
+                            source = dev.charaly.runtime.domain.memory.MemorySource.EVENT,
+                            tier = dev.charaly.runtime.domain.memory.MemoryTier.CONSEQUENCE,
+                            sourceEventId = scheduled.id,
+                            visibility = dev.charaly.runtime.domain.memory.MemoryVisibility.PRIVATE,
+                        )
+                    },
+                    changes,
+                )
+                changes += "consequence ${consequence.id.value} lands: ${consequence.outcome}"
+            }
         }
 
         val recorded = current.evolved(
@@ -908,6 +1203,59 @@ class EventEngine(val definition: WorldDefinition) {
         )
         return EventApplication.Applied(recorded, scheduled, changes)
     }
+
+    /**
+     * Mints a memory from a template and stores it as part of the current event.
+     *
+     * The single write path for event-created memories: it allocates the id from the
+     * instance counter, stores it, and keeps the owner's index in step. Every arm that
+     * wants to leave a memory behind goes through here rather than assembling one by
+     * hand, because the id is the part that is easy to get wrong.
+     */
+    private fun remember(
+        instance: StoryInstance,
+        prefix: String,
+        build: (dev.charaly.runtime.domain.MemoryId) -> dev.charaly.runtime.domain.memory.Memory,
+        changes: MutableList<String>,
+    ): StoryInstance {
+        val (withId, memoryId) = instance.allocateId(prefix)
+        val memory = build(memoryId)
+        var updated = withId.evolved(memories = withId.memories.add(memory))
+        val runtime = updated.characters[memory.characterId]
+        if (runtime != null && memory.id !in runtime.memoryIds) {
+            updated = updated.evolved(
+                worldState = updated.worldState.withCharacter(
+                    runtime.copy(
+                        memoryIds = runtime.memoryIds + memory.id,
+                        lastUpdatedAt = updated.worldClock.now,
+                    ),
+                ),
+            )
+        }
+        changes += "memory ${memory.id.value} stored for ${memory.characterId.value}"
+        return updated
+    }
+
+    private fun Memory(
+        id: dev.charaly.runtime.domain.MemoryId,
+        characterId: CharacterId,
+        content: String,
+        importance: Int = 4,
+        tier: dev.charaly.runtime.domain.memory.MemoryTier,
+        visibility: dev.charaly.runtime.domain.memory.MemoryVisibility,
+        sourceEventId: dev.charaly.runtime.domain.EventId? = null,
+    ) = dev.charaly.runtime.domain.memory.Memory(
+        id = id,
+        characterId = characterId,
+        content = content,
+        importance = importance,
+        createdAt = StoryTime.START,
+        source = dev.charaly.runtime.domain.memory.MemorySource.EVENT,
+        tier = tier,
+        visibility = visibility,
+        sourceEventId = sourceEventId,
+    )
+
 
     // ------------------------------------------------------------------
     // Processing
@@ -1067,6 +1415,19 @@ class EventEngine(val definition: WorldDefinition) {
 
     companion object {
         const val MAX_EVENTS_PER_PASS = 500
+
+        /**
+         * Allocates one id from the instance's counter, and advances it.
+         *
+         * Returns the bumped instance as well as the id, because an id allocated without
+         * advancing the counter is not an allocation: two memories minted inside one
+         * event reducer would come out identical, and a collided id silently overwrites
+         * a character's existing memory instead of adding a new one.
+         */
+        fun StoryInstance.allocateId(prefix: String): Pair<StoryInstance, dev.charaly.runtime.domain.MemoryId> {
+            val next = idCounter + 1
+            return copy(idCounter = next) to dev.charaly.runtime.domain.MemoryId("$prefix-$next")
+        }
 
         /**
          * The world variable that records where the player is.

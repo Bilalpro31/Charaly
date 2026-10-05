@@ -68,6 +68,12 @@ class ContextBuilder(
             // that returns everyone's minds, so getting this wrong requires going out
             // of the store's way on purpose.
             mind = instance.knowledge.mind(characterId).takeIf { !it.isEmpty() },
+            commitments = instance.worldState.commitments.commitmentsOf(characterId),
+            owedToThem = instance.worldState.commitments.promisesOwedTo(characterId)
+                .map { promise ->
+                    "${promise.keeperId.value} promised you that ${promise.text}" +
+                        if (promise.isOverdueAt(instance.worldClock.now)) " (you are waiting on this)" else ""
+                },
         )
     }
 

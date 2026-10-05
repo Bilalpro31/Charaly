@@ -22,6 +22,16 @@ data class WorldState(
     val characters: Map<CharacterId, CharacterRuntime> = emptyMap(),
     val relationships: Map<RelationshipKey, Relationship> = emptyMap(),
     val storyThreads: Map<ThreadId, StoryThread> = emptyMap(),
+    /**
+     * Promises, goals and armed consequences.
+     *
+     * Authoritative world state rather than something derived from memory, because all
+     * three need to be *checkable*: a promise has to survive the keeper forgetting it,
+     * and a goal has to be able to report that it has not moved in fifty days. Both are
+     * impossible to answer from memories.
+     */
+    val commitments: dev.charaly.runtime.domain.CommitmentLedger =
+        dev.charaly.runtime.domain.CommitmentLedger.EMPTY,
     val activeScenes: Map<SceneId, Scene> = emptyMap(),
     /** Events that are still in effect (a started scene, a presence, ...). */
     val activeEvents: List<EventId> = emptyList(),
@@ -68,6 +78,10 @@ data class WorldState(
 
     fun withScene(scene: Scene): WorldState =
         copy(activeScenes = activeScenes + (scene.id to scene), revision = revision + 1)
+
+    /** Replaces the whole ledger. The only write path, so no half-updated state. */
+    fun withCommitments(ledger: dev.charaly.runtime.domain.CommitmentLedger): WorldState =
+        copy(commitments = ledger, revision = revision + 1)
 
     fun withVariable(variable: WorldVariable): WorldState =
         copy(variables = variables + (variable.key to variable), revision = revision + 1)

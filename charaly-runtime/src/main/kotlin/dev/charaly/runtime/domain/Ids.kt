@@ -29,6 +29,9 @@ typealias EventId = EntityId
 typealias MemoryId = EntityId
 typealias StoryPackId = EntityId
 typealias StoryInstanceId = EntityId
+typealias PromiseId = EntityId
+typealias GoalId = EntityId
+typealias ConsequenceId = EntityId
 
 /** Deterministic, monotonically increasing id generator. */
 class IdGenerator(private val prefix: String = "id") {

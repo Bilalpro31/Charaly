@@ -85,6 +85,18 @@ class StoryHealthAnalyzer(private val definition: WorldDefinition) {
 
         /** Two events claim the same effect. */
         EVENT_CONFLICT,
+
+        /** A promise past its deadline that nobody has resolved. */
+        BROKEN_PROMISE,
+
+        /** A character has forgotten a promise they are still accountable for. */
+        FORGOTTEN_PROMISE,
+
+        /** An armed consequence that is due but will never fire. */
+        STUCK_CONSEQUENCE,
+
+        /** A goal nobody has moved for a very long time. */
+        ABANDONED_GOAL,
     }
 
     /**
@@ -147,6 +159,7 @@ class StoryHealthAnalyzer(private val definition: WorldDefinition) {
             addAll(missingParticipants(instance))
             addAll(staleGoals(instance))
             addAll(eventConflicts(instance))
+            addAll(commitmentFindings(instance))
         }.sortedWith(compareBy({ it.severity.ordinal }, { it.kind.name }, { it.summary }))
 
         return Report(
@@ -511,7 +524,76 @@ class StoryHealthAnalyzer(private val definition: WorldDefinition) {
                 )
             }
 
-    companion object {
+    /**
+ * Commitments: promises that were broken or forgotten, and consequences that are due
+ * but will never fire.
+ *
+ * These are the findings a player would notice and could not explain. A promise quietly
+ * expiring is the kind of loose thread that makes a story feel like it stopped
+ * listening, and a consequence that is due but blocked is a player's choice that will
+ * never pay off - which is the worst possible outcome for the feature that exists to
+ * make choices matter.
+ */
+private fun commitmentFindings(instance: StoryInstance): List<Finding> {
+    val now = instance.worldClock.now
+    val ledger = instance.worldState.commitments
+    val findings = mutableListOf<Finding>()
+
+    ledger.promises.filter { it.status.isOpen }.forEach { promise ->
+        if (promise.isOverdueAt(now)) {
+            findings += Finding(
+                kind = Kind.BROKEN_PROMISE,
+                severity = Status.WARNING,
+                summary = "${promise.keeperId.value} is overdue on a promise to ${promise.beneficiaryId.value}",
+                evidence = listOf(
+                    "\"${promise.text}\"",
+                    "due day ${promise.dueOnDay} at ${promise.dueAtMinuteOfDay / 60}",
+                ),
+            )
+        }
+        if (!promise.rememberedByKeeper) {
+            findings += Finding(
+                kind = Kind.FORGOTTEN_PROMISE,
+                severity = Status.WARNING,
+                summary = "${promise.keeperId.value} has forgotten an open promise to ${promise.beneficiaryId.value}",
+                evidence = listOf("\"${promise.text}\"", promise.id.value),
+            )
+        }
+    }
+
+    ledger.pendingConsequences().forEach { consequence ->
+        // Only worth reporting when it is due and *cannot* land. A consequence waiting
+        // on the clock is working exactly as intended.
+        if (consequence.isDueAt(now) && consequence.isBlockedBy(instance)) {
+            findings += Finding(
+                kind = Kind.STUCK_CONSEQUENCE,
+                severity = Status.WARNING,
+                summary = "a consequence is due but ${consequence.requiresPresenceOf?.value} is not where it needs to be",
+                evidence = listOf(
+                    "decision: ${consequence.decision}",
+                    "outcome: ${consequence.outcome}",
+                    "needs ${consequence.requiresLocationId?.value ?: "anywhere"}",
+                ),
+            )
+        }
+    }
+
+    ledger.goals.forEach { goal ->
+        if (goal.isStalledAt(now, STALE_GOAL_MINUTES)) {
+            findings += Finding(
+                kind = Kind.ABANDONED_GOAL,
+                severity = Status.WARNING,
+                summary = "${goal.ownerId.value} has not moved on '${goal.text}' for " +
+                    "${goal.updatedAt.minutesUntil(now) / 60} story hours",
+                evidence = listOf("${goal.progress}% done", goal.id.value),
+            )
+        }
+    }
+
+    return findings
+}
+
+companion object {
         /** Jaccard overlap above which two current memories count as duplicates. */
         const val DUPLICATE_THRESHOLD = 0.8
 

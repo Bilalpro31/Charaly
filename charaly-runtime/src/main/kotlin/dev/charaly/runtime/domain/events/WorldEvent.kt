@@ -395,3 +395,113 @@ data class MemoryUpdated(
     override val summary: String
         get() = "memory ${memoryId.value} is updated${if (reason.isBlank()) "" else " ($reason)"}"
 }
+
+// ---------------------------------------------------------------------------
+// Commitments: promises, goals, consequences
+// ---------------------------------------------------------------------------
+
+/** Someone made a promise. */
+@Serializable
+@SerialName("PromiseMade")
+data class PromiseMade(
+    val promiseId: dev.charaly.runtime.domain.PromiseId,
+    val text: String,
+    val keeperId: CharacterId,
+    val beneficiaryId: CharacterId,
+    val locationId: LocationId? = null,
+    /** Minutes-of-day the promise was due, or -1 for no deadline. */
+    val dueAtMinuteOfDay: Int = -1,
+    val dueOnDay: Int = -1,
+) : EventPayload {
+    override val summary: String
+        get() = "${keeperId.value} promises ${beneficiaryId.value} that $text"
+}
+
+/**
+ * A promise was kept or broken.
+ *
+ * One event for both, because they are the same kind of change - the resolution of a
+ * commitment - and splitting them would double the validation and reducer surface for no
+ * gain. `BROKEN` is not `KEPT` with a different mood: it is a different world fact.
+ */
+@Serializable
+@SerialName("PromiseResolved")
+data class PromiseResolved(
+    val promiseId: dev.charaly.runtime.domain.PromiseId,
+    val status: dev.charaly.runtime.domain.CommitmentStatus,
+    val note: String = "",
+    /**
+     * A person who witnessed the resolution.
+     *
+     * Optional but load-bearing: whether someone *saw* you break a promise is the
+     * difference between a private failure and a relationship change, and the engine
+     * cannot infer it.
+     */
+    val witnessedBy: CharacterId? = null,
+) : EventPayload {
+    override val summary: String
+        get() = "promise ${promiseId.value} is ${status.name.lowercase()}${if (note.isBlank()) "" else " ($note)"}"
+}
+
+/**
+ * Someone forgot they had made a promise.
+ *
+ * A real state and a distinct payload, not a flag. A character who cannot remember what
+ * they promised is a story situation; it must be authorable, and it must not silently
+ * delete the promise from the ledger.
+ */
+@Serializable
+@SerialName("PromiseForgotten")
+data class PromiseForgotten(
+    val promiseId: dev.charaly.runtime.domain.PromiseId,
+) : EventPayload {
+    override val summary: String get() = "the keeper of promise ${promiseId.value} forgets it"
+}
+
+/** A goal was set, started, advanced or given up. */
+@Serializable
+@SerialName("GoalUpdated")
+data class GoalUpdated(
+    val goalId: dev.charaly.runtime.domain.GoalId,
+    val ownerId: CharacterId,
+    val text: String = "",
+    /** Change in progress, 0..100 delta. */
+    val progressDelta: Int = 0,
+    val status: dev.charaly.runtime.domain.CommitmentStatus? = null,
+    val note: String = "",
+) : EventPayload {
+    override val summary: String
+        get() = buildString {
+            append("goal ${goalId.value} of ${ownerId.value}")
+            if (progressDelta != 0) append(" $progressDelta%")
+            status?.let { append(" (${it.name.lowercase()})") }
+        }
+}
+
+/** A decision was made whose effect arrives later. */
+@Serializable
+@SerialName("ConsequenceArmed")
+data class ConsequenceArmed(
+    val consequenceId: dev.charaly.runtime.domain.ConsequenceId,
+    val decision: String,
+    val decidedBy: CharacterId,
+    val outcome: String,
+    val delayMinutes: Long = 0L,
+    val requiresPresenceOf: CharacterId? = null,
+    val requiresLocationId: LocationId? = null,
+) : EventPayload {
+    override val summary: String
+        get() = "${decidedBy.value}: $decision -> $outcome, in ${delayMinutes}m"
+}
+
+/** A consequence has landed. */
+@Serializable
+@SerialName("ConsequenceFired")
+data class ConsequenceFired(
+    val consequenceId: dev.charaly.runtime.domain.ConsequenceId,
+    /** What it produced, in the engine's own words. */
+    val detail: String = "",
+) : EventPayload {
+    override val summary: String
+        get() = "consequence ${consequenceId.value} lands${if (detail.isBlank()) "" else ": $detail"}"
+}

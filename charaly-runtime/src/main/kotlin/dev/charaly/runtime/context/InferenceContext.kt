@@ -39,6 +39,17 @@ data class InferenceContext(
      * knowledge or silence, and silence is not an interesting thing to act on.
      */
     val mind: dev.charaly.runtime.domain.knowledge.CharacterMind? = null,
+    /**
+     * What this character has promised, and what they are still trying to do.
+     *
+     * Read from the world's commitment ledger rather than derived from memory, because
+     * the interesting question is not "what do they remember promising" but "what are
+     * they on the hook for *right now*" - and a character who has forgotten their
+     * promise still owes it.
+     */
+    val commitments: List<String> = emptyList(),
+    /** Promises made to this character by somebody else. */
+    val owedToThem: List<String> = emptyList(),
 ) {
     /**
      * Approximate context cost. Deliberately a character-count estimate: mobile
@@ -110,6 +121,22 @@ data class InferenceContext(
             // destroys the entire point of holding a misconception.
             appendLine()
             appendLine("Act on these as your own. Do not correct them, and do not learn anything from them.")
+        }
+        if (commitments.isNotEmpty()) {
+            appendLine()
+            appendLine("WHAT YOU ARE ON THE HOOK FOR")
+            commitments.forEach { appendLine("- $it") }
+            // Commitments are the one thing a character must act on unprompted. A
+            // promise nobody mentions again is not a promise, it is a plot note.
+            appendLine("If the conversation gives you a chance, keep these in mind.")
+        }
+        if (owedToThem.isNotEmpty()) {
+            appendLine()
+            appendLine("WHAT OTHERS PROMISED YOU")
+            owedToThem.forEach { appendLine("- $it") }
+            // Not a suggestion: a character who has been promised something is entitled
+            // to ask after it, which is most of what people actually do.
+            appendLine("You are entitled to ask after these.")
         }
         appendLine()
         appendLine("RIGHT NOW")
