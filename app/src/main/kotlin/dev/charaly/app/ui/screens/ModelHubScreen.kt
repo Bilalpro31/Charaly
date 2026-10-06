@@ -270,7 +270,7 @@ fun ModelHubScreen(
         // other is a local copy that can only finish or fail - so they get separate
         // surfaces rather than one bar that has to lie about one of them.
         if (importState.isRunning) {
-            item(key = "import") {
+            item(key = "import-progress") {
                 ImportSurface(state = importState)
             }
         }
@@ -367,7 +367,7 @@ fun ModelHubScreen(
             }
         }
 
-        item(key = "import") {
+        item(key = "import-action") {
             CharalyQuietAction(
                 label = Loc.t("models.import_cta"),
                 icon = Icons.Filled.OpenInNew,
