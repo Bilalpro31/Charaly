@@ -140,12 +140,44 @@ object VisualResolver {
             seed = "event-$eventId",
         )
 
-    /** The backdrop for the scene being played. */
-    fun sceneBackdrop(locationId: String, declared: VisualAsset? = null): ResolvedVisual = resolve(
+    /**
+     * The backdrop for the scene being played.
+     *
+     * [seed] is the scene's own identity including its time of day, so the generated
+     * fallback differs between a rooftop at night and the same rooftop at midday - without
+     * the UI having to decide anything, and without a pack having to declare an image for
+     * every hour.
+     */
+    fun sceneBackdrop(
+        locationId: String,
+        declared: VisualAsset? = null,
+        seed: String = "scene-$locationId",
+    ): ResolvedVisual = resolve(
         key = "scene:$locationId",
-        type = VisualAssetType.SCENE_IMAGE,
+        type = VisualAssetType.BACKGROUND_IMAGE,
         declared = declared,
-        seed = "scene-$locationId",
+        seed = seed,
+    )
+
+    /**
+     * The common tail of every resolution: the one place a [ResolvedVisual] is built.
+     *
+     * Exposed so a caller that has a seed but no entity (an unresolvable character id, for
+     * instance) still goes through the fallback chain rather than inventing a partial value
+     * of its own.
+     */
+    fun resolveFor(
+        key: String,
+        type: VisualAssetType,
+        declared: VisualAsset?,
+        seed: String,
+        userProvided: VisualAsset? = null,
+    ): ResolvedVisual = resolve(
+        key = key,
+        type = type,
+        declared = declared,
+        userProvided = userProvided,
+        seed = seed,
     )
 
     private fun resolve(

@@ -131,10 +131,10 @@ data class ModelCatalogItem(
 /**
  * Where a download would come from.
  *
- * Charaly declares no INTERNET permission, so `source` is metadata that the
- * download pipeline validates against the device's capabilities before offering
- * the action. When downloads are unavailable, the UI shows an honest disabled
- * state instead of a fake progress bar.
+ * Recorded rather than assumed: the pipeline checks the source against its own capabilities
+ * before offering the action, so a `LOCAL_FILE` entry and an `HTTP` entry behave correctly
+ * without the UI having to know which is which. When a transport is unavailable the library
+ * reports that honestly instead of showing a progress bar that goes nowhere.
  */
 @Serializable
 data class DownloadMetadata(
@@ -306,15 +306,26 @@ class BuiltInModelCatalog(
             // ones Google designates for on-device / edge deployment, and the ids below
             // are the official ones.
             //
-            // What is NOT verified is that the llama.cpp compiled into this app can load
-            // a GGUF of them. The bundled engine (commit 5143fa895, 2025-09-05) registers
-            // gemma, gemma2, gemma3, gemma3n and gemma-embedding - and no gemma4. A GGUF
-            // whose general.architecture is "gemma4" cannot be loaded by it, so these
-            // entries deliberately resolve to EngineSupport.ENGINE_UPDATE_REQUIRED and the
-            // library shows that instead of offering a download that would fail later.
+            // What is NOT verified is that the llama.cpp compiled into this app can load a
+            // GGUF of them. The bundled engine is pinned at commit `5143fa895` (2025-09-05) -
+            // `git -C app/src/main/cpp/llama.cpp log -1` is the command that establishes this,
+            // and it is unchanged by the work in this release. That commit's
+            // `src/llama-arch.cpp` registers gemma, gemma2, gemma3, gemma3n and
+            // gemma-embedding, and **no gemma4**. A GGUF whose `general.architecture` is
+            // "gemma4" therefore cannot be loaded by this build.
             //
-            // Sizes are left unstated rather than guessed, because no verified GGUF
-            // artifact has been checked here.
+            // Upstream has since added `gemma4` (and gemma4-assistant), so these entries are
+            // a *stale* refusal rather than a permanent one - but a stale refusal that is
+            // honest is strictly better than an optimistic label. Claiming "supported" would
+            // offer a multi-gigabyte download that fails at load time, which is worse than
+            // saying nothing can be downloaded today. They resolve to
+            // EngineSupport.ENGINE_UPDATE_REQUIRED, the library shows that, and
+            // `ModelEngineCompatibilityTest` fails the build if the vendored engine's
+            // architecture table and [EngineCapabilities.ARCHITECTURES] ever disagree - so
+            // the next engine bump turns these live on its own, with no edit here.
+            //
+            // Sizes are left unstated rather than guessed, because no verified GGUF artifact
+            // has been checked from this build.
             ModelCatalogItem(
                 id = "gemma-4-e2b-it",
                 name = "Gemma 4 E2B Instruct",

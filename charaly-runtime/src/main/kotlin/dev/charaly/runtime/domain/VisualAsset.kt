@@ -92,8 +92,11 @@ enum class AssetSource {
     /**
      * Optionally downloaded, only where the user has the rights and the build permits it.
      *
-     * Always optional: a pack must be fully functional with this absent, because the app
-     * declares no INTERNET permission in its core build.
+     * Always optional, and for a reason independent of permissions: a pack must be fully
+     * functional with this absent, because the *core* of every story - state, memory,
+     * knowledge, inference - is local. Charaly does use the network, for a model file, but a
+     * world that needed one to display its own artwork would be a world that breaks in
+     * airplane mode.
      */
     REMOTE_OPTIONAL,
     ;
@@ -143,6 +146,21 @@ data class VisualAsset(
     val generatedSeed: String = "",
     /** A short caption, e.g. the location's one-line mood. */
     val caption: String = "",
+    /**
+     * The world condition this particular asset is for: "night", "rain", "sunset".
+     *
+     * ## Why a declared tag rather than something inferred
+     *
+     * A scene background that changes has to change because of something *authoritative*.
+     * Weather and time of day are in the world state; "the model mentioned rain" is not.
+     * An author therefore declares the variants that exist, each tagged, and the UI picks
+     * between them by reading state. If the state says nothing, the untagged asset is used.
+     *
+     * That is the whole reason a chat wallpaper can be different at night without the UI
+     * ever inventing a reason for it: it can only pick from tags the pack authored, keyed
+     * by facts the engine holds.
+     */
+    val variant: String = "",
 ) {
     init {
         require(assetId.isNotBlank()) { "VisualAsset needs an assetId" }
@@ -186,13 +204,18 @@ data class VisualAsset(
             type: VisualAssetType,
             seed: String,
             caption: String = "",
+            variant: String = "",
         ): VisualAsset = VisualAsset(
             assetId = assetId,
             type = type,
             source = AssetSource.GENERATED_ORIGINAL,
             generatedSeed = seed,
             caption = caption,
+            variant = variant,
         )
+
+        /** Whether this asset is the plain one - the fallback for "no condition applies". */
+        val UNTAGGED: String = ""
     }
 }
 

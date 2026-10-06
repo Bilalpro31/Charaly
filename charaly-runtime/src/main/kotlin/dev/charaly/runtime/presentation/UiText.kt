@@ -1,5 +1,6 @@
 package dev.charaly.runtime.presentation
 
+import dev.charaly.runtime.domain.CharalySurface
 import dev.charaly.runtime.domain.PackColor
 import dev.charaly.runtime.domain.PackTheme
 import dev.charaly.runtime.domain.StoryTime
@@ -93,16 +94,47 @@ data class ResolvedTheme(
     val ink: Long,
     val surface: Long,
     val mood: String,
+    /**
+     * The pack's declared gradient, first stop. 0 means "no gradient declared".
+     *
+     * Carried here rather than read again from the [PackTheme] in the app layer, because
+     * this type is what every screen receives: a card cannot reach the pack it came from,
+     * so a gradient the pack authored has to arrive *with* the theme or it can never be
+     * drawn. Zero is the sentinel because [PackColor.parse] returns 0 for an unset hex,
+     * which makes "authored" and "not authored" the same shape everywhere else.
+     */
+    val gradientStart: Long = 0L,
+    /** Second stop. See [gradientStart]. */
+    val gradientEnd: Long = 0L,
+    /** How the pack wants its hero composed. See `HeroTreatment`. */
+    val heroTreatment: String = "",
 ) {
+    /**
+     * Whether a two-stop gradient was actually declared.
+     *
+     * The UI must be able to tell "this pack declared one" from "this pack has no
+     * gradient", because inventing one from the accent is the failure mode this replaces:
+     * a derived gradient looks identical on every pack, which is how a set of different
+     * worlds ends up looking like one set of themes.
+     */
+    val hasGradient: Boolean get() = gradientStart != 0L && gradientEnd != 0L
+
     companion object {
-        /** Charaly's own brand palette, used when a pack has no theme of its own. */
+        /**
+         * Charaly's own neutral identity, used when a pack has no theme of its own.
+         *
+         * Near-white on graphite. It used to be purple - the Material seed colour - which
+         * is why a character without an explicit accent, a session row and the world
+         * screen all rendered violet. Colour in Charaly comes from the pack; with no pack
+         * on show there is nothing for a hue to belong to, so this is deliberately grey.
+         */
         val BRAND = ResolvedTheme(
-            primary = PackColor.parse("#8B7BF0"),
-            secondary = PackColor.parse("#E0659B"),
-            accent = PackColor.parse("#F2B25C"),
-            ink = PackColor.parse("#F4F1FA"),
-            surface = PackColor.parse("#141319"),
-            mood = "",
+            primary = PackColor.parse(CharalySurface.INK_PRIMARY),
+            secondary = PackColor.parse(CharalySurface.INK_SECONDARY),
+            accent = PackColor.parse(CharalySurface.INK_MUTED),
+            ink = PackColor.parse(CharalySurface.INK_PRIMARY),
+            surface = PackColor.parse(CharalySurface.RAISED),
+            mood = "neutral, graphite, quiet",
         )
 
         fun of(theme: PackTheme): ResolvedTheme = ResolvedTheme(
@@ -112,6 +144,9 @@ data class ResolvedTheme(
             ink = theme.ink(),
             surface = theme.surface(),
             mood = theme.mood,
+            gradientStart = theme.gradientStart().takeIf { theme.hasGradient } ?: 0L,
+            gradientEnd = theme.gradientEnd().takeIf { theme.hasGradient } ?: 0L,
+            heroTreatment = theme.heroTreatment,
         )
     }
 }

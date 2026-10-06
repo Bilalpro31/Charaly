@@ -2,6 +2,8 @@ package dev.charaly.runtime.presentation
 
 import dev.charaly.runtime.domain.CharacterDefinition
 import dev.charaly.runtime.domain.CharacterId
+import dev.charaly.runtime.domain.Relationship
+import dev.charaly.runtime.domain.RelationshipKey
 import dev.charaly.runtime.domain.Scene
 import dev.charaly.runtime.domain.StoryInstance
 import dev.charaly.runtime.domain.StoryPack
@@ -52,7 +54,13 @@ data class StoryLine(
     val eventSummary: String = "",
 )
 
-/** Who is in the room right now. */
+/**
+ * Who is in the room right now.
+ *
+ * [activityLabel] is what they are doing, and [relationshipLabel] is what they think of
+ * you - the two things a player actually wants from a roster. Neither is an internal value:
+ * no ids, no affinity numbers, no `RelationshipAxis` names.
+ */
 data class ParticipantChip(
     val id: String,
     val name: String,
@@ -60,6 +68,21 @@ data class ParticipantChip(
     val isFocus: Boolean,
     val isPlayer: Boolean,
     val activityLabel: String,
+    /**
+     * How this character currently feels about the player, in a sentence.
+     *
+     * Empty when there is nothing to say, which is the common case for a character met ten
+     * seconds ago. A blank is honest; "Neutral" for everyone would not be.
+     */
+    val relationshipLabel: String = "",
+    /**
+     * Whether this character is in the room, or merely relevant to it.
+     *
+     * Drives the PEOPLE sheet's split into "Here now" and "Elsewhere": a character you
+     * have met but who has walked out of the scene is still worth listing, and listing
+     * them without the distinction would imply they are standing there.
+     */
+    val isPresent: Boolean = true,
 )
 
 enum class GenerationPhase {
@@ -103,6 +126,26 @@ data class StorySnapshot(
     val sceneLine: String,
     val locationName: String,
     val timeLabel: String,
+
+    // ---- contextual header fields ---------------------------------------
+    //
+    // Read off authoritative state rather than assembled in the view, so the header
+    // cannot claim a location or a cast the engine disagrees with. All three default to
+    // empty so every existing constructor keeps working.
+
+    /** Who the player is talking to, by name. The header's primary label. */
+    val companionName: String = "",
+    /** The story's own title, shown one step below the companion. */
+    val storyTitle: String = "",
+    /**
+     * "Paris · Evening" - place and time of day, in story time.
+     *
+     * Assembled once here rather than in the composable so the same string is testable
+     * and so a screen cannot format it two different ways.
+     */
+    val contextLine: String = "",
+    /** "3 people here", or empty when the player is alone. */
+    val presenceLabel: String = "",
     val chapterLabel: String,
     val chapterIndex: Int,
     val participants: List<ParticipantChip>,
@@ -169,6 +212,17 @@ object StoryPresenter {
             sceneLine = sceneLine(instance, scene, location?.name.orEmpty()),
             locationName = location?.name.orEmpty(),
             timeLabel = instance.worldClock.now.clockLabel(),
+            // The contextual header line: who you are with, where, and at what hour.
+            // All three come from authoritative state - the focus character, the
+            // player's location variable and the world clock - so the header cannot
+            // describe a scene the engine has moved on from.
+            companionName = definition.character(focusId)?.name.orEmpty(),
+            storyTitle = instance.displayTitle,
+            contextLine = contextLine(
+                locationName = location?.name.orEmpty(),
+                hour = instance.worldClock.now.hour,
+            ),
+            presenceLabel = presenceLabel(instance, definition),
             chapterLabel = instance.currentChapter()?.title ?: instance.displayTitle,
             chapterIndex = instance.currentChapter()?.index ?: 1,
             participants = participants(instance, definition),
@@ -200,6 +254,45 @@ object StoryPresenter {
     }
 
     /** "Paris • Rooftop • 18:42", with parts omitted when the world has no such part. */
+    /**
+     * "Paris · Evening" - the header's contextual line.
+     *
+     * Assembled here rather than in the composable so the same two facts are formatted
+     * identically wherever they appear, and so a test can assert it.
+     *
+     * Both parts are optional and joined only when both exist: a location with no name
+     * yields "Evening", not " · Evening".
+     */
+    fun contextLine(locationName: String, hour: Int): String {
+        val time = StoryContextPresenter.timeOfDayLabel(hour)
+        return when {
+            locationName.isNotBlank() && time.isNotBlank() -> "$locationName · $time"
+            locationName.isNotBlank() -> locationName
+            else -> time
+        }
+    }
+
+    /**
+     * "3 people here", or empty when the player is alone.
+     *
+     * Empty rather than "Just you" in the *header*, because the header already has two
+     * pieces of information and "· Just you" adds a third that says nothing. The full
+     * phrasing is used in the World sheet, where presence is the question being asked.
+     */
+    fun presenceLabel(instance: StoryInstance, definition: WorldDefinition): String {
+        val playerId = StoryContextPresenter.playerId(instance)
+        val locationId = dev.charaly.runtime.engine.EventEngine.currentPlayerLocation(instance) ?: return ""
+        val others = instance.worldState.charactersAt(locationId)
+            .map { it.characterId }
+            .filter { it != playerId }
+            .filter { definition.character(it) != null }
+        return when (others.size) {
+            0 -> ""
+            1 -> "1 person here"
+            else -> "${others.size} people here"
+        }
+    }
+
     fun sceneLine(instance: StoryInstance, scene: Scene?, locationName: String): String {
         val region = packRegionOf(instance)
         return listOfNotNull(
@@ -316,17 +409,60 @@ object StoryPresenter {
             }
             .reversed()
 
+    /**
+     * The room, split into who is here and who is merely relevant.
+     *
+     * ## Why the split, rather than one flat list
+     *
+     * A roster of everyone the pack contains is a catalogue, and a player who can see
+     * twenty-three characters before meeting any of them is being shown the design document
+     * instead of the world. What they want is much narrower: who am I standing with, and who
+     * else has a claim on this moment.
+     *
+     * So the list is: the current scene's participants, plus anyone holding an unresolved
+     * thread - a promise made, a secret known, something owed. That second group is derived
+     * from live world state, so it changes as the story does, and it is exactly the set of
+     * people the engine would surface on its own if the UI were not in the way.
+     */
     fun participants(instance: StoryInstance, definition: WorldDefinition): List<ParticipantChip> {
         val scene = instance.currentScene()
-        val ids: List<CharacterId> = when {
-            scene != null && scene.participants.isNotEmpty() -> {
-                val focus = instance.focusCharacterId
-                (if (focus != null) listOf(focus) else emptyList()) +
-                    scene.participants.filterNot { it == focus }
-            }
-            else -> instance.worldState.characters.keys.sortedBy { it.value }
+        val focus = instance.focusCharacterId
+        val presentIds: List<CharacterId> = if (scene != null && scene.participants.isNotEmpty()) {
+            (if (focus != null) listOf(focus) else emptyList()) +
+                scene.participants.filterNot { it == focus }
+        } else {
+            // No scene: whoever the world knows about, in a stable order, so the sheet does
+            // not reshuffle itself on every recomposition.
+            (if (focus != null) listOf(focus) else emptyList()) +
+                instance.worldState.characters.keys.filterNot { it == focus }.sortedBy { it.value }
         }
-        return ids.map { id ->
+        val present = presentIds.toSet()
+
+        // Relevant-but-absent: anyone the player still owes something to, or who still
+        // owes them. Read from the live ledger rather than from the pack, so this is a
+        // property of *this* story's state and not of what the pack happens to contain -
+        // which is the difference between a story surface and a character database.
+        val ledger = instance.worldState.commitments
+        // Promises are keyed by real CharacterId, so the player's own involvement can only
+        // be found when the pack's persona template was built from a character - a persona
+        // is a role, not an NPC, and usually has no CharacterId at all. Rather than guess,
+        // this resolves the persona's id to a character when one exists and otherwise takes
+        // everyone with an open promise as relevant. That is a deliberately generous
+        // reading: a person you owe something to is worth listing whether or not the engine
+        // recorded the other side of it.
+        val playerId = definition.characters.firstOrNull { it.id.value == instance.persona.id }?.id
+        val relevantElsewhere = buildList {
+            if (playerId != null) {
+                addAll(ledger.promisesOwedTo(playerId).map { it.keeperId })
+                addAll(ledger.openPromisesOf(playerId).map { it.beneficiaryId })
+            } else {
+                addAll(ledger.promises.filter { it.status.isOpen }.flatMap { listOf(it.keeperId, it.beneficiaryId) })
+            }
+        }
+            .filter { it !in present }
+            .distinct()
+
+        return (presentIds.map { it to true } + relevantElsewhere.map { it to false }).map { (id, isPresent) ->
             val character = definition.character(id)
             val runtime = instance.characters[id]
             ParticipantChip(
@@ -335,10 +471,68 @@ object StoryPresenter {
                 accent = character?.accentLong()?.takeIf { it != 0L } ?: ResolvedTheme.BRAND.primary,
                 isFocus = id == instance.focusCharacterId,
                 isPlayer = false,
-                activityLabel = activityLabel(runtime?.activity ?: dev.charaly.runtime.domain.CharacterActivity.IDLE),
+                activityLabel = if (isPresent) {
+                    activityLabel(runtime?.activity ?: dev.charaly.runtime.domain.CharacterActivity.IDLE)
+                } else {
+                    "Not here right now"
+                },
+                relationshipLabel = relationshipLabelOf(instance.relationships, id),
+                isPresent = isPresent,
             )
         }
     }
+
+    /**
+     * How a character feels about the player, as a sentence.
+     *
+     * ## Why this reads the relationship rather than printing an affinity
+     *
+     * An affinity number is a score the engine computes and the player has no model for. A
+     * verb is something they can act on - "wary of you" tells you to approach carefully in
+     * a way that "0.42" does not.
+     *
+     * Built from the relationship's own axes rather than from any single total, and empty
+     * when the character has no opinion yet: a fresh acquaintance is not "neutral", they
+     * are simply someone you have just met.
+     */
+    private fun relationshipLabelOf(
+        relationships: Map<RelationshipKey, Relationship>,
+        characterId: CharacterId,
+    ): String {
+        // Relationships are keyed by the *pair* that holds them, so the character's own
+        // entry is found by looking for the one whose source is them. Looking it up by key
+        // alone would silently return nothing on any pack whose keys are ordered the other
+        // way, which is the kind of bug that shows up as "relationships never display".
+        val relationship = relationships.values.firstOrNull { it.sourceId == characterId }
+            ?: return ""
+        // Trust and affinity are 0..100 with 50 as their starting point, so the thresholds
+        // below are read against that midpoint rather than against zero. Tension is the
+        // axis that most reliably reads as a *sentence*: it only exists once something has
+        // gone wrong, so a high value is unambiguous.
+        return when {
+            relationship.tension >= TENSION_HIGH ->
+                if (relationship.trust <= TRUST_LOW) "Still blaming you" else "Holding something back"
+            relationship.trust >= TRUST_HIGH && relationship.affinity >= AFFINITY_HIGH ->
+                "Confidently in your corner"
+            relationship.trust >= TRUST_HIGH -> "Trusts you"
+            relationship.affinity <= AFFINITY_LOW && relationship.trust <= TRUST_LOW -> "Cold toward you"
+            relationship.affinity <= AFFINITY_LOW -> "Wary of you"
+            relationship.affinity >= AFFINITY_HIGH -> "Warms to you easily"
+            relationship.trust <= TRUST_LOW -> "Does not trust you yet"
+            // Untouched axes and a stranger stage means no opinion has formed, which is
+            // different from a neutral one and worth saying nothing about.
+            relationship.stage == dev.charaly.runtime.domain.RelationshipStage.STRANGER &&
+                relationship.familiarity == 0 -> ""
+            else -> "Getting to know you"
+        }
+    }
+
+    /** Thresholds on the 0..100 relationship axes. Named so the labels read as bands. */
+    private const val TENSION_HIGH = 40
+    private const val TRUST_HIGH = 70
+    private const val TRUST_LOW = 35
+    private const val AFFINITY_HIGH = 70
+    private const val AFFINITY_LOW = 35
 
     fun phaseLabel(
         phase: GenerationPhase,

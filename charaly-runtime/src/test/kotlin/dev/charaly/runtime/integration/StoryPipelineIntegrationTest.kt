@@ -26,6 +26,8 @@ import dev.charaly.runtime.session.CharalyRuntime
 import dev.charaly.runtime.session.GenerationUpdate
 import dev.charaly.runtime.session.WorldDefinitionResolver
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -344,18 +346,71 @@ class StoryPipelineIntegrationTest {
 
     @Test
     fun `stop cancels an in flight generation`() = runTest {
-        val engine = MockInferenceEngine(chunkSize = 1, delayMillis = 1)
+        // Slow enough that the stream is still producing tokens when stop() lands, which is the
+        // only situation a stop is *for*. A stop with nothing in flight is a no-op - the same as
+        // the native engine, and the reason `respond` can call it after every completed turn.
+        val engine = MockInferenceEngine(chunkSize = 1, delayMillis = 50)
         val runtime = CharalyRuntime(JsonCharalyRepository(InMemoryCharalyStorage()), engine)
         runtime.createPack(pack)
-        val instance = runtime.startStory(pack, StoryInstanceId("s1"))
+        runtime.startStory(pack, StoryInstanceId("s1"))
         engine.loadModel(dev.charaly.runtime.inference.ModelLoadRequest(path = "mock"))
 
+        var failure: Throwable? = null
+        val collecting = launch {
+            try {
+                engine.stream(
+                    dev.charaly.runtime.inference.InferenceRequest(
+                        systemPrompt = "",
+                        messages = emptyList(),
+                    ),
+                ).collect { }
+            } catch (error: Throwable) {
+                failure = error
+            }
+        }
+
+        // Let the first token through, so the engine is genuinely mid-generation.
+        runCurrent()
         runtime.stop()
-        // After stop() the engine must reject the next generation attempt.
-        val failure = runCatching { engine.stream(
-            dev.charaly.runtime.inference.InferenceRequest(systemPrompt = "", messages = emptyList()),
-        ).toList() }.exceptionOrNull()
-        assertTrue(failure is dev.charaly.runtime.inference.InferenceError.Cancelled)
+        collecting.join()
+
+        assertTrue(
+            "expected a cancellation, got $failure",
+            failure is dev.charaly.runtime.inference.InferenceError.Cancelled,
+        )
+    }
+
+    /**
+     * A stop between turns is not a cancellation.
+     *
+     * `respond` calls `stop()` in a `finally` after every completed turn, so an engine that
+     * latched a cancel regardless of state would fail the *second* turn of every conversation
+     * with a cancellation nobody asked for. Pinned here because it is invisible until someone
+     * plays a conversation longer than one turn.
+     */
+    @Test
+    fun `a stop after a completed turn does not cancel the next one`() = runTest {
+        // Loaded, as the UI would have it: `respond` refuses to generate otherwise, and a refusal
+        // is a `Failed` frame rather than a `Finished` one - which is what made the first
+        // version of this test fail with no explanation.
+        val engine = loadedEngine()
+        val runtime = CharalyRuntime(JsonCharalyRepository(InMemoryCharalyStorage()), engine)
+        runtime.createPack(pack)
+        var instance = runtime.startStory(pack, StoryInstanceId("s1"))
+
+        var turns = 0
+        repeat(3) {
+            var last: GenerationUpdate.Finished? = null
+            runtime.respond(instance, "hello", alice).collect { update ->
+                if (update is GenerationUpdate.Finished) last = update
+            }
+            val finished = requireNotNull(last) { "turn $it produced no Finished frame" }
+            instance = requireNotNull(finished.instance) { "turn $it carried no snapshot" }
+            turns++
+        }
+        assertEquals(3, turns)
+        // And the story really did grow, so this is not three no-op turns that "passed".
+        assertTrue(instance.conversation.entries.size >= 6)
     }
 
     @Test

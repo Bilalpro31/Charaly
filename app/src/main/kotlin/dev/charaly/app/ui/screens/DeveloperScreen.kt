@@ -1,54 +1,56 @@
 package dev.charaly.app.ui.screens
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import dev.charaly.app.ui.components.CharalyCard
-import dev.charaly.app.ui.components.CharalyFilterChip
+import dev.charaly.app.ui.components.CharalyAction
+import dev.charaly.app.ui.components.CharalyEmptyState
 import dev.charaly.app.ui.components.CharalyIconButton
-import dev.charaly.app.ui.components.CharalyTextButton
-import dev.charaly.app.ui.components.DetailRow
-import dev.charaly.app.ui.components.Eyebrow
-import dev.charaly.app.ui.components.SectionHeader
-import dev.charaly.app.ui.theme.Charaly
-import dev.charaly.app.ui.theme.CharalyTypography
+import dev.charaly.app.ui.components.CharalySectionHeader
+import dev.charaly.app.ui.design.Charaly
+import dev.charaly.app.ui.design.CharalyShapes
 
 /**
- * The developer panel.
+ * THE ENGINE'S OWN VIEW.
  *
- * Unreachable unless the user turns Developer Mode on in Settings. When it is on,
- * this is genuinely useful rather than decorative: it is the only place in the app
- * where you can see what the deterministic engine actually holds, what the model is
- * actually being asked, and what has actually been applied.
+ * ## Developer Mode only, and that is a gate rather than a convention
  *
- * The design rule here is different from the rest of the app on purpose. Raw output
- * belongs in monospace, unstyled and unabridged, because this screen exists to be
- * trustworthy rather than pretty.
+ * This screen shows world state as JSON, the assembled prompt, section budgets, the event
+ * log, the causal graph and the story health report. All of it is genuinely useful - for
+ * pack authoring, for debugging a world that behaved strangely, for understanding *why*
+ * something happened - and all of it is noise to somebody who wants to be in a story.
+ *
+ * So it is unreachable unless someone turns Developer Mode on, and the route is re-checked
+ * at render time rather than only where the button is hidden. Navigation state is saved: a
+ * user can open this panel, turn the setting off, and restart - and without the render-time
+ * check the panel would come back for someone who had explicitly turned it off.
+ *
+ * ## Monospace, and nothing else
+ *
+ * Every value here is either prose or a dump. Nothing is a control, because nothing here
+ * can be changed from here: the world is authoritative and this is a window onto it.
  */
 @Composable
 fun DeveloperScreen(
@@ -67,247 +69,202 @@ fun DeveloperScreen(
     commitments: String,
     stories: List<String>,
     instanceId: String,
+    /**
+     * "18:42 · Day 3", read from the world clock. Shown because a developer panel is the
+     * right place to be able to *see* that the clock moved.
+     */
+    clockLine: String = "",
+    /** How many story minutes a plain turn costs, from the runtime's own policy. */
+    turnCostLabel: String = "",
+    /**
+     * Steps the clock forward, for testing a routine or a scheduled consequence without
+     * having to hold a conversation long enough to reach that hour.
+     *
+     * This goes through the same `CharalyRuntime.advance` a turn uses, so it exercises the
+     * real event engine rather than setting a field. It is a debug control and stays
+     * behind Developer Mode.
+     */
+    onAdvanceTime: (Long) -> Unit = {},
 ) {
-    var selectedStory by remember { mutableStateOf(stories.firstOrNull().orEmpty()) }
-
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Charaly.surface.void),
         contentPadding = PaddingValues(
-            start = Charaly.tokens.spacing.gutter,
-            end = Charaly.tokens.spacing.gutter,
-            top = Charaly.tokens.spacing.xl,
-            bottom = Charaly.tokens.spacing.section,
+            start = Charaly.space.gutter,
+            end = Charaly.space.gutter,
+            top = Charaly.space.xxl,
+            bottom = Charaly.space.section,
         ),
-        verticalArrangement = Arrangement.spacedBy(Charaly.tokens.spacing.sm),
+        verticalArrangement = Arrangement.spacedBy(Charaly.space.md),
     ) {
-        item(key = "header") {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        item(key = "back") {
+            Row {
                 CharalyIconButton(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "Back",
                     onClick = onBack,
                 )
-                Column(Modifier.padding(start = 4.dp)) {
-                    Eyebrow("Developer mode")
-                    Text(
-                        text = "Diagnostics",
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                }
-            }
-        }
-
-        item(key = "notice") {
-            CharalyCard(container = MaterialTheme.colorScheme.surfaceContainer) {
+                Spacer(Modifier.width(Charaly.space.xs))
                 Text(
-                    text = "This panel is for development. Everything below is the runtime's own " +
-                        "output, unedited.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    text = "Developer",
+                    style = MaterialTheme.typography.headlineLarge,
+                    color = Charaly.ink.primary,
+                    modifier = Modifier.semantics { heading() },
                 )
             }
         }
 
-        if (stories.size > 1) {
-            item(key = "stories") {
-                Column {
-                    Eyebrow("Story")
-                    LazyRow(
-                        modifier = Modifier.padding(top = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        items(stories.size, key = { stories[it] }) { index ->
-                            CharalyFilterChip(
-                                label = stories[index],
-                                selected = stories[index] == selectedStory,
-                                onClick = { selectedStory = stories[index] },
-                            )
-                        }
+        item(key = "status") {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(CharalyShapes.soft)
+                    .background(Charaly.surface.raised)
+                    .padding(Charaly.space.md),
+            ) {
+                Text(
+                    text = "Open story: ${instanceId.ifBlank { "none" }}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Charaly.ink.secondary,
+                )
+                Text(
+                    text = "Stories on this device: ${stories.size}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Charaly.ink.secondary,
+                )
+                Text(
+                    text = "Prompt estimate: $promptEstimate characters",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Charaly.ink.secondary,
+                )
+                Text(
+                    text = "Story health: $storyHealthStatus",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Charaly.ink.secondary,
+                )
+            }
+        }
+
+        item(key = "clock") {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(CharalyShapes.soft)
+                    .background(Charaly.surface.raised)
+                    .padding(Charaly.space.md),
+            ) {
+                Text(
+                    text = "World clock",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = Charaly.ink.primary,
+                )
+                Text(
+                    text = clockLine.ifBlank { "No story open." },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Charaly.ink.secondary,
+                )
+                Text(
+                    // The cost a plain turn charges, so it is visible that the clock moves
+                    // on its own rather than only when a developer presses something.
+                    text = turnCostLabel,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Charaly.ink.muted,
+                )
+                Spacer(Modifier.height(Charaly.space.sm))
+                Row(horizontalArrangement = Arrangement.spacedBy(Charaly.space.xs)) {
+                    listOf(15L, 60L, 240L).forEach { minutes ->
+                        CharalyAction(
+                            label = if (minutes < 60) "+${minutes}m" else "+${minutes / 60}h",
+                            onClick = { onAdvanceTime(minutes) },
+                        )
                     }
                 }
             }
         }
 
-        item(key = "identity") {
-            CharalyCard(container = MaterialTheme.colorScheme.surfaceContainer) {
-                Column {
-                    Eyebrow("Instance")
-                    DetailRow("StoryInstance id", instanceId.ifBlank { "none open" })
-                    DetailRow("Prompt size", "$promptEstimate characters (estimate)")
-                    DetailRow("Story health", storyHealthStatus)
-                }
-            }
-        }
+        item(key = "model-header") { CharalySectionHeader(title = "Model", micro = true) }
+        item(key = "model") { Dump(modelDiagnostics) }
 
-        item(key = "model") {
-            CharalyCard(container = MaterialTheme.colorScheme.surfaceContainer) {
-                Column {
-                    Eyebrow("Model")
-                    Monospace(modelDiagnostics)
-                }
-            }
-        }
+        item(key = "health-header") { CharalySectionHeader(title = "Story health", micro = true) }
+        item(key = "health") { Dump(storyHealth) }
 
-        item(key = "eventlog") {
-            CharalyCard(container = MaterialTheme.colorScheme.surfaceContainer) {
-                Column {
-                    Eyebrow("Event log")
-                    Monospace(eventLog.ifBlank { "no events applied yet" })
-                }
-            }
-        }
+        item(key = "threads-header") { CharalySectionHeader(title = "Story threads", micro = true) }
+        item(key = "threads") { Dump(threads) }
 
-        item(key = "worldstate") {
-            CharalyCard(container = MaterialTheme.colorScheme.surfaceContainer) {
-                Column {
-                    Eyebrow("WorldState")
-                    Monospace(worldState.ifBlank { "open a story to inspect its world" })
-                }
-            }
-        }
+        item(key = "commitments-header") { CharalySectionHeader(title = "Commitments", micro = true) }
+        item(key = "commitments") { Dump(commitments) }
 
-        item(key = "threads") {
-            CharalyCard(container = MaterialTheme.colorScheme.surfaceContainer) {
-                Column {
-                    Eyebrow("Story threads")
-                    Text(
-                        text = "Each thread with its priority, progress, what it needs next and what " +
-                            "would finish it. A thread that cannot be finished is a thread nobody " +
-                            "ever will.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 8.dp),
-                    )
-                    Monospace(threads, maxLines = 60)
-                }
-            }
-        }
+        item(key = "minds-header") { CharalySectionHeader(title = "Character minds", micro = true) }
+        item(key = "minds") { Dump(minds) }
 
-        item(key = "minds") {
-            CharalyCard(container = MaterialTheme.colorScheme.surfaceContainer) {
-                Column {
-                    Eyebrow("Character minds")
-                    Text(
-                        text = "What each character has seen, concluded, cannot dismiss, and is " +
-                            "wrong about. A character with no mind cannot be anything but a " +
-                            "list of facts.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 8.dp),
-                    )
-                    Monospace(minds, maxLines = 60)
-                }
-            }
-        }
+        item(key = "causality-header") { CharalySectionHeader(title = "Causality", micro = true) }
+        item(key = "causality") { Dump(causality) }
 
-        item(key = "commitments") {
-            CharalyCard(container = MaterialTheme.colorScheme.surfaceContainer) {
-                Column {
-                    Eyebrow("Commitments")
-                    Text(
-                        text = "Promises, goals and consequences. Kept separately from memory " +
-                            "because they have to survive being forgotten.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 8.dp),
-                    )
-                    Monospace(commitments)
-                }
-            }
-        }
+        item(key = "events-header") { CharalySectionHeader(title = "Event log", micro = true) }
+        item(key = "events") { Dump(eventLog) }
 
-        item(key = "causality") {
-            CharalyCard(container = MaterialTheme.colorScheme.surfaceContainer) {
-                Column {
-                    Eyebrow("Causal graph")
-                    Text(
-                        text = "Why each event happened, as recorded by the engine rather than " +
-                            "narrated by the model.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 8.dp),
-                    )
-                    Monospace(causality, maxLines = 60)
-                }
-            }
-        }
+        item(key = "budget-header") { CharalySectionHeader(title = "Context budget", micro = true) }
+        item(key = "budget") { Dump(contextSections) }
 
-        item(key = "health") {
-            CharalyCard(container = MaterialTheme.colorScheme.surfaceContainer) {
-                Column {
-                    Eyebrow("Story health")
-                    Text(
-                        text = "Consistency findings. Never shown outside developer mode: " +
-                            "being told your story is broken is not something a player can act on.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 8.dp),
-                    )
-                    Monospace(storyHealth)
-                }
-            }
-        }
+        item(key = "prompt-header") { CharalySectionHeader(title = "Assembled prompt", micro = true) }
+        item(key = "prompt") { Dump(contextPreview, long = true) }
 
-        item(key = "sections") {
-            CharalyCard(container = MaterialTheme.colorScheme.surfaceContainer) {
-                Column {
-                    Eyebrow("Context budget")
-                    Text(
-                        text = "Which sections survived budgeting, and what was cut. A dropped " +
-                            "section is invisible in the assembled prompt, which is exactly why " +
-                            "it is worth being able to see.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 8.dp),
-                    )
-                    Monospace(contextSections)
-                }
-            }
-        }
-
-        item(key = "context") {
-            CharalyCard(container = MaterialTheme.colorScheme.surfaceContainer) {
-                Column {
-                    Eyebrow("ContextBuilder output")
-                    Text(
-                        text = "Exactly what would be sent as the system prompt for the next turn.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 8.dp),
-                    )
-                    Monospace(contextPreview)
-                }
-            }
-        }
+        item(key = "state-header") { CharalySectionHeader(title = "World state", micro = true) }
+        item(key = "state") { Dump(worldState, long = true) }
     }
 }
 
 /**
- * Raw text, in monospace, scrollable vertically but capped in height.
+ * One dump.
  *
- * A developer panel that pushes everything else off the screen is a developer panel
- * nobody can use.
+ * Monospace, horizontally scrollable, and capped in height with its own vertical scroll -
+ * so a four-thousand-line JSON document cannot push every other section off the screen. A
+ * developer panel that only shows the first thing in it is not a panel.
  */
 @Composable
-private fun Monospace(text: String, maxLines: Int = 40) {
-    Box(
-        Modifier
+private fun Dump(text: String, long: Boolean = false) {
+    Text(
+        text = text.ifBlank { "Nothing recorded yet." },
+        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+        color = Charaly.ink.secondary,
+        modifier = Modifier
             .fillMaxWidth()
-            .clip(Charaly.tokens.radii.shapeSm)
-            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-            .padding(Charaly.tokens.spacing.sm),
-    ) {
-        Column(
-            Modifier.heightIn(max = (maxLines * 17).dp),
-        ) {
-            Text(
-                text = text,
-                style = CharalyTypography.technical,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = maxLines,
-                overflow = TextOverflow.Ellipsis,
+            .clip(CharalyShapes.soft)
+            .background(Charaly.surface.base)
+            .padding(Charaly.space.sm)
+            .then(
+                if (long) {
+                    Modifier.height(320.dp)
+                } else {
+                    Modifier
+                },
             )
-        }
+            .horizontalScroll(rememberScrollState()),
+    )
+}
+
+/** Shown when the route is restored but Developer Mode is now off. */
+@Composable
+fun DeveloperLockedScreen(onBack: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Charaly.surface.void)
+            .padding(Charaly.space.gutter),
+    ) {
+        CharalyIconButton(
+            icon = Icons.AutoMirrored.Filled.ArrowBack,
+            contentDescription = "Back",
+            onClick = onBack,
+        )
+        CharalyEmptyState(
+            state = dev.charaly.runtime.presentation.EmptyState(
+                title = "Developer mode is off.",
+                body = "Turn it on in Settings · Advanced to look at the engine's own view.",
+                artSeed = "charaly-empty-developer",
+            ),
+            action = { CharalyAction(label = "Back", onClick = onBack) },
+        )
     }
 }

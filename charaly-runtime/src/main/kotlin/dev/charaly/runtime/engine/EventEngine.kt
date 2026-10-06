@@ -895,6 +895,18 @@ class EventEngine(val definition: WorldDefinition) {
                             locationId = payload.to,
                             activity = payload.activity,
                             activityLabel = payload.activityLabel,
+                            // Which entry of the daily schedule put them here.
+                            //
+                            // This has to be written by the reducer, not just carried on
+                            // the payload. `PresenceEngine` compares the resolved entry
+                            // against this field to decide whether a character's schedule
+                            // has actually moved on, so leaving it at its -1 default meant
+                            // `entryMoved` was true forever: the "a routine is a default,
+                            // not a leash" guard could never suppress a redundant
+                            // relocation, and no screen could report where somebody was
+                            // placed from. Recording it here is what makes the guard and
+                            // the developer inspector both work.
+                            routineEntryMinute = payload.routineEntryMinute,
                             lastUpdatedAt = current.worldClock.now,
                         ),
                     ),

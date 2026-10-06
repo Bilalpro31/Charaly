@@ -1,7 +1,5 @@
 package dev.charaly.app.ui
 
-import dev.charaly.app.ui.components.ResponsiveRows
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -24,55 +22,16 @@ import java.io.File
  * this is checked structurally over the source rather than by eyeballing one
  * screen - the same mistake is easy to reintroduce in the next screen.
  *
+ * ## Why the old `ResponsiveRows.chunk` assertions are gone
+ *
+ * They tested a chunking helper that existed only to build the old responsive grids. The
+ * redesign replaced every grid with a single weighted vertical feed and a `LazyRow` of
+ * pills, so the helper and its tests were deleted together. What remains is the part that
+ * is *not* about any particular layout: the structural scan.
+ *
  * This runs on the plain JVM with no device and no emulator.
  */
 class NestedScrollGuardTest {
-
-    @Test
-    fun `chunk splits a list into rows of the requested width`() {
-        val rows = ResponsiveRows.chunk(listOf(1, 2, 3, 4, 5), columns = 2)
-        assertEquals(listOf(listOf(1, 2), listOf(3, 4), listOf(5)), rows)
-    }
-
-    @Test
-    fun `chunk of an exact multiple has no short final row`() {
-        assertEquals(
-            listOf(listOf("a", "b"), listOf("c", "d")),
-            ResponsiveRows.chunk(listOf("a", "b", "c", "d"), columns = 2),
-        )
-    }
-
-    @Test
-    fun `chunk of an empty list is empty`() {
-        assertTrue(ResponsiveRows.chunk(emptyList<String>(), columns = 2).isEmpty())
-    }
-
-    @Test
-    fun `chunk of a single column is one row per item`() {
-        assertEquals(
-            listOf(listOf(1), listOf(2)),
-            ResponsiveRows.chunk(listOf(1, 2), columns = 1),
-        )
-    }
-
-    @Test
-    fun `a non-positive column count degrades to one column instead of dropping cards`() {
-        val items = listOf(1, 2, 3)
-        for (columns in listOf(0, -1, Int.MIN_VALUE)) {
-            val rows = ResponsiveRows.chunk(items, columns)
-            assertEquals("columns=$columns", items, rows.flatten())
-        }
-    }
-
-    @Test
-    fun `chunk never loses or duplicates an item`() {
-        val items = (1..37).toList()
-        for (columns in 1..5) {
-            val rows = ResponsiveRows.chunk(items, columns)
-            assertEquals("columns=$columns", items, rows.flatten())
-            assertTrue("columns=$columns", rows.all { it.size in 1..columns })
-        }
-    }
 
     @Test
     fun `no screen nests a vertically scrollable layout inside a lazy list item`() {
@@ -81,6 +40,19 @@ class NestedScrollGuardTest {
             "Nested vertical scroller inside a lazy item (crashes with an infinite " +
                 "max-height constraint):\n" + offenders.joinToString("\n"),
             offenders.isEmpty(),
+        )
+    }
+
+    @Test
+    fun `the scan actually reads the app sources`() {
+        // A guard that silently matches nothing passes forever. This asserts the file
+        // root it is scanning is the real one, so a moved source tree cannot turn this
+        // test into a no-op.
+        val root = sourceRoot()
+        assertTrue(
+            "could not locate src/main/kotlin from ${File(".").absolutePath}; " +
+                "the nested-scroller guard would pass without checking anything",
+            File(root, "dev/charaly/app/ui/screens").isDirectory,
         )
     }
 

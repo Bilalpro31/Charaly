@@ -21,7 +21,30 @@ import kotlin.math.abs
  */
 class ModelManager(
     private val context: Context,
-    private val modelsDir: File = File(context.filesDir, "models"),
+    /**
+     * The ONE directory every GGUF lives in.
+     *
+     * ## Why this is a shared constant and not two defaults
+     *
+     * Import and download used to write to different directories:
+     *
+     * ```
+     *   ModelManager         filesDir/models            (SAF import)
+     *   HuggingFaceServices  filesDir/charaly/models    (catalog download)
+     * ```
+     *
+     * That is not a cosmetic difference. [syncRegistry] reconciles the registry against
+     * the files *in this directory* and REMOVES any registry entry whose file is not
+     * found - which is correct in isolation, and catastrophic in combination: a model
+     * downloaded from the Hub was registered with a path one directory over, so the very
+     * next app launch "reconciled" it away. The file stayed on disk, the registry entry
+     * did not, and the model silently vanished from the library - the exact failure this
+     * whole chain of files exists to prevent.
+     *
+     * Both writers now resolve this same directory, so "a registered model whose file is
+     * gone" means exactly that, and nothing else.
+     */
+    private val modelsDir: File = CharalyPaths.models(context),
 ) {
 
     private val settings = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -29,9 +52,15 @@ class ModelManager(
     /** Directory Charaly owns and can always read without extra permissions. */
     val managedDir: File get() = modelsDir.also { it.mkdirs() }
 
-    /** Models imported into the app's own storage. */
+    /**
+     * Models imported into the app's own storage.
+     *
+     * `.part` files are excluded on purpose. They exist only while a copy or a download is
+     * in flight, and letting one through would register a truncated model as installed.
+     */
     fun managedModels(): List<ModelEntry> = managedDir.listFiles()
         ?.filter { it.isFile && it.name.endsWith(".gguf", ignoreCase = true) }
+        ?.filterNot { it.name.endsWith(PART_SUFFIX, ignoreCase = true) }
         ?.map { it.toEntry() }
         ?.sortedBy { it.displayName.lowercase() }
         .orEmpty()
@@ -163,31 +192,165 @@ class ModelManager(
     /**
      * Imports a GGUF the user picked through the Storage Access Framework.
      *
-     * The file is COPIED into app-private storage rather than referenced in
-     * place: a persisted reference to a content:// URI breaks as soon as the
-     * grant is revoked, which would silently break the story engine later.
+     * ## Why the file is COPIED rather than referenced
+     *
+     * A `content://` URI is a *permission*, not a path. The grant dies with the process
+     * unless it is persisted, a persisted grant dies when the user revokes access, and a
+     * user who picked a file from a removable SD card can physically remove it tomorrow.
+     * llama.cpp needs a real, readable, app-owned filesystem path that survives process
+     * death - so the bytes are copied into app-private storage, and that copy is the model.
+     *
+     * ## Why the copy is atomic
+     *
+     * The bytes go to `<name>.gguf.part` and are renamed into place only after three
+     * separate checks pass. This matters because the three ways a large copy fails on a
+     * phone all end the same way if you are careless:
+     *
+     * ```
+     *   process killed mid-copy  -> a truncated .gguf in the models directory
+     *   storage fills mid-copy    -> a truncated .gguf
+     *   user picks a text file   -> a .gguf that is not a model
+     * ```
+     *
+     * Any of those, written straight to the final name, becomes a file the registry
+     * registers on the next launch and llama.cpp then tries to load. The `.part` suffix is
+     * excluded from [managedModels] for the same reason, so a copy interrupted by process
+     * death leaves nothing a later launch could mistake for an installed model - and
+     * [cleanupPartialCopies] reclaims the disk it occupied.
      */
     suspend fun importFrom(uri: Uri): Result<ModelEntry> = withContext(Dispatchers.IO) {
-        runCatching {
-            managedDir.mkdirs()
-            val displayName = queryDisplayName(uri) ?: "model.gguf"
-            val safeName = displayName.replace(Regex("[^A-Za-z0-9._-]"), "_")
-                .let { if (it.endsWith(".gguf", ignoreCase = true)) it else "$it.gguf" }
-
-            val destination = uniqueFile(File(managedDir, safeName))
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                destination.outputStream().use { output ->
-                    input.copyTo(output, DEFAULT_BUFFER_SIZE)
-                }
-            } ?: error("could not open the selected file")
-
-            if (!isGguf(destination)) {
-                destination.delete()
-                error("that file is not a GGUF model")
-            }
-            destination.toEntry()
-        }
+        runCatching { importInto(uri) }
     }
+
+    /**
+     * The body of [importFrom]: returns the entry, or throws one of the `REASON_*`
+     * constants.
+     *
+     * Split out as its own function so the "this file is already installed" early return
+     * can simply *return* an entry, rather than having to rebuild a `Result` to satisfy the
+     * enclosing `withContext`.
+     */
+    private fun importInto(uri: Uri): ModelEntry {
+        managedDir.mkdirs()
+        val displayName = queryDisplayName(uri) ?: "model.gguf"
+        val safeName = displayName.replace(Regex("[^A-Za-z0-9._-]"), "_")
+            .let { if (it.endsWith(".gguf", ignoreCase = true)) it else "$it.gguf" }
+
+        // Best effort, and deliberately not load-bearing: the copy below does not
+        // depend on the grant surviving, so this only helps a later *delete* address
+        // the original file. Many providers simply do not offer a persistable grant.
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        }
+
+        // What the provider claims the file is. Used as an early warning, as the
+        // duplicate check below, and as a post-copy cross-check; 0 or -1 just means
+        // "this provider will not say".
+        val declaredBytes = querySize(uri)
+        if (declaredBytes > 0L && !hasRoomFor(declaredBytes)) error(REASON_NO_SPACE)
+
+        // Idempotent re-import.
+        //
+        // Picking the same file twice used to produce `name-1.gguf` beside `name.gguf`:
+        // a second full copy of the same multi-gigabyte weights, a second registry entry
+        // with a *different* id, and therefore two "installed" rows for one model. A file
+        // of the same name and the same length is the same model, so the existing entry
+        // is returned - which also preserves the id a story may already be bound to.
+        //
+        // Checked against the *canonical* name, before [uniqueFile] has a chance to
+        // invent a `-1` suffix, which is what made the duplicates in the first place.
+        val canonical = File(managedDir, safeName)
+        if (declaredBytes > 0L) {
+            managedModels().firstOrNull { existing ->
+                existing.displayName.equals(canonical.nameWithoutExtension, ignoreCase = true) &&
+                    existing.sizeBytes == declaredBytes
+            }?.let { existing ->
+                return existing
+            }
+        }
+
+        val destination = uniqueFile(canonical)
+        val partial = File(managedDir, destination.name + PART_SUFFIX)
+
+        val copied = try {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                partial.outputStream().use { output ->
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    var total = 0L
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        output.write(buffer, 0, read)
+                        total += read
+                    }
+                    output.flush()
+                    // fsync before the rename. Without it a crash in the window between
+                    // rename and flush can leave a correctly-named file full of zeroes,
+                    // which is a far more confusing failure than a missing one.
+                    runCatching { output.fd.sync() }
+                    total
+                }
+            } ?: error(REASON_UNREADABLE)
+        } catch (error: Throwable) {
+            partial.delete()
+            throw error
+        }
+
+        // 1. Not empty. A zero-byte .gguf is what a provider hands back when the user
+        //    picked something it cannot actually read.
+        if (copied <= 0L) {
+            partial.delete()
+            error(REASON_UNREADABLE)
+        }
+        // 2. If a size was declared, the copy must match it. A short read is the
+        //    signature of an interrupted transfer, and llama.cpp would surface it as an
+        //    unreadable file several screens later, with none of this context.
+        if (declaredBytes > 0L && copied != declaredBytes) {
+            partial.delete()
+            error(REASON_PARTIAL)
+        }
+        // 3. Actually a GGUF.
+        if (!isGguf(partial)) {
+            partial.delete()
+            error(REASON_NOT_GGUF)
+        }
+
+            if (!partial.renameTo(destination)) {
+            partial.delete()
+            error(REASON_UNREADABLE)
+        }
+        return destination.toEntry()
+    }
+
+    /**
+     * Deletes `.part` files left behind by a copy the process did not survive.
+     *
+     * Called on launch. Without it, every process death during a multi-gigabyte import
+     * leaks the entire partial file - on a phone that is the difference between being able
+     * to import a second model and running out of storage.
+     */
+    fun cleanupPartialCopies(): Int = managedDir.listFiles()
+        ?.filter { it.isFile && it.name.endsWith(PART_SUFFIX, ignoreCase = true) }
+        ?.count { it.delete() }
+        ?: 0
+
+    /** Whether there is room for [bytes], or the platform would not say. */
+    private fun hasRoomFor(bytes: Long): Boolean {
+        val usable = runCatching { managedDir.usableSpace }.getOrDefault(-1L)
+        // -1 means "unknown", and unknown must not mean "refuse" - a device that declines
+        // to report free space would otherwise be unable to import anything at all.
+        return usable < 0L || usable >= bytes
+    }
+
+    private fun querySize(uri: Uri): Long = runCatching {
+        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            val index = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE)
+            if (index >= 0 && cursor.moveToFirst()) cursor.getLong(index) else -1L
+        } ?: -1L
+    }.getOrDefault(-1L)
 
     /** Reads the GGUF header for the model picker. Header only, never weights. */
     suspend fun readMetadata(model: ModelEntry): Result<GgufMetadataReader.Metadata> = withContext(Dispatchers.IO) {
@@ -199,20 +362,33 @@ class ModelManager(
     }
 
     fun delete(model: ModelEntry) {
-        val file = File(model.absolutePath)
-        if (file.parentFile == managedDir.absoluteFile) {
-            file.delete()
-        }
+        deleteFileBehind(model.absolutePath)
         if (selectedModel()?.absolutePath == model.absolutePath) clearSelection()
     }
 
     /** Removes the file behind a registry entry, and forgets the selection. */
     fun delete(model: dev.charaly.runtime.model.InstalledModel) {
-        val file = File(model.absolutePath)
-        if (file.parentFile == managedDir.absoluteFile) {
+        deleteFileBehind(model.absolutePath)
+        if (selectedModel()?.absolutePath == model.absolutePath) clearSelection()
+    }
+
+    /**
+     * Deletes a file, but only if Charaly actually owns it.
+     *
+     * The guard used to be `file.parentFile == managedDir.absoluteFile`, which compares two
+     * `File` instances with `==` - reference equality, not path equality. [managedDir]
+     * returns a freshly constructed `File` on every access, so that comparison was
+     * **always false**: `delete()` removed the registry entry and left the multi-gigabyte
+     * file on disk. A user removing a model freed zero bytes and could not remove it again.
+     *
+     * `absoluteFile` yields the same instance for the same path, so `==` here finally means
+     * what the check was always trying to express.
+     */
+    private fun deleteFileBehind(absolutePath: String) {
+        val file = File(absolutePath)
+        if (file.absoluteFile.parentFile == managedDir.absoluteFile) {
             file.delete()
         }
-        if (selectedModel()?.absolutePath == model.absolutePath) clearSelection()
     }
 
     fun importedSizeBytes(): Long = managedModels().sumOf { it.sizeBytes }
@@ -322,6 +498,27 @@ class ModelManager(
     companion object {
         const val PREFS = "charaly_models"
         const val KEY_SELECTED = "selected_model"
+
+        /**
+         * Suffix for a transfer that has not finished.
+         *
+         * Shared with the download pipeline so an interrupted download and an interrupted
+         * import are cleaned up by the same rule, and so neither can be registered as a
+         * model by the launch-time reconciliation.
+         */
+        const val PART_SUFFIX = ".part"
+
+        /**
+         * Failure reasons, as constants rather than free-text `error(...)` strings.
+         *
+         * The user never sees these - `CharalyViewModel.importErrorMessage` maps them onto
+         * localised sentences - but matching on a literal typed in a throw site is how a
+         * wording tweak silently turns an import failure into "something went wrong".
+         */
+        const val REASON_NOT_GGUF = "not-a-gguf"
+        const val REASON_UNREADABLE = "unreadable"
+        const val REASON_PARTIAL = "partial-copy"
+        const val REASON_NO_SPACE = "insufficient-storage"
     }
 }
 

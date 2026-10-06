@@ -1,6 +1,7 @@
 package dev.charaly.app.ui
 
 import dev.charaly.runtime.inference.InferenceError
+import dev.charaly.runtime.presentation.Loc
 import dev.charaly.runtime.session.CharalyError
 
 /**
@@ -15,30 +16,37 @@ import dev.charaly.runtime.session.CharalyError
  */
 object ErrorMessages {
 
-    /** Runtime-level failures (story pipeline). */
+    /**
+     * Runtime-level failures (story pipeline).
+     *
+     * Localised through the runtime catalogue, because these are the sentences a player
+     * reads after something has already gone wrong - the worst possible moment to hand
+     * somebody a string in a language they did not choose.
+     */
     fun of(error: CharalyError): String = when (error) {
-        is CharalyError.ModelNotLoaded -> NO_MODEL
-        is CharalyError.NoCharacter -> "Nobody is available to talk in this scene yet."
-        is CharalyError.NoScene -> "The scene could not be placed. Move somewhere else first."
-        is CharalyError.Generation -> GENERATION_FAILED
-        is CharalyError.Cancelled -> "Generation stopped."
-        is CharalyError.Persistence -> "That change could not be saved on this device."
+        is CharalyError.ModelNotLoaded -> Loc.t("chat.needs_model")
+        is CharalyError.NoCharacter -> Loc.t("error.no_character")
+        is CharalyError.NoScene -> Loc.t("error.no_scene")
+        is CharalyError.Generation -> Loc.t("error.generation_failed")
+        is CharalyError.Cancelled -> Loc.t("error.generation_cancelled")
+        is CharalyError.Persistence -> Loc.t("error.persistence")
     }
 
     /** Inference-engine failures, translated into user language. */
     fun of(error: InferenceError): String = when (error) {
-        is InferenceError.ModelNotLoaded -> NO_MODEL
-        is InferenceError.ModelNotFound -> "This model file could not be found on this device."
-        is InferenceError.InvalidModel -> "This model file could not be loaded."
-        is InferenceError.OutOfMemory -> TOO_LARGE
-        is InferenceError.GenerationFailed -> "The local model stopped unexpectedly."
-        is InferenceError.Cancelled -> "Generation stopped."
-        is InferenceError.Unsupported ->
-            "Local inference is unavailable in this build. Rebuild with scripts/setup-llama.sh."
+        is InferenceError.ModelNotLoaded -> Loc.t("chat.needs_model")
+        is InferenceError.ModelNotFound -> Loc.t("error.model_not_found")
+        is InferenceError.InvalidModel -> Loc.t("error.invalid_model")
+        is InferenceError.OutOfMemory -> Loc.t("error.out_of_memory")
+        is InferenceError.GenerationFailed -> Loc.t("error.generation_failed")
+        is InferenceError.Cancelled -> Loc.t("error.generation_cancelled")
+        is InferenceError.Unsupported -> Loc.t("error.unsupported_engine")
     }
 
-    const val NO_MODEL = "This story needs a local model before it can continue."
-    const val TOO_LARGE = "This model may exceed the available device memory."
-    const val GENERATION_FAILED = "Your local model couldn't finish this scene."
-    const val CORRUPT_MODEL = "This model file could not be loaded."
+    // Named rather than inline so a test can assert on the wording and a change to one
+    // branch cannot silently reword only some of them.
+    val NO_MODEL: String get() = Loc.t("chat.needs_model")
+    val TOO_LARGE: String get() = Loc.t("error.too_large_model")
+    val GENERATION_FAILED: String get() = Loc.t("error.generation_failed")
+    val CORRUPT_MODEL: String get() = Loc.t("error.invalid_model")
 }

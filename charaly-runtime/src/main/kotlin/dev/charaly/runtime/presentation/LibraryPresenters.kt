@@ -3,6 +3,7 @@ package dev.charaly.runtime.presentation
 import dev.charaly.runtime.domain.CharacterId
 import dev.charaly.runtime.domain.LocationId
 import dev.charaly.runtime.domain.PackEventDefinition
+import dev.charaly.runtime.engine.EventEngine
 import dev.charaly.runtime.domain.PersonaTemplate
 import dev.charaly.runtime.domain.PackArtwork
 import dev.charaly.runtime.domain.StartingScenario
@@ -143,6 +144,37 @@ data class ContinueCard(
     val locationLine: String,
     val theme: ResolvedTheme,
     val progressLabel: String,
+
+    // ---- Story Resume Intelligence -------------------------------------
+    //
+    // The card used to show a title and a timestamp, which means it says nothing about
+    // *where you were*. Three of these four are read straight off authoritative state,
+    // so a user glancing at Home can tell whether stepping back in is worth it.
+
+    /** "Collège Françoise Dupont" - where the player is standing. */
+    val sceneLocation: String = "",
+    /** "Evening" - the story's own clock, not the wall clock. */
+    val sceneTimeOfDay: String = "",
+    /** "Day 3" */
+    val sceneDayLabel: String = "",
+    /**
+     * The open thread the story is currently about, by title.
+     *
+     * The most useful single line on the card: it is the answer to "what was I doing",
+     * phrased as the story phrases it rather than as an engine stage number.
+     */
+    val currentBeat: String = "",
+    /** "Marinette, Alya" - who is here, capped. Empty when the player is alone. */
+    val presentNames: List<String> = emptyList(),
+    /** "2 people here". Never blank: "Just you" is the honest single case. */
+    val presenceLabel: String = "",
+    /**
+     * The pack's wide hero for this story, when the pack has one.
+     *
+     * Preferred over a generated composition for the hero because it is the pack's own
+     * artwork - the thing that makes the card feel like a story rather than a row.
+     */
+    val bannerArtwork: PackArtwork? = null,
 )
 
 data class ModelStatusCard(
@@ -194,6 +226,26 @@ object HomePresenter {
                 ?: instance.worldState.characters.keys.minByOrNull { it.value }
             val companion = definition?.character(companionId)
             val location = instance.currentLocation()
+            val now = instance.worldClock.now
+
+            // Read off the same authoritative state the story screen uses, so the card
+            // cannot claim a location the engine disagrees with.
+            val playerId = StoryContextPresenter.playerId(instance)
+            val presentNames = EventEngine.currentPlayerLocation(instance)
+                ?.let { instance.worldState.charactersAt(it) }
+                .orEmpty()
+                .map { it.characterId }
+                .filter { it != playerId }
+                .mapNotNull { definition?.character(it)?.name }
+                .sorted()
+                .take(PRESENT_NAME_CAP)
+
+            val currentBeat = instance.storyThreads.values
+                .filter { it.status.isOpen }
+                .maxByOrNull { it.priority }
+                ?.let { thread -> thread.nextBeat.ifBlank { thread.title } }
+                .orEmpty()
+
             ContinueCard(
                 storyId = instance.id.value,
                 packId = instance.storyPackId.value,
@@ -206,6 +258,17 @@ object HomePresenter {
                 locationLine = location?.let { "${it.name} · ${instance.worldClock.now.clockLabel()}" }.orEmpty(),
                 theme = pack?.let { ResolvedTheme.of(it.identity.theme) } ?: ResolvedTheme.BRAND,
                 progressLabel = progressLabel(instance),
+                sceneLocation = location?.name.orEmpty(),
+                sceneTimeOfDay = StoryContextPresenter.timeOfDayLabel(now.hour),
+                sceneDayLabel = "Day ${now.day}",
+                currentBeat = currentBeat,
+                presentNames = presentNames,
+                presenceLabel = StoryContextPresenter.presenceLabel(presentNames.size),
+                // The pack's cover seed is what its generated artwork is keyed on, so the
+                // card gets the pack's *own* composition rather than one hashed from the
+                // story id - which would mean every playthrough of a pack looked
+                // different from every other.
+                bannerArtwork = pack?.let { PackArtwork.generated("banner-${it.id.value}", caption = it.identity.tagline) },
             )
         }
 
@@ -331,6 +394,14 @@ object HomePresenter {
         }
 
     const val MAX_RECENT_SESSIONS = 4
+
+    /**
+     * How many names the Continue card lists.
+     *
+     * Three. Enough to recognise the scene, short enough that a fourth name does not
+     * push the beat line off the card.
+     */
+    const val PRESENT_NAME_CAP = 3
     const val MAX_CAST = 4
 }
 
@@ -344,22 +415,60 @@ interface ModelStatusLike {
 
 /** Adapter for the real model registry + engine state. */
 class RegistryModelStatus(
-    private val installed: InstalledModel?,
-    private val engineLabel: String,
-    private val ready: Boolean,
-    private val loadDetail: String = "",
+    /**
+     * The authoritative selection.
+     *
+     * Taken as a parameter rather than re-derived here, because this is the class that was
+     * re-deriving it: it read "is the engine resident" and reported that as "is a model
+     * connected", which is the disagreement the [dev.charaly.runtime.model.ModelSelection]
+     * contract exists to end.
+     */
+    resolved: dev.charaly.runtime.model.ModelSelection = dev.charaly.runtime.model.ModelSelection(),
+    private val installed: InstalledModel? = null,
+    private val engineLabel: String = "",
+    private val loading: Boolean = false,
+    /**
+     * Convenience for call sites that only know a boolean.
+     *
+     * `true` means *usable*, and is mapped onto a resident selection - so a caller that
+     * used to pass "the engine has something loaded" now gets the stronger, correct
+     * statement rather than the weaker one it used to mean.
+     */
+    ready: Boolean? = null,
 ) : ModelStatusLike {
-    override fun displayName(): String = installed?.displayName ?: "No model installed"
+
+    private val selection: dev.charaly.runtime.model.ModelSelection =
+        if (ready == null || resolved.isBound) {
+            resolved
+        } else {
+            dev.charaly.runtime.model.ModelSelection.ofReadyFlag(ready)
+        }
+
+    override fun displayName(): String =
+        selection.displayName.ifBlank { installed?.displayName ?: Loc.t("model.none_installed") }
+
     override fun stateLabel(): String = when {
-        ready -> "Ready"
-        installed != null -> loadDetail.ifBlank { "Not loaded" }
-        else -> "Not installed"
+        loading -> Loc.t("model.loading")
+        selection.canGenerate && selection.isResident -> Loc.t("model.ready")
+        selection.canGenerate -> Loc.t("model.installed")
+        else -> Loc.t("model.not_installed")
     }
+
     override fun detailLabel(): String = when {
-        installed != null -> "Local · ${installed.sizeLabel}${if (ready) "" else " · $engineLabel"}"
-        else -> "Charaly needs a local model"
+        !selection.canGenerate -> ModelStagePresenter.reason(selection)
+        selection.needsEngineLoad -> Loc.t("model.ready_first_use")
+        installed != null -> Loc.t("model.local_meta", installed.sizeLabel)
+        else -> Loc.t("model.ready")
     }
-    override fun isReady(): Boolean = ready
+
+    /**
+     * "Ready" means *usable*, not *resident*.
+     *
+     * A model that is installed and merely still loading is ready as far as the user is
+     * concerned - they can press Continue and write - so it must not show as needing
+     * attention on Home.
+     */
+    override fun isReady(): Boolean = selection.canGenerate
 }
 
 // ---------------------------------------------------------------------------

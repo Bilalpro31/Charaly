@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The languages this app ships.
+
+  Declared so the system per-app language settings offer Turkish (API 33+) and so nothing
+  has to guess. The in-app switcher in Settings writes the same two codes, so both routes
+  into a language end up in the same place.
+-->
+<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
+    <locale android:name="en" />
+    <locale android:name="tr" />
+</locale-config>

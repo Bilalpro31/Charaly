@@ -44,6 +44,23 @@ data class ModelLoadRequest(
     /** Absolute path to a GGUF file inside app-writable or SAF-granted storage. */
     val path: String,
     val displayName: String = "",
+    /**
+     * The [dev.charaly.runtime.model.InstalledModel.id] this file is known by.
+     *
+     * ## Why the engine has to be told
+     *
+     * The engine used to name the model after the file (`my-model.gguf` -> `"my-model"`),
+     * while the registry names it `"local-my-model-42"`. Those are different namespaces, so
+     * "is the model I selected the one that is loaded?" could never be answered: the
+     * comparison silently always failed, and a story correctly bound to a correctly loaded
+     * model read as "not loaded".
+     *
+     * Carrying the registry id through the load makes the engine's answer comparable with
+     * every other layer's, which is what [dev.charaly.runtime.model.ModelSelection] needs
+     * in order to be the single source of truth. The file name remains as the fallback so
+     * an engine used without a registry still reports something meaningful.
+     */
+    val installedModelId: String = "",
     /** 0..100, reported while the model is being read. */
     val progress: (LoadProgress) -> Unit = {},
 )

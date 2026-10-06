@@ -1,5 +1,8 @@
 package dev.charaly.runtime.pack
 
+import dev.charaly.runtime.domain.CharalyAccent
+import dev.charaly.runtime.domain.CharalySurface
+import dev.charaly.runtime.domain.HeroTreatment
 import dev.charaly.runtime.domain.CanonBible
 import dev.charaly.runtime.domain.CharacterActivity
 import dev.charaly.runtime.domain.CharacterRole
@@ -74,9 +77,16 @@ object MiraculousPack {
     const val MIN_MIND_BEARERS = 14
 
     // Character ids
-    private const val MARINETTE = "marinette"
-    private const val ADRIEN = "adrien"
-    private const val ALYA = "alya"
+    //
+    // The core cast ids are public because they are this pack's stable contract rather
+    // than an implementation detail: the isolation tests need to name these characters
+    // to prove a second pack's story contains none of them, and a hardcoded string in a
+    // test would drift silently if a character were ever renamed. The NPC and location
+    // ids below stay private - no test needs them, and widening access to everything
+    // would make that discipline impossible to maintain.
+    const val MARINETTE = "marinette"
+    const val ADRIEN = "adrien"
+    const val ALYA = "alya"
     private const val NINO = "nino"
     private const val GABRIEL = "gabriel"
     private const val LADYBUG = "ladybug"
@@ -183,11 +193,18 @@ object MiraculousPack {
             tagline = "Paris is never as quiet as it looks.",
             genres = listOf("Superhero", "School", "Fantasy", "Mystery"),
             coverSeed = "miraculous-shadows-of-paris",
-            mood = "Parisian night, violet and rose",
-            primary = "#8B5CF6",
-            secondary = "#EC4899",
-            accent = "#F7C948",
-            surface = "#16121F",
+            mood = "Parisian night, red and black",
+            // The named identity, not a hand-picked violet.
+            //
+            // This is a red-and-black world: a spider's web against a night sky, a red suit
+            // and a black one. The violet-and-rose palette this pack used to carry was a
+            // generic "magical girl" reading that every superhero pack would have shared,
+            // and it was the single reason this world did not look like itself.
+            accentIdentity = "miraculous",
+            primary = CharalyAccent.MIRACULOUS.primaryHex,
+            secondary = CharalyAccent.MIRACULOUS.secondaryHex,
+            accent = CharalyAccent.MIRACULOUS.accentHex,
+            surface = CharalySurface.BASE,
             era = "Contemporary Paris",
             tone = "Warm, breathless, a little melancholy underneath the jokes.",
             notice = "Fan-made demonstration pack for Charaly. Original text and generated artwork only; " +
@@ -195,6 +212,20 @@ object MiraculousPack {
             featured = true,
             contentNotes = listOf("Teenagers", "Sparring", "Light peril"),
             glyph = "paris",
+            // The premise, the mood lines and the invitation. A showcase is a poster, not an
+            // inventory: these are what a reader is asked to walk in on. Leaving them empty
+            // made this world present a list of its contents instead of an invitation.
+            premise = "Paris, and what is wrong with it. Two teenagers who cannot tell anyone " +
+                "what they do after dark, a city that keeps ending the same night, and an art " +
+                "piece in a museum that somebody has already started collecting.",
+            hooks = listOf(
+                "The akuma are not monsters. They are grievances with a shape.",
+                "Somebody is taking the Miraculous, one guardian at a time.",
+                "Nobody in Paris saw anything, and everybody remembers everything.",
+            ),
+            atmosphere = "Wet zinc, low voices, and the tower never switched off",
+            invitation = "Step into Paris.",
+            heroTreatment = HeroTreatment.FULL_BLEED.name,
         ),
         characters = listOf(
             PackAuthoring.character(
@@ -919,6 +950,7 @@ object MiraculousPack {
                     PackAuthoring.placeImage("bakery-image", "miraculous-bakery"),
                     PackAuthoring.placeThumbnail("bakery-thumb", "miraculous-bakery"),
                 ),
+                tags = listOf("bakery", "street"),
             ),
             PackAuthoring.location(
                 id = SCHOOL,
@@ -936,6 +968,7 @@ object MiraculousPack {
                     PackAuthoring.placeImage("school-image", "miraculous-school"),
                     PackAuthoring.placeThumbnail("school-thumb", "miraculous-school"),
                 ),
+                tags = listOf("school", "classroom"),
             ),
             PackAuthoring.location(
                 id = ROOFTOP,
@@ -953,7 +986,25 @@ object MiraculousPack {
                 assets = listOf(
                     PackAuthoring.placeImage("rooftop-image", "miraculous-rooftop"),
                     PackAuthoring.placeThumbnail("rooftop-thumb", "miraculous-rooftop"),
+                    // Declared conditions. The visual layer picks between these by reading
+                    // the world clock and the pack's own `weather` variable - it never
+                    // decides that it is night, and it never decides that it is raining.
+                    // Without these the generated fallback still varies with the clock; with
+                    // them the pack controls the difference.
+                    PackAuthoring.sceneBackdrop(
+                        id = "rooftop-backdrop-night",
+                        seed = "miraculous-rooftop-night",
+                        caption = "The slate under a city that has gone to sleep",
+                        variant = "night",
+                    ),
+                    PackAuthoring.sceneBackdrop(
+                        id = "rooftop-backdrop-rain",
+                        seed = "miraculous-rooftop-rain",
+                        caption = "Rain on zinc, and the river going under the bridge",
+                        variant = "night,rain",
+                    ),
                 ),
+                tags = listOf("rooftop", "city"),
             ),
             PackAuthoring.location(
                 id = ICE_CREAM,
@@ -977,6 +1028,7 @@ object MiraculousPack {
                     PackAuthoring.placeImage("andre-shop-image", "miraculous-andre-shop"),
                     PackAuthoring.placeThumbnail("andre-shop-thumb", "miraculous-andre-shop"),
                 ),
+                tags = listOf("street", "cafe"),
             ),
             PackAuthoring.location(
                 id = CLASSROOM,
@@ -994,7 +1046,20 @@ object MiraculousPack {
                 assets = listOf(
                     PackAuthoring.placeImage("classroom-image", "miraculous-classroom"),
                     PackAuthoring.placeThumbnail("classroom-thumb", "miraculous-classroom"),
+                    PackAuthoring.sceneBackdrop(
+                        id = "classroom-backdrop-dusk",
+                        seed = "miraculous-classroom-dusk",
+                        caption = "Half past five, and the art room is locked",
+                        variant = "sunset",
+                    ),
+                    PackAuthoring.sceneBackdrop(
+                        id = "classroom-backdrop-night",
+                        seed = "miraculous-classroom-night",
+                        caption = "The board wiped, the chairs up, the window painted shut",
+                        variant = "night",
+                    ),
                 ),
+                tags = listOf("classroom"),
             ),
             PackAuthoring.location(
                 id = COURTYARD,
@@ -1012,6 +1077,7 @@ object MiraculousPack {
                     PackAuthoring.placeImage("courtyard-image", "miraculous-courtyard"),
                     PackAuthoring.placeThumbnail("courtyard-thumb", "miraculous-courtyard"),
                 ),
+                tags = listOf("school", "park"),
             ),
             PackAuthoring.location(
                 id = SCHOOL_OFFICE,
@@ -1030,6 +1096,7 @@ object MiraculousPack {
                     PackAuthoring.placeImage("school-office-image", "miraculous-school-office"),
                     PackAuthoring.placeThumbnail("school-office-thumb", "miraculous-school-office"),
                 ),
+                tags = listOf("interior", "office"),
             ),
             PackAuthoring.location(
                 id = ANDRE_HOME,
@@ -1047,6 +1114,7 @@ object MiraculousPack {
                     PackAuthoring.placeImage("andre-home-image", "miraculous-andre-home"),
                     PackAuthoring.placeThumbnail("andre-home-thumb", "miraculous-andre-home"),
                 ),
+                tags = listOf("interior", "home"),
             ),
             PackAuthoring.location(
                 id = PRINCIPAL_HOME,
@@ -1064,6 +1132,7 @@ object MiraculousPack {
                     PackAuthoring.placeImage("principal-home-image", "miraculous-principal-home"),
                     PackAuthoring.placeThumbnail("principal-home-thumb", "miraculous-principal-home"),
                 ),
+                tags = listOf("interior", "home"),
             ),
             PackAuthoring.location(
                 id = ROSA_HOME,
@@ -1080,6 +1149,7 @@ object MiraculousPack {
                     PackAuthoring.placeImage("rosa-home-image", "miraculous-rosa-home"),
                     PackAuthoring.placeThumbnail("rosa-home-thumb", "miraculous-rosa-home"),
                 ),
+                tags = listOf("interior", "home"),
             ),
             PackAuthoring.location(
                 id = KLEIN_HOME,
@@ -1096,6 +1166,7 @@ object MiraculousPack {
                     PackAuthoring.placeImage("klein-home-image", "miraculous-klein-home"),
                     PackAuthoring.placeThumbnail("klein-home-thumb", "miraculous-klein-home"),
                 ),
+                tags = listOf("interior", "home"),
             ),
             PackAuthoring.location(
                 id = RECEPTIONIST_HOME,
@@ -1112,6 +1183,7 @@ object MiraculousPack {
                     PackAuthoring.placeImage("receptionist-home-image", "miraculous-receptionist-home"),
                     PackAuthoring.placeThumbnail("receptionist-home-thumb", "miraculous-receptionist-home"),
                 ),
+                tags = listOf("interior", "home"),
             ),
             PackAuthoring.location(
                 id = CARETAKER_HOME,
@@ -1128,6 +1200,7 @@ object MiraculousPack {
                     PackAuthoring.placeImage("caretaker-home-image", "miraculous-caretaker-home"),
                     PackAuthoring.placeThumbnail("caretaker-home-thumb", "miraculous-caretaker-home"),
                 ),
+                tags = listOf("interior", "home"),
             ),
             PackAuthoring.location(
                 id = CAFE_OWNER_HOME,
@@ -1144,6 +1217,7 @@ object MiraculousPack {
                     PackAuthoring.placeImage("cafe-owner-home-image", "miraculous-cafe-owner-home"),
                     PackAuthoring.placeThumbnail("cafe-owner-home-thumb", "miraculous-cafe-owner-home"),
                 ),
+                tags = listOf("interior", "home"),
             ),
             PackAuthoring.location(
                 id = ASSISTANT_HOME,
@@ -1160,6 +1234,7 @@ object MiraculousPack {
                     PackAuthoring.placeImage("assistant-home-image", "miraculous-assistant-home"),
                     PackAuthoring.placeThumbnail("assistant-home-thumb", "miraculous-assistant-home"),
                 ),
+                tags = listOf("interior", "home"),
             ),
             PackAuthoring.location(
                 id = GUIDE_HOME,
@@ -1176,6 +1251,7 @@ object MiraculousPack {
                     PackAuthoring.placeImage("guide-home-image", "miraculous-guide-home"),
                     PackAuthoring.placeThumbnail("guide-home-thumb", "miraculous-guide-home"),
                 ),
+                tags = listOf("interior", "home"),
             ),
             PackAuthoring.location(
                 id = OFFICER_HOME,
@@ -1192,6 +1268,7 @@ object MiraculousPack {
                     PackAuthoring.placeImage("officer-home-image", "miraculous-officer-home"),
                     PackAuthoring.placeThumbnail("officer-home-thumb", "miraculous-officer-home"),
                 ),
+                tags = listOf("interior", "home"),
             ),
             PackAuthoring.location(
                 id = MARINETTE_ROOM,
@@ -1209,6 +1286,7 @@ object MiraculousPack {
                     PackAuthoring.placeImage("marinette-room-image", "miraculous-marinette-room"),
                     PackAuthoring.placeThumbnail("marinette-room-thumb", "miraculous-marinette-room"),
                 ),
+                tags = listOf("interior", "home"),
             ),
             PackAuthoring.location(
                 id = ADRIEN_HOME,
@@ -1226,6 +1304,7 @@ object MiraculousPack {
                     PackAuthoring.placeImage("adrien-home-image", "miraculous-adrien-home"),
                     PackAuthoring.placeThumbnail("adrien-home-thumb", "miraculous-adrien-home"),
                 ),
+                tags = listOf("interior", "home"),
             ),
             PackAuthoring.location(
                 id = CITY_LANDMARK,
@@ -1243,6 +1322,7 @@ object MiraculousPack {
                     PackAuthoring.placeImage("city-landmark-image", "miraculous-city-landmark"),
                     PackAuthoring.placeThumbnail("city-landmark-thumb", "miraculous-city-landmark"),
                 ),
+                tags = listOf("city"),
             ),
             PackAuthoring.location(
                 id = STREETS,
@@ -1258,8 +1338,21 @@ object MiraculousPack {
                 assets = listOf(
                     PackAuthoring.placeImage("streets-image", "miraculous-streets"),
                     PackAuthoring.placeThumbnail("streets-thumb", "miraculous-streets"),
+                    PackAuthoring.sceneBackdrop(
+                        id = "streets-backdrop-night",
+                        seed = "miraculous-streets-night",
+                        caption = "Wet asphalt, and every shop sign twice",
+                        variant = "night",
+                    ),
+                    PackAuthoring.sceneBackdrop(
+                        id = "streets-backdrop-rain",
+                        seed = "miraculous-streets-rain",
+                        caption = "The city reflecting itself",
+                        variant = "night,rain",
+                    ),
                 ),
                 interior = false,
+                tags = listOf("street", "city"),
             ),
             PackAuthoring.location(
                 id = PARK,
@@ -1278,6 +1371,7 @@ object MiraculousPack {
                     PackAuthoring.placeThumbnail("park-thumb", "miraculous-park"),
                 ),
                 interior = false,
+                tags = listOf("park"),
             ),
             PackAuthoring.location(
                 id = MUSEUM,
@@ -1298,6 +1392,7 @@ object MiraculousPack {
                     PackAuthoring.placeImage("museum-image", "miraculous-museum"),
                     PackAuthoring.placeThumbnail("museum-thumb", "miraculous-museum"),
                 ),
+                tags = listOf("interior", "museum"),
             ),
             PackAuthoring.location(
                 id = CAFE,
@@ -1315,6 +1410,7 @@ object MiraculousPack {
                     PackAuthoring.placeImage("cafe-image", "miraculous-cafe"),
                     PackAuthoring.placeThumbnail("cafe-thumb", "miraculous-cafe"),
                 ),
+                tags = listOf("street", "cafe"),
             ),
             PackAuthoring.location(
                 id = METRO,
@@ -1332,6 +1428,7 @@ object MiraculousPack {
                     PackAuthoring.placeThumbnail("metro-thumb", "miraculous-metro"),
                 ),
                 interior = false,
+                tags = listOf("interior"),
             ),
             PackAuthoring.location(
                 id = TV_TOWER,
@@ -1349,6 +1446,7 @@ object MiraculousPack {
                     PackAuthoring.placeImage("tower-image", "miraculous-tower"),
                     PackAuthoring.placeThumbnail("tower-thumb", "miraculous-tower"),
                 ),
+                tags = listOf("tower", "city"),
             ),
         ),
         // Pack-level art. Original generated illustrations, so the demo pack can be

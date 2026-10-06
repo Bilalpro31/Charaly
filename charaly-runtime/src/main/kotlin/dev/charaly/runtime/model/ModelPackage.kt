@@ -74,6 +74,35 @@ data class ModelArtifact(
     }
 
     val sizeLabel: String get() = formatBytes(sizeBytes)
+
+    /**
+     * Parameter count in the form a model card shows: "7B", "1.7B", "270M".
+     *
+     * Reads "unknown" rather than "0B" when the file does not state one, because
+     * "0B" on a card looks like a broken entry rather than an absent measurement.
+     */
+    val parameterLabel: String
+        get() = when {
+            parameterCount >= 1_000_000_000L -> "%.1fB".format(parameterCount / 1_000_000_000.0)
+            parameterCount >= 1_000_000L -> "%dM".format(parameterCount / 1_000_000L)
+            parameterCount > 0L -> parameterCount.toString()
+            else -> "unknown"
+        }
+
+    /**
+     * The one-line technical summary a model card shows in its secondary line:
+     * `7B · Q4_K_M · 4.5 GB · 8192 ctx`.
+     *
+     * Parts the file did not declare are omitted rather than filled with a placeholder,
+     * so the line never contains "unknown · unknown".
+     */
+    val techSummary: String
+        get() = listOfNotNull(
+            parameterLabel.takeIf { it != "unknown" },
+            quantization.takeIf { it.isNotBlank() },
+            sizeLabel.takeIf { it != "unknown" },
+            contextLength.takeIf { it > 0 }?.let { "$it ctx" },
+        ).joinToString(" · ").ifBlank { "no metadata" }
 }
 
 /**

@@ -2,15 +2,28 @@
 <!--
   Charaly is local-first.
 
-  Note what is NOT here: android.permission.INTERNET. Without it the OS makes it
-  impossible for this app to open a socket, which is a machine-checkable
-  guarantee that conversations, characters, memories, world state and model data
-  can never leave the device.
+  INTERNET is declared for exactly one feature: downloading a GGUF model from the
+  Hugging Face Hub when the user asks for one. It is not used for story data.
 
-  No telemetry, no analytics, no cloud account, no API key.
+  What never touches the network, and is enforced by code rather than by convention:
+    * conversations and transcripts        - generated and stored on device
+    * memories and character knowledge      - local JSON documents
+    * world state and the event log         - local
+    * model inference                        - llama.cpp, in-process, via JNI
+    * world simulation and event evaluation  - pure Kotlin, no I/O at all
+
+  There is no telemetry, no analytics, no cloud account, no API key and no server.
+  Deleting the model directory, or never downloading a model at all, leaves every
+  other feature working in airplane mode.
+
+  ACCESS_NETWORK_STATE exists so the UI can say "Offline Ready" accurately rather
+  than showing a model download button that is about to fail.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!--
       Reading a GGUF the user picks from their own storage. ACTION_OPEN_DOCUMENT
@@ -24,6 +37,7 @@
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
+        android:localeConfig="@xml/locales_config"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Charaly"

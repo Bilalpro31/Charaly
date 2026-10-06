@@ -146,10 +146,35 @@ enum class MemoryVisibility {
  * A persistent memory owned by one character (or by the player).
  *
  * Retrieval is importance + recency + explicit scene/character filters, all
- * deterministic and testable with no device, no embeddings and no network. If
- * vector embeddings are ever added they belong behind [MemoryStore] and must not
- * change the ownership or visibility rules - those are what make knowledge boundaries
- * *provable* rather than statistically guessed.
+ * deterministic and testable with no device, no embeddings and no network.
+ *
+ * ## Why there are no vector embeddings, and what would change if there were
+ *
+ * Charaly does not embed memories, and the omission is a decision rather than a gap. Three
+ * properties depend on it, and only the third is about convenience:
+ *
+ * 1. **Visibility stays a gate, not a ranking.** `Memory.visibleTo` is a closed, total
+ *    function, and a memory a character may not see can never be returned by retrieval
+ *    regardless of how relevant it scores. An embedding-based index would have to filter
+ *    *before* ranking for that to hold, which means the index can only ever be built over
+ *    the memories a given subject may see - so there is no single index, and a shared one
+ *    would leak by construction. The guarantee is structural rather than statistical, which
+ *    is the whole point of it.
+ * 2. **Retrieval stays deterministic.** The same story, replayed on the same build, prompts
+ *    with the same memories in the same order. Embeddings introduce a numerical comparison
+ *    whose result can change with a library version or a quantisation, which would make a
+ *    replayed story diverge from the original for reasons no one could audit.
+ * 3. **Prompt caching stays intact.** `ContextCache` keys on a fingerprint of the memories a
+ *    prompt's memory section is built from. A retrieval step whose *selection* can change
+ *    would invalidate that cache on nearly every turn, and llama.cpp's prefix cache - which
+ *    is what makes a long context affordable on a phone - would stop paying for itself.
+ *    (SillyTavern's own documentation warns about exactly this interaction: vectorised
+ *    retrieval and prompt caching fight each other, and you pick one.)
+ *
+ * If embeddings are ever added they belong behind [MemoryStore], and they must change only
+ * the *ordering* of memories that are already visible - never which ones are visible, never
+ * whether a given retrieval is reproducible, and never whether the cache fingerprint still
+ * describes the section that was actually sent.
  */
 @Serializable
 data class Memory(

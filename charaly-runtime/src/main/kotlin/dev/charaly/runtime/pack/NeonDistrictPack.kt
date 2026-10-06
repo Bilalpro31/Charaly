@@ -1,6 +1,9 @@
 package dev.charaly.runtime.pack
 
+import dev.charaly.runtime.domain.CharalyAccent
+import dev.charaly.runtime.domain.CharalySurface
 import dev.charaly.runtime.domain.CharacterActivity
+import dev.charaly.runtime.domain.HeroTreatment
 import dev.charaly.runtime.domain.RelationshipType
 import dev.charaly.runtime.domain.StoryThreadStatus
 import dev.charaly.runtime.domain.StoryTime
@@ -133,11 +136,11 @@ object NeonDistrictPack {
             genres = listOf("Cyberpunk", "Mystery", "Drama"),
             coverSeed = "neon-district-afterlight",
             mood = "rain-slick neon at 3am",
-            primary = "#22D3EE",
-            secondary = "#3B82F6",
-            accent = "#E879F9",
-            surface = "#0B1220",
-            ink = "#E8F4FB",
+            accentIdentity = "neon-district",
+            primary = CharalyAccent.NEON_DISTRICT.primaryHex,
+            secondary = CharalyAccent.NEON_DISTRICT.secondaryHex,
+            accent = CharalyAccent.NEON_DISTRICT.accentHex,
+            surface = CharalySurface.BASE,
             era = "Afterlight, present day, nine years after the Platform Nine closure",
             tone = "Wet neon and low voices. Everybody is tired, nobody is innocent, and the " +
                 "electric colour is always slightly ahead of the actual weather.",
@@ -146,6 +149,17 @@ object NeonDistrictPack {
             featured = true,
             contentNotes = listOf("Memory crime", "Corporate coercion", "Grief", "Rain"),
             glyph = "afterlight",
+            premise = "Yağmurda boğulmuş bir semt, satılabilir anılar ve on bir dakika. " +
+                "Çalınmış bir bellek çipi, kimsenin imzalamadığı bir şirket rotası ve " +
+                "o on bir dakikayı farklı parçalar hâlinde bilen beş kişi.",
+            hooks = listOf(
+                "Sektörde yağmur durmuş. Hâlâ ıslak.",
+                "On bir dakika eksik. Herkesin farklı bir parçası var.",
+                "Burada herkes bir şeyi satıyor. Bedeli gizli olanlar en pahalı.",
+            ),
+            atmosphere = "Wet neon, low voices, standing water",
+            invitation = "Step into Afterlight.",
+            heroTreatment = HeroTreatment.FULL_BLEED.name,
         ),
         // ---------------------------------------------------------------
         characters = listOf(

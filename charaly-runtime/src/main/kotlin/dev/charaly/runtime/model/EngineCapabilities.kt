@@ -138,6 +138,92 @@ data class EngineVerdict(
     val isLoadable: Boolean get() = support.isLoadable
 
     companion object {
+        /**
+         * The architecture implied by a model's *name*, when nothing better is known.
+         *
+         * ## Why a name is a guess, and why it is still useful
+         *
+         * Every GGUF file states its architecture authoritatively in its header, and
+         * [of] the header is always preferred. This exists for the one case where no
+         * header has been read yet: a repository card, or a library listing.
+         *
+         * It is deliberately conservative: it returns `""` rather than a guess when
+         * nothing matches, which routes the caller to [of]'s "does not know what kind of
+         * model this is" answer instead of to a specific wrong one. Where a name *does*
+         * match, the result is the architecture that name actually refers to - including
+         * the case where this build has no support for it.
+         *
+         * The distinction matters: a repository called `gemma-4-gguf` resolving to
+         * `gemma4` produces a *correct* "needs a newer engine" verdict, which is the
+         * message the user needs. Resolving it to `gemma` would produce "supported" and a
+         * download that fails at load time.
+         */
+        fun inferArchitecture(modelName: String): String {
+            // Separators are removed before matching, because publishers are inconsistent
+            // about them: the same family appears as `gemma-3-4b`, `Gemma3_4B` and
+            // `gemma_3`. Normalising first means the table below can be written once
+            // instead of once per spelling, which is where a table would otherwise rot.
+            val key = buildString {
+                for (ch in modelName.lowercase()) {
+                    if (ch.isLetterOrDigit()) append(ch)
+                }
+            }
+            if (key.isBlank()) return ""
+            // Most specific first: "qwen3" must beat "qwen", "llama4" beat "llama".
+            return FAMILY_HINTS.firstOrNull { (prefix, _) -> key.startsWith(prefix) }?.second.orEmpty()
+        }
+
+        /**
+         * Recognised name prefixes, separator-free, mapped to the ggml architecture they
+         * imply.
+         *
+         * Ordered most specific first and matched by prefix only. Prefix rather than
+         * substring is what keeps "yi" from matching every name containing those two
+         * letters, and it is why the table is written as whole family names.
+         *
+         * Every value is either a member of [EngineCapabilities.ARCHITECTURES] or an
+         * *intentionally unregistered* name - `gemma4` is here purely so
+         * [EngineVerdict.of] can answer "needs a newer engine" for Gemma 4, rather than
+         * resolving it to the older `gemma` and claiming support this build does not have.
+         * A test asserts that split, because a hint pointing at an unregistered
+         * architecture for any *other* reason would produce a confident, wrong verdict.
+         */
+        private val FAMILY_HINTS: List<Pair<String, String>> = listOf(
+            "qwen3moe" to "qwen3moe",
+            "qwen35" to "qwen3",
+            "qwen3" to "qwen3",
+            "qwen2" to "qwen2",
+            "qwen" to "qwen",
+            "llama4" to "llama4",
+            "llama3" to "llama",
+            "llama2" to "llama",
+            "llama" to "llama",
+            // gemma4 before gemma3 before gemma: the whole point is that a Gemma 4 file
+            // resolves to the architecture it actually is.
+            "gemma4" to "gemma4",
+            "gemma3n" to "gemma3n",
+            "gemma3" to "gemma3",
+            "gemma2" to "gemma2",
+            "gemma" to "gemma",
+            "mistral" to "llama",
+            "mixtral" to "llama",
+            "ministral" to "llama",
+            "phi4" to "phi3",
+            "phi3" to "phi3",
+            "deepseek" to "deepseek2",
+            "commandr" to "command-r",
+            "granite" to "granite",
+            "olmo" to "olmo2",
+            "exaone" to "exaone",
+            "smol" to "smollm3",
+            "jamba" to "jamba",
+            "glm4" to "glm4",
+            "hunyuan" to "hunyuan-dense",
+            "yi" to "llama",
+            "mpt" to "mpt",
+            "falcon" to "falcon",
+        )
+
         /** Derives the verdict for [architecture] from [EngineCapabilities]. */
         fun of(architecture: String): EngineVerdict {
             val raw = architecture.trim()

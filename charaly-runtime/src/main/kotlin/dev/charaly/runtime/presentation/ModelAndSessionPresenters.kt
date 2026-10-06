@@ -115,6 +115,21 @@ data class InstalledModelCard(
     val originLabel: String,
     val stateLabel: String,
     val detailRows: List<StatChip>,
+    /**
+     * What this device has actually measured about this model.
+     *
+     * A [SpeedVerdict], not a string, so a card cannot render a tok/s figure without the
+     * evidence line that says where the number came from. Unmeasured reads "Not measured",
+     * which is the honest default - there is no field on this type for an estimate.
+     */
+    val speed: SpeedVerdict = SpeedVerdict(state = SpeedState.UNMEASURED, label = "Not measured"),
+    /**
+     * Whether a "Measure" control should be offered for this model.
+     *
+     * Derived from [speed] plus the card's own readiness, so a model this build cannot load
+     * is never offered a benchmark it cannot produce.
+     */
+    val canBenchmark: Boolean = false,
     val isActive: Boolean,
     val isReady: Boolean,
     val isLoaded: Boolean,
@@ -180,6 +195,18 @@ data class ModelLibrarySnapshot(
     val recommended: List<CatalogModelCard>,
     val others: List<CatalogModelCard>,
     /**
+     * How much of the library has been measured, and what a running benchmark is doing.
+     *
+     * Its own field rather than a derived count so a screen cannot compute "2 of 4 measured"
+     * slightly differently from the cards, and so the running state has exactly one place
+     * it is rendered from.
+     */
+    val speedSummary: BenchmarkSummary = BenchmarkSummary(
+        measuredCount = 0,
+        unmeasuredCount = 0,
+        isRunning = false,
+    ),
+    /**
      * Real models this build cannot load yet, e.g. Gemma 4.
      *
      * A separate section rather than being mixed into the catalog: offering them in the
@@ -243,9 +270,16 @@ object ModelLibraryPresenter {
     /**
      * Whether this build can download models at all.
      *
-     * Charaly declares no INTERNET permission, so a plain build cannot fetch
-     * anything. The flag exists so a future network-capable variant (a separate
-     * app id / flavor) can enable it without touching this presenter.
+     * Passed in rather than asked for, because only the app module knows whether a transport
+     * is installed - and because a presenter that reached for one would stop being testable
+     * without a device. When it is false the library says so and points at import, which is
+     * the honest alternative rather than a dead button.
+     */
+    /**
+     * @param benchmarks this device's stored measurements, keyed by model id. A model with
+     *   no entry renders "Not measured"; nothing is derived from its size or its
+     *   architecture, because neither has any reliable relationship to tokens per second.
+     * @param measuringModelId the model currently being measured, if any.
      */
     fun build(
         installedModels: List<InstalledModel>,
@@ -255,9 +289,21 @@ object ModelLibraryPresenter {
         downloadsAvailable: Boolean = false,
         availableRamBytes: Long = 0L,
         query: String = "",
+        benchmarks: Map<String, dev.charaly.runtime.model.BenchmarkRecord> = emptyMap(),
+        measuringModelId: String = "",
+        measuringPhaseLabel: String = "",
     ): ModelLibrarySnapshot {
         val installedCards = installedModels.map { model ->
-            modelCard(model, model.id == activeModelId, model.id == loadedModelId, availableRamBytes, downloadsAvailable)
+            modelCard(
+                model = model,
+                isActive = model.id == activeModelId,
+                isLoaded = model.id == loadedModelId,
+                availableRamBytes = availableRamBytes,
+                downloadsAvailable = downloadsAvailable,
+                benchmark = benchmarks[model.id],
+                isMeasuring = model.id == measuringModelId,
+                measuringPhaseLabel = measuringPhaseLabel,
+            )
         }
 
         val installedIds = installedModels.map { it.catalogId }.filter { it.isNotBlank() }.toSet()
@@ -266,6 +312,15 @@ object ModelLibraryPresenter {
         }
 
         return ModelLibrarySnapshot(
+            speedSummary = BenchmarkPresenter.summary(
+                installedIds = installedModels.map { it.id },
+                records = benchmarks.values.toList(),
+                measuringModelId = measuringModelId,
+                measuringName = installedModels.firstOrNull { it.id == measuringModelId }
+                    ?.displayName
+                    .orEmpty(),
+                phaseLabel = measuringPhaseLabel,
+            ),
             installed = installedCards.filter { it.matches(query) },
             // A model the engine cannot load is kept out of the installable lists, and
             // surfaced in its own honest section instead.
@@ -284,7 +339,11 @@ object ModelLibraryPresenter {
             totalInstalledBytes = installedModels.sumOf { it.sizeBytes },
             canDownload = downloadsAvailable,
             downloadNote = if (downloadsAvailable) {
-                "Downloads run straight to this device and are verified before use."
+                // Both routes are real in this build: a download from the Hub, or an
+                // import from a file the user already has. Saying so is what lets the
+                // user pick either without wondering whether the button works.
+                "Download a GGUF from Hugging Face, or import one you already have. " +
+                    "Everything is verified before a model is used."
             } else {
                 "This build of Charaly has no network access, so models are imported from your own files."
             },
@@ -307,6 +366,10 @@ object ModelLibraryPresenter {
         return displayName.contains(query, ignoreCase = true) ||
             originLabel.contains(query, ignoreCase = true) ||
             stateLabel.contains(query, ignoreCase = true) ||
+            // The speed line is searchable as well, so a user who has measured one model can
+            // find it by typing "measured" rather than having to remember its name.
+            speed.label.contains(query, ignoreCase = true) ||
+            speed.evidence.contains(query, ignoreCase = true) ||
             detailRows.any { it.label.contains(query, ignoreCase = true) || it.value.contains(query, ignoreCase = true) }
     }
 
@@ -325,9 +388,17 @@ object ModelLibraryPresenter {
         isLoaded: Boolean,
         availableRamBytes: Long,
         downloadsAvailable: Boolean,
+        benchmark: dev.charaly.runtime.model.BenchmarkRecord? = null,
+        isMeasuring: Boolean = false,
+        measuringPhaseLabel: String = "",
     ): InstalledModelCard {
         val verdict = model.deviceVerdict(availableRamBytes)
         val engineVerdict = dev.charaly.runtime.model.EngineVerdict.of(model.architecture)
+        val speed = BenchmarkPresenter.verdict(
+            record = benchmark,
+            isMeasuring = isMeasuring,
+            phaseLabel = measuringPhaseLabel,
+        )
         return InstalledModelCard(
             id = model.id,
             displayName = model.displayName,
@@ -352,6 +423,10 @@ object ModelLibraryPresenter {
                     add(StatChip("Verified", if (model.verified) "Yes" else "Not verified"))
                 }
             },
+            speed = speed,
+            // A model this build cannot load cannot be measured either, so it is not offered
+            // a Measure control - a button that would always fail is worse than no button.
+            canBenchmark = speed.canBenchmark && engineVerdict.isLoadable && !model.compatibility.loadFailed,
             isActive = isActive,
             isReady = verdict.level == dev.charaly.runtime.model.DeviceFitLevel.READY,
             isLoaded = isLoaded,

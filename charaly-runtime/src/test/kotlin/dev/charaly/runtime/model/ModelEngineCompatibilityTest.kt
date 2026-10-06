@@ -200,15 +200,29 @@ class ModelEngineCompatibilityTest {
     // Downloads
     // ------------------------------------------------------------------
 
+    /**
+     * A build with no transport explains why, and names the real cause.
+     *
+     * The cause is *the missing transport*, not the user's connectivity. This build does
+     * declare INTERNET and does wire a real HTTPS transport, so a refusal here is a build
+     * problem - and telling someone with working Wi-Fi that they are offline would send
+     * them to check their router for no reason. The wording is asserted because it is the
+     * only thing a user ever sees in this state.
+     */
     @Test
-    fun `the offline core build explains why downloads are unavailable`() {
+    fun `a build with no transport explains why downloads are unavailable`() {
         val manager: ModelDownloadManager = UnavailableModelDownloads()
         val reason = manager.availability()
         assertNotNull("the build must state why downloads are off", reason)
         assertEquals(DownloadUnavailable.OfflineCoreBuild, reason)
         assertTrue(
-            "the reason must name the real cause",
-            reason!!.message.contains("internet", ignoreCase = true),
+            "the reason must name the transport as the cause: ${reason!!.message}",
+            reason.message.contains("model library", ignoreCase = true) ||
+                reason.message.contains("transport", ignoreCase = true),
+        )
+        assertFalse(
+            "the reason must not blame the user's connection: ${reason.message}",
+            reason.message.contains("you are offline", ignoreCase = true),
         )
         assertTrue(
             "and must offer the alternative that does work",

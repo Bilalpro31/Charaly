@@ -23,6 +23,15 @@ data class InferenceContext(
     val locationDescription: String,
     val knowledge: List<Fact>,
     val memories: List<Memory>,
+    /**
+     * The memory section, already rendered to text.
+     *
+     * Set by [ContextBuilder] when a cache is configured. `null` here means "render it
+     * yourself", which is the correct behaviour for a hand-constructed context - the
+     * developer inspector builds one directly - so the field is optional rather than
+     * required.
+     */
+    val preRenderedMemories: String? = null,
     val relationships: List<Relationship>,
     val sceneObjective: String = "",
     val facts: List<Fact> = emptyList(),
@@ -98,7 +107,15 @@ data class InferenceContext(
             appendLine("WORLD FACTS YOU CAN OBSERVE")
             worldFacts.forEach { (key, value) -> appendLine("- $key: $value") }
         }
-        if (memories.isNotEmpty()) {
+        // Prefer the pre-rendered block when the ContextBuilder supplied one. It is
+        // byte-identical to the loop below - the builder renders it with the same
+        // format - but a cache hit means the string was built once rather than once per
+        // turn.
+        val rendered = preRenderedMemories
+        if (rendered != null) {
+            appendLine()
+            appendLine(rendered)
+        } else if (memories.isNotEmpty()) {
             appendLine()
             appendLine("WHAT YOU REMEMBER")
             memories.forEach { appendLine("- (${it.importance}/5) ${it.content}") }

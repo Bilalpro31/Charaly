@@ -1,7 +1,10 @@
 package dev.charaly.runtime.pack
 
+import dev.charaly.runtime.domain.CharalyAccent
+import dev.charaly.runtime.domain.CharalySurface
 import dev.charaly.runtime.domain.CharacterActivity
 import dev.charaly.runtime.domain.EventTrigger
+import dev.charaly.runtime.domain.HeroTreatment
 import dev.charaly.runtime.domain.RelationshipType
 import dev.charaly.runtime.domain.StoryThreadStatus
 import dev.charaly.runtime.domain.StoryTime
@@ -118,11 +121,11 @@ object LastKingdomPack {
             genres = listOf("Fantasy", "Political", "Adventure"),
             coverSeed = "last-kingdom",
             mood = "late-summer court light over old stone",
-            primary = "#D4A24C",
-            secondary = "#4F7A52",
-            accent = "#E8C87A",
-            surface = "#14120F",
-            ink = "#F6F1E4",
+            accentIdentity = "last-kingdom",
+            primary = CharalyAccent.LAST_KINGDOM.primaryHex,
+            secondary = CharalyAccent.LAST_KINGDOM.secondaryHex,
+            accent = CharalyAccent.LAST_KINGDOM.accentHex,
+            surface = CharalySurface.BASE,
             era = "The last autumn of the reign of Aldren III",
             tone = "Cold mornings, warm wine, and everybody being extremely polite about the fact " +
                 "that the floor is about to open.",
@@ -131,6 +134,17 @@ object LastKingdomPack {
             featured = true,
             contentNotes = listOf("Court intrigue", "A funeral that never happens", "Light peril"),
             glyph = "crown",
+            premise = "Vaurel Krallığı'nın bir kralı, taç törenine dokuz günü ve birbirini " +
+                "tutmeyen üç defter var. Taçın kime ait olduğundan hiçbir emin olmayan " +
+                "saray entrikası.",
+            hooks = listOf(
+                "Taç törenine dokuz gün kaldı.",
+                "Üç defter var. Hiçbiri diğerini tutmuyor.",
+                "Bu sarayda herkes çok nazik konuşuyor. Bu iyi bir işaret değil.",
+            ),
+            atmosphere = "Cold mornings, candlelight, old stone",
+            invitation = "Step into Vaurel.",
+            heroTreatment = HeroTreatment.WASH.name,
         ),
         characters = listOf(
             PackAuthoring.character(

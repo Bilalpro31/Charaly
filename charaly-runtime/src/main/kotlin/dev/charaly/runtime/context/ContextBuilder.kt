@@ -20,6 +20,15 @@ import dev.charaly.runtime.inference.GenerationParams
 class ContextBuilder(
     private val definition: WorldDefinition,
     private val budget: ContextBudget = ContextBudget(),
+    /**
+     * Optional cache for the static half of a prompt. See [ContextCache].
+     *
+     * Null by default so the builder's behaviour is unchanged unless a caller opts in;
+     * the cache is a performance concern and never a correctness one.
+     */
+    private val cache: ContextCache? = null,
+    /** Version counters. Paired with [cache]; also optional. */
+    private val epochs: ContextEpoch? = null,
 ) {
 
     fun buildContext(
@@ -51,6 +60,20 @@ class ContextBuilder(
         val facts = knowledge.filter { it.locationId == null || it.locationId == scene.locationId }
         val location = definition.location(scene.locationId)
 
+        // The memory block is the part of the prompt most likely to be *large* and most
+        // likely to be *stable* - a scene is usually several turns long, and the same
+        // top-scoring memories come back every one of them. So it is the section most
+        // worth caching, and the one whose contents are declared precisely here.
+        //
+        // `render` is only invoked on a miss. On a hit, none of the joining and
+        // formatting below happens at all.
+        val memoryBlock: String = cachedSection(
+            instance = instance,
+            characterId = characterId,
+            scene = scene,
+            section = "memory",
+        ) { renderMemories(memories, instance, scene, characterId) }
+
         return InferenceContext(
             character = character,
             runtime = runtime,
@@ -63,6 +86,15 @@ class ContextBuilder(
             facts = facts,
             recentTranscript = transcript,
             userInput = userInput,
+            /**
+             * Pre-rendered so a cache hit does real work.
+             *
+             * The alternative - passing the [dev.charaly.runtime.domain.memory.Memory]
+             * list and letting the prompt builder format it - would mean re-serialising
+             * the same memories on every turn, which is exactly the cost this section is
+             * cached to avoid.
+             */
+            preRenderedMemories = memoryBlock,
             worldFacts = observableVariables(instance, scene.locationId),
             // Read for this character only. There is no bulk accessor on the store
             // that returns everyone's minds, so getting this wrong requires going out
@@ -108,6 +140,73 @@ class ContextBuilder(
         userInput: String = "",
         params: GenerationParams = GenerationParams(),
     ): InferenceRequest = buildRequest(buildContext(instance, scene, characterId, userInput), params)
+
+    /**
+     * Runs [render] through the cache when one is configured.
+     *
+     * Falls through to a direct call when there is no cache, so an unconfigured builder
+     * costs exactly what it did before this existed.
+     *
+     * The `sources` list is what makes the key sensitive to the real inputs. It names
+     * every memory the section is built from, so a new memory, a retracted memory, or a
+     * changed importance all produce a different key - without the cache having to guess
+     * which of those happened.
+     */
+    private fun cachedSection(
+        instance: StoryInstance,
+        characterId: CharacterId,
+        scene: Scene,
+        section: String,
+        render: () -> String,
+    ): String {
+        val cache = this.cache ?: return render()
+        val sources = buildList {
+            add("budget:${budget.memories}")
+            add("participants:${scene.participantSet().map { it.value }.sorted().joinToString(",")}")
+            // Total memory count catches growth; the per-memory ids below catch
+            // everything else, including a retracted memory or a changed importance.
+            add("memoryCount:${instance.memories.size}")
+            instance.memories.selectedFor(characterId, scene, budget.memories).forEach {
+                add("m:${it.id.value}:${it.importance}")
+            }
+        }
+        return cache.stableSection(
+            storyId = instance.id,
+            characterId = characterId,
+            locationId = scene.locationId,
+            sceneKey = sceneKeyOf(scene),
+            epoch = epochs?.current(instance.id) ?: 0L,
+            sources = sources,
+            render = render,
+        )
+    }
+
+    /**
+     * A stable identity for "this moment of this scene".
+     *
+     * Includes the active threads because a scene's objective is derived from them: two
+     * scenes with the same participants and location but a different live thread are
+     * genuinely different contexts, and caching them as one would serve the wrong prompt.
+     */
+    private fun sceneKeyOf(scene: Scene): String = buildString {
+        append(scene.id.value)
+        append('@')
+        append(scene.mood)
+        append(':')
+        scene.activeThreadIds.map { it.value }.sorted().forEach { append(it).append('|') }
+    }
+
+    /** Renders the memory section exactly as `InferenceContext.systemPrompt` expects it. */
+    private fun renderMemories(
+        memories: List<dev.charaly.runtime.domain.memory.Memory>,
+        instance: StoryInstance,
+        scene: Scene,
+        characterId: CharacterId,
+    ): String = buildString {
+        if (memories.isEmpty()) return@buildString
+        appendLine("WHAT YOU REMEMBER")
+        memories.forEach { appendLine("- (${it.importance}/5) ${it.content}") }
+    }.trimEnd()
 
     /** Scene objective: what the scene is currently about, derived from threads. */
     private fun deriveObjective(instance: StoryInstance, scene: Scene): String {

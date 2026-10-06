@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Türkçe.
+
+  Natural Turkish rather than word-for-word English, because the alternative reads like a
+  form filled in by a translator. Notes on the choices that are not obvious:
+
+   * "Devam Et" for Continue, "Hikâyeyi Başlat" for entering a world. "Step in" is not a
+     verb a Turkish player would recognise, so it became the thing the button does.
+   * "Model hazır — ilk kullanımda yükleme yapılacak" for a model that is installed but not
+     yet resident. It says both the good news and the wait, which is all the user needs.
+   * "Yerel model" for a local model, because "yerel" is the ordinary word for something
+     that lives on your phone.
+   * Lowercase "s" in "modeller", because Turkish sentence case does not capitalise
+     common nouns. Capitalising them is the single most common giveaway of a translated UI.
+   * "Ayarlar", "Kitaplık" and "Dünyalar" are the words Turkish users actually use for
+     settings, library and worlds - not transliterations of the English nouns.
+-->
+<resources>
+    <string name="app_name">Charaly</string>
+
+    <!-- Navigation -->
+    <string name="nav_home">Ana Sayfa</string>
+    <string name="nav_worlds">Dünyalar</string>
+    <string name="nav_chat">Sohbet</string>
+    <string name="nav_library">Kitaplık</string>
+    <string name="nav_settings">Ayarlar</string>
+    <string name="nav_models">Modeller</string>
+
+    <!-- Actions -->
+    <string name="action_continue">Devam Et</string>
+    <string name="action_cancel">İptal</string>
+    <string name="action_retry">Tekrar Dene</string>
+    <string name="action_dismiss">Kapat</string>
+    <string name="action_back">Geri</string>
+    <string name="action_change">Değiştir</string>
+    <string name="action_import_gguf">Model İçe Aktar (GGUF)</string>
+    <string name="action_choose_model">Bir model seç</string>
+    <string name="action_step_in">Hikâyeyi Başlat</string>
+    <string name="action_see_all">Tümü</string>
+    <string name="action_stop">Durdur</string>
+    <string name="action_enter_world">Dünyaya gir</string>
+    <string name="action_about">Bu dünya hakkında</string>
+    <string name="action_find_world">Bir dünya bul</string>
+
+    <!-- Ana sayfa -->
+    <string name="home_worlds">Dünyalar</string>
+    <string name="home_worlds_caption">%1$d dünyaya adım at</string>
+    <string name="home_your_stories">Hikâyeleriniz</string>
+    <string name="home_library">Kitaplık</string>
+    <string name="home_browse_worlds">Tüm dünyalara göz at</string>
+    <string name="home_model_ready">Hazır</string>
+    <string name="home_model_choose">Seç</string>
+
+    <!-- Dünyalar -->
+    <string name="worlds_search">Dünyalarda ara</string>
+    <string name="worlds_clear_search">Aramayı temizle</string>
+
+    <!-- Kitaplık -->
+    <string name="library_search">Hikâyelerinizde ara</string>
+    <string name="library_empty_title">İlk dünyanız sizi bekliyor.</string>
+    <string name="library_empty_body">Başlattığınız hikâyeler burada, kaldığınız yerden devam etmeye hazır olacak.</string>
+
+    <!-- Hikâye kurulumu -->
+    <string name="setup_continue">Devam Et</string>
+    <string name="setup_the_voice">Konuşan</string>
+    <string name="setup_no_model_bound">Model seçilmedi</string>
+    <string name="setup_world_missing_title">Bu dünya burada değil.</string>
+    <string name="setup_world_missing_body">Bu cihazdan kaldırılmış olabilir.</string>
+
+    <!-- Modeller -->
+    <string name="models_title">Modeller</string>
+    <string name="models_on_this_device">Bu cihazdakiler</string>
+    <string name="models_installed_caption">%1$d model tüm hikâyelerde kullanılabilir</string>
+    <string name="models_import">İçe Aktar</string>
+    <string name="models_import_hint">Elinizdeki bir GGUF dosyasını içe aktarın. Cihazdan hiçbir yere gönderilmez.</string>
+    <string name="models_back_to_story">Hikâyeye dön</string>
+
+    <!-- Sohbet -->
+    <string name="chat_leave_story">Hikâyeden çık</string>
+    <string name="chat_scene_details">Sahne ayrıntıları</string>
+    <string name="chat_ways_of_acting">Nasıl davranılır</string>
+    <string name="chat_close_ways_of_acting">Nasıl davranılır seçeneğini kapat</string>
+    <string name="chat_send">Gönder</string>
+    <string name="chat_message_hint">Mesaj</string>
+    <string name="chat_missing_title">Açık hikâye yok</string>
+    <string name="chat_missing_body">Bir hikâyeyi kitaplıktan açın, burada okuyun.</string>
+
+    <!-- Ayarlar -->
+    <string name="settings_title">Ayarlar</string>
+    <string name="settings_language">Dil</string>
+    <string name="settings_language_english">English</string>
+    <string name="settings_language_turkish">Türkçe</string>
+
+    <!-- Erişilebilirlik -->
+    <string name="a11y_back_to">%1$s ekranına geri dön</string>
+    <string name="a11y_character_says">%1$s şunu söylüyor: %2$s</string>
+    <string name="a11y_story_moment">Hikâye anı: %1$s</string>
+    <string name="a11y_previous_step">Önceki adım</string>
+</resources>

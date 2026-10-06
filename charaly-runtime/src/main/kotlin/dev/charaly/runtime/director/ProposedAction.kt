@@ -59,6 +59,29 @@ object ProposedActionParser {
             "Allowed types: move, discover, relate, advance_thread, end_scene.\n" +
             "Never assume narration is accepted as fact: only tagged actions are considered."
 
+    /**
+     * The reply with every action tag removed, for the transcript.
+     *
+     * ## Why this has to exist
+     *
+     * The reply is stored verbatim, and the transcript is what the player reads. So a
+     * model that proposes an action leaves `<charaly:action type="move" .../>` sitting in
+     * the middle of their dialogue - raw protocol on screen, which is exactly what the
+     * product must never show.
+     *
+     * The earlier version applied the tags and kept them. A proposal is machinery; the
+     * player should read the words around it and nothing else.
+     *
+     * Stripping is whitespace-aware so that removing a tag does not leave a paragraph
+     * break where there was none, and never produces an empty string - an empty reply
+     * reads as a bug, whereas "(no reply)" reads as the model saying nothing.
+     */
+    fun stripActions(text: String): String = text
+        .replace(TAG, "")
+        .replace(Regex("""[ \t]+\n"""), "\n")
+        .replace(Regex("""\n{3,}"""), "\n\n")
+        .trim()
+
     fun parse(text: String): List<ProposedAction> =
         TAG.findAll(text).mapNotNull { match ->
             val attrs = ATTR.findAll(match.groupValues[1])

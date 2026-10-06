@@ -6,6 +6,9 @@ build/
 *.aab
 *.so
 
+# Kotlin compiler scratch: session markers and error logs from a local build.
+.kotlin/
+
 # Local machine configuration: must never be committed.
 local.properties
 
@@ -19,3 +22,11 @@ app/src/main/cpp/llama.cpp/
 
 # Imported models must never enter the repository.
 *.gguf
+
+# Python bytecode. scripts/generate-story-art.py is tracked; the cache it leaves behind
+# is not, and it differs per interpreter version so it would only ever show up as noise.
+__pycache__/
+*.py[cod]
+
+# Native build verification output from scripts/verify-native-arm64.sh.
+/tmp-charaly-native-verify/

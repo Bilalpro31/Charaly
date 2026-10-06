@@ -24,6 +24,15 @@ endif()
 # Build llama.cpp as a static library from its own CMake project. Only CPU
 # inference is enabled: it is portable, and GPU backends add large binary
 # dependencies for no benefit on the CPU-first path.
+#
+# The UI takes this seriously rather than merely respecting it: the app reads the
+# device list back out of ggml at runtime (LlamaNative.availableBackends) and the model
+# library can only render an accelerator name that appears there. So a CPU-only build
+# is structurally incapable of displaying "GPU accelerated" - the claim cannot be made
+# by forgetting a flag, only by compiling one.
+#
+# Enabling OpenCL/Adreno or Vulkan is a separate change, to be decided from measured
+# CPU-baseline benchmarks rather than before them. See the note on n_gpu_layers below.
 set(LLAMA_STANDALONE OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)

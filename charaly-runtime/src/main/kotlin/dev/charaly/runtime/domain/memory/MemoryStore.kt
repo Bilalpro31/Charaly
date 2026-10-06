@@ -135,6 +135,31 @@ data class MemoryStore(
         involving = involving,
     ).filter { it.importance >= minImportance }
 
+    /**
+     * The exact list [select] would return for a character in a scene.
+     *
+     * ## Why a second entry point rather than making callers pass a Scene
+     *
+     * [ContextBuilder]'s cache needs to know *which* memories a prompt's memory section
+     * is built from, so it can fingerprint them. That is the same selection the builder
+     * is about to perform, and duplicating its predicate here would guarantee the two
+     * drift apart - after which a cache would happily serve memories that are no longer
+     * visible to that character.
+     *
+     * So this is the single implementation, and [select] is kept as the plain-id form
+     * that existing callers use.
+     */
+    fun selectedFor(
+        characterId: CharacterId,
+        scene: dev.charaly.runtime.domain.Scene,
+        limit: Int = 8,
+    ): List<Memory> = select(
+        characterId = characterId,
+        limit = limit,
+        atLocation = scene.locationId,
+        involving = scene.participantSet() - characterId,
+    )
+
     // ------------------------------------------------------------------
     // Queries used by the UI and the developer panel
     // ------------------------------------------------------------------

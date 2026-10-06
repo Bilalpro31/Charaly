@@ -1,9 +1,12 @@
 package dev.charaly.runtime.pack
 
+import dev.charaly.runtime.domain.CharalyAccent
+import dev.charaly.runtime.domain.CharalySurface
 import dev.charaly.runtime.domain.CharacterActivity
 import dev.charaly.runtime.domain.CharacterDefinition
 import dev.charaly.runtime.domain.CharacterId
 import dev.charaly.runtime.domain.AssetSource
+import dev.charaly.runtime.domain.HeroTreatment
 import dev.charaly.runtime.domain.CharacterRole
 import dev.charaly.runtime.domain.EventCondition
 import dev.charaly.runtime.domain.EventEffect
@@ -56,6 +59,7 @@ object PackAuthoring {
 
     // ---- identity --------------------------------------------------------
 
+    @Suppress("LongParameterList")
     fun identity(
         tagline: String,
         genres: List<String>,
@@ -64,8 +68,8 @@ object PackAuthoring {
         primary: String,
         secondary: String,
         accent: String,
-        surface: String = "#131218",
-        ink: String = "#F5F2FA",
+        surface: String = CharalySurface.RAISED,
+        ink: String = CharalyAccent.NeutralIdentity.inkHex,
         era: String = "",
         tone: String = "",
         notice: String = "",
@@ -73,25 +77,66 @@ object PackAuthoring {
         demo: Boolean = true,
         contentNotes: List<String> = emptyList(),
         glyph: String = "",
-    ): PackIdentity = PackIdentity(
-        tagline = tagline,
-        genres = genres,
-        contentNotes = contentNotes,
-        era = era,
-        tone = tone,
-        theme = PackTheme(
-            primaryHex = primary,
-            secondaryHex = secondary,
-            accentHex = accent,
-            inkHex = ink,
-            surfaceHex = surface,
-            mood = mood,
-        ),
-        cover = PackArtwork.generated(seed = coverSeed, glyph = glyph, caption = tagline),
-        fandomNotice = notice,
-        isFeatured = featured,
-        isDemo = demo,
-    )
+        /**
+         * The premise shown on the detail screen.
+         *
+         * Defaults to [tagline] so an existing pack that never sets it still reads
+         * correctly rather than showing an empty block.
+         */
+        premise: String = "",
+        /** Atmospheric lines. Short, and at most a handful on the detail screen. */
+        hooks: List<String> = emptyList(),
+        atmosphere: String = "",
+        /** "Step into Paris." Falls back to a generic phrase when blank. */
+        invitation: String = "",
+        /**
+         * A named accent from `CharalyAccent`, or a fully specified theme.
+         *
+         * When an id resolves, the theme comes from the library so every pack that says
+         * "miraculous" gets exactly the same red/black/white identity - and so the
+         * individual hex parameters are only needed for a genuinely new palette.
+         */
+        accentIdentity: String = "",
+        gradientStart: String = "",
+        gradientEnd: String = "",
+        heroTreatment: String = HeroTreatment.WASH.name,
+    ): PackIdentity {
+        val declared = CharalyAccent.byId(accentIdentity)
+        val theme = if (declared != null) {
+            // A named identity supplies its own colours and gradient. Only the
+            // treatment is overridable, because "full bleed" is a layout decision a
+            // pack may reasonably want to make differently from the library default.
+            declared.copy(heroTreatment = heroTreatment)
+        } else {
+            PackTheme(
+                primaryHex = primary,
+                secondaryHex = secondary,
+                accentHex = accent,
+                inkHex = ink,
+                surfaceHex = surface,
+                mood = mood,
+                gradientStartHex = gradientStart,
+                gradientEndHex = gradientEnd,
+                heroTreatment = heroTreatment,
+            )
+        }
+        return PackIdentity(
+            tagline = tagline,
+            genres = genres,
+            contentNotes = contentNotes,
+            era = era,
+            tone = tone,
+            theme = theme,
+            cover = PackArtwork.generated(seed = coverSeed, glyph = glyph, caption = tagline),
+            fandomNotice = notice,
+            isFeatured = featured,
+            isDemo = demo,
+            premise = premise.ifBlank { tagline },
+            hooks = hooks,
+            atmosphere = atmosphere.ifBlank { mood },
+            enterInvitation = invitation,
+        )
+    }
 
     // ---- characters ------------------------------------------------------
 
@@ -254,6 +299,28 @@ object PackAuthoring {
         source = AssetSource.GENERATED_ORIGINAL,
         generatedSeed = seed,
         caption = caption,
+    )
+
+    /**
+     * A backdrop for a scene, optionally tagged with the world condition it is for.
+     *
+     * [variant] is what makes a location look different at night without the UI inventing
+     * a reason: the author declares the conditions they drew, and the visual layer picks
+     * between them by reading authoritative state. Empty means "the plain one", which is
+     * the fallback whenever nothing in the world says otherwise.
+     */
+    fun sceneBackdrop(
+        id: String,
+        seed: String,
+        caption: String = "",
+        variant: String = "",
+    ): VisualAsset = VisualAsset(
+        assetId = id,
+        type = VisualAssetType.BACKGROUND_IMAGE,
+        source = AssetSource.GENERATED_ORIGINAL,
+        generatedSeed = seed,
+        caption = caption,
+        variant = variant,
     )
 
     /** Artwork for an authored event or a story opening. */
@@ -427,6 +494,15 @@ object PackAuthoring {
         relatedLocationIds = locations.map(::LocationId),
     )
 
+    /**
+     * A faction within the world.
+     *
+     * [color] defaults to neutral ink rather than a hue, for the same reason
+     * [dev.charaly.runtime.domain.PackColor] does: an unchosen colour should not be a
+     * product decision. Every shipped pack names its factions' colours explicitly, so the
+     * default is only ever reached by a draft the author has not finished - where grey is
+     * honest and violet would not be.
+     */
     fun faction(
         id: String,
         name: String,
@@ -434,7 +510,7 @@ object PackAuthoring {
         description: String,
         members: List<String> = emptyList(),
         seat: String? = null,
-        color: String = "#8B7BF0",
+        color: String = dev.charaly.runtime.domain.CharalySurface.INK_SECONDARY,
     ): Faction = Faction(
         id = id,
         name = name,

@@ -197,6 +197,26 @@ object MemoryPanelPresenter {
         memory: Memory,
         ownerName: String,
         ownerId: String,
+    ) = cardOf(memory, ownerName, ownerId)
+
+    /**
+     * Builds one card.
+     *
+     * ## Why it is public
+     *
+     * The contextual sheet a player opens mid-conversation shows the same memories as
+     * the full memory screen. Rather than a second, subtly different card type - which
+     * is how two screens end up disagreeing about what "a secret" looks like - that
+     * sheet calls this.
+     *
+     * [now] is injectable so a relative label is testable without advancing a clock; it
+     * defaults to the memory's own story time, which is what the memory screen wants.
+     */
+    fun cardOf(
+        memory: Memory,
+        ownerName: String,
+        ownerId: String = "",
+        now: dev.charaly.runtime.domain.StoryTime? = null,
     ) = MemoryCard(
         id = memory.id.value,
         text = memory.content,
@@ -204,7 +224,13 @@ object MemoryPanelPresenter {
         importanceLabel = importanceLabel(memory.importance),
         ownerName = ownerName,
         ownerId = ownerId,
-        timeLabel = memory.createdAt.storyLabel(),
+        // With a clock, a relative label ("Earlier today"); without, an absolute one
+        // ("Day 3, morning"). Both are story language.
+        timeLabel = if (now != null) {
+            StoryFeed.relativeLabel(memory.createdAt, now)
+        } else {
+            memory.createdAt.storyLabel()
+        },
         sourceLabel = sourceLabel(memory.source),
         tierLabel = tierLabel(memory.tier),
         isSecret = memory.visibility == MemoryVisibility.SECRET || memory.visibility == MemoryVisibility.PRIVATE,

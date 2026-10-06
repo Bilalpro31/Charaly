@@ -26,6 +26,7 @@ import dev.charaly.runtime.engine.ChapterPlanner
 import dev.charaly.runtime.engine.EventApplication
 import dev.charaly.runtime.engine.EventEngine
 import dev.charaly.runtime.engine.EventProgram
+import dev.charaly.runtime.engine.ImportedCastMerger
 import dev.charaly.runtime.engine.PresenceEngine
 import dev.charaly.runtime.engine.ScheduleResult
 import dev.charaly.runtime.engine.StoryCreationOptions
@@ -65,6 +66,14 @@ sealed interface GenerationUpdate {
          * Callers continue from here; this is the only snapshot that is current.
          */
         val instance: StoryInstance? = null,
+        /**
+         * How much story time this turn cost, in minutes.
+         *
+         * Decided by [TurnClockPolicy] from engine-side facts, never from the model's
+         * prose. A UI may show it ("eight minutes pass"), and a test may assert it, but
+         * nothing outside the runtime can change it.
+         */
+        val elapsedStoryMinutes: Long = 0L,
     ) : GenerationUpdate
 
     data class Failed(val error: CharalyError) : GenerationUpdate
@@ -103,6 +112,16 @@ class CharalyRuntime(
     private val engine: InferenceEngine,
     private val resolver: WorldDefinitionResolver = WorldDefinitionResolver(repository),
     private val params: GenerationParams = GenerationParams(),
+    /**
+     * The user's imported characters.
+     *
+     * A default no-op implementation rather than a required constructor argument, so every
+     * existing call site and test keeps working. The app wires the real JSON-backed
+     * library; a runtime built without one simply has no imported characters, which is a
+     * legitimate state and not an error.
+     */
+    private val library: dev.charaly.runtime.persistence.CharacterLibraryRepository =
+        dev.charaly.runtime.persistence.InMemoryCharacterLibraryRepository(),
 ) {
 
     val generationParams: GenerationParams get() = params
@@ -147,6 +166,49 @@ class CharalyRuntime(
         val instance = StoryInstanceFactory.create(pack, options)
         repository.saveInstance(instance)
         return instance
+    }
+
+    /**
+     * Starts a story that includes characters the user imported.
+     *
+     * The import path a player actually takes: "start a story in this world, and put Ash in
+     * it too". Three things happen, in order:
+     *
+     *  1. the pack is *copied* into a cast-merged variant with its own pack id, so this
+     *     playthrough owns a world of its own and the shipped pack is not edited;
+     *  2. the story is created from that copy through the ordinary factory, so every
+     *     existing guarantee about starting a story still holds;
+     *  3. any character who arrived with no location is placed at the opening through a
+     *     validated event - because a character the engine cannot place is a character the
+     *     player can never meet.
+     *
+     * The returned instance's [dev.charaly.runtime.domain.StoryInstance.storyPackId] points
+     * at the merged copy. That is what makes a second story from the same world start clean.
+     */
+    suspend fun startStoryWithImported(
+        pack: StoryPack,
+        options: StoryCreationOptions,
+        importedCharacterIds: Set<CharacterId> = emptySet(),
+    ): StoryInstance {
+        val imported = if (importedCharacterIds.isEmpty()) {
+            emptyList()
+        } else {
+            importedCharacterIds.mapNotNull { id ->
+                library.get(id)?.preview?.toCharacterDefinition()
+            }
+        }
+        val merged = ImportedCastMerger.merge(pack, imported)
+        if (merged.id != pack.id) {
+            // Saved as its own pack so the story survives a restart. The original is left
+            // exactly as it was, which is what keeps the two playthroughs independent.
+            repository.savePack(merged)
+            resolver.invalidate(merged.id)
+        }
+        resolver.forPack(merged)
+        val created = StoryInstanceFactory.create(merged, options)
+        val placed = ImportedCastMerger.placeUnplacedCharacters(merged, created)
+        repository.saveInstance(placed)
+        return placed
     }
 
     /** Renames a story. Story metadata, never world state. */
@@ -219,6 +281,17 @@ class CharalyRuntime(
 
     /** Static half of a running world (character identity + places). */
     suspend fun definitionFor(instance: StoryInstance): WorldDefinition = resolver.forInstance(instance)
+
+    /**
+     * The story time a completed turn costs.
+     *
+     * Exposed so a screen can tell the reader that time passed, and so a test can
+     * assert the cost without reaching for the policy object. The value is computed from
+     * the player's line and the number of validated events - see [TurnClockPolicy] for
+     * why the model's own words are not an input.
+     */
+    fun turnCost(userInputChars: Int, appliedActions: Int): StoryDuration =
+        TurnClockPolicy.minutesFor(userInputChars, appliedActions)
 
     /**
      * The generation parameters for one story.
@@ -618,7 +691,11 @@ class CharalyRuntime(
                     id = "turn-${turn + 1}",
                     turn = turn + 1,
                     role = TranscriptRole.CHARACTER,
-                    text = reply.ifBlank { "(no reply)" },
+                    // Action tags are machinery, not prose. The player reads the words
+                    // around a proposal and never sees the proposal itself; storing them
+                    // verbatim put `<charaly:action .../>` in the middle of a character's
+                    // dialogue, which is the raw protocol on screen.
+                    text = ProposedActionParser.stripActions(reply).ifBlank { "(no reply)" },
                     at = withUserLine.worldClock.now,
                     sceneId = withUserLine.currentSceneId,
                     speakerId = speaker,
@@ -631,6 +708,7 @@ class CharalyRuntime(
         // LLM action boundary: explicit tags only, always validated.
         val eventEngine = EventEngine(definition)
         val validator = ActionValidator(definition)
+        var appliedActionCount = 0
         ProposedActionParser.parse(reply).forEach { action ->
             val review = validator.toPayload(action)
             if (review is ActionReview.Rejected) {
@@ -650,6 +728,7 @@ class CharalyRuntime(
                 }
                 is EventApplication.Applied -> {
                     current = applied.instance
+                    appliedActionCount++
                     emit(GenerationUpdate.AppliedAction(accepted, applied.changes))
                 }
             }
@@ -667,9 +746,28 @@ class CharalyRuntime(
         // Chapters and conditional events are derived from authoritative state
         // *after* the turn, so a screen can never show a chapter or an event the
         // engine did not actually apply.
+        val conditioned = pollConditionalEvents(current)
+
+        // ---- the clock ---------------------------------------------------
+        //
+        // Time passes because the turn happened, and by an amount the *runtime*
+        // computed from engine-side facts (see [TurnClockPolicy]). The model's prose is
+        // not an input: a reply that claims an hour passed still costs two minutes,
+        // because the model does not own world time.
+        //
+        // It runs through [advance], which is the same path a debug "advance 30 minutes"
+        // takes - EventEngine.advanceTime, then pack-conditional events, then chapters.
+        // That is what makes the world genuinely move on its own rather than merely
+        // displaying a later time: routines fire, scheduled events come due, NPCs are
+        // relocated by validated events, and consequences in the ledger mature.
+        val elapsed = TurnClockPolicy.minutesFor(
+            userInputChars = userInput.length,
+            appliedActions = appliedActionCount,
+        )
+        val advanced = runCatching { advance(conditioned, elapsed) }.getOrDefault(conditioned)
         val finished = runCatching {
-            save(ChapterPlanner.derive(pollConditionalEvents(current), definition))
-        }.getOrDefault(current)
+            save(ChapterPlanner.derive(advanced, definition))
+        }.getOrDefault(advanced)
 
         emit(
             GenerationUpdate.Finished(
@@ -677,6 +775,7 @@ class CharalyRuntime(
                 stopReason = stopReason,
                 completionTokens = tokens,
                 instance = finished,
+                elapsedStoryMinutes = elapsed.minutes,
             ),
         )
     }
@@ -702,6 +801,14 @@ class CharalyRuntime(
      *
      * The speaker is deliberately included in step 2 as well as step 1: a character
      * remembers being told things, not only what happened to them.
+     *
+     * ## Which hour these memories are stamped with
+     *
+     * `instance.worldClock.now` as it stands *here*, which is the hour the exchange
+     * happened at - before the turn's clock advance. The reply was produced at that
+     * time, so a memory written about it must carry that time, or the transcript and
+     * the memory would disagree about when something was witnessed. The advance runs
+     * after this call returns.
      *
      * Every one of those writes goes through [MemoryWriter]'s gates, so this method
      * cannot itself create a memory the pipeline would have rejected. That is the
@@ -802,6 +909,49 @@ class CharalyRuntime(
             updatedAt = worldState.worldClock.now,
         )
     }
+
+    // ------------------------------------------------------------------
+    // Imported characters
+    // ------------------------------------------------------------------
+
+    /**
+     * Reads a character card out of file bytes without touching storage.
+     *
+     * Read-only by construction: it takes a [ByteArray] and returns a preview or an error,
+     * and it has no repository reference. Cancelling an import therefore cannot leave a
+     * partial record, because no record is written until [commitImportedCharacter] is
+     * called - which is the only way a card becomes content.
+     */
+    fun previewCharacterCard(bytes: ByteArray, sourceName: String = ""): Result<
+        dev.charaly.runtime.compat.CharacterCardPreview,
+        > = dev.charaly.runtime.compat.CharacterCardReader.read(bytes, sourceName)
+
+    /** Every imported character the user has, for the cast picker. */
+    suspend fun listImportedCharacters(): List<dev.charaly.runtime.persistence.ImportedCharacter> =
+        library.list()
+
+    suspend fun importedCharacter(id: CharacterId): dev.charaly.runtime.persistence.ImportedCharacter? =
+        library.get(id)
+
+    /**
+     * Writes a confirmed card into the library.
+     *
+     * The one commit point in the import flow. A preview that the user cancelled never
+     * reaches here, which is what makes cancelling genuinely free of side effects.
+     */
+    suspend fun commitImportedCharacter(
+        preview: dev.charaly.runtime.compat.CharacterCardPreview,
+        rawJson: String,
+        nowEpochMs: Long = System.currentTimeMillis(),
+    ): dev.charaly.runtime.persistence.ImportedCharacter = library.saveResolvingCollisions(
+        dev.charaly.runtime.persistence.ImportedCharacter(
+            preview = preview,
+            rawJson = rawJson,
+            importedAtEpochMs = nowEpochMs,
+        ),
+    )
+
+    suspend fun deleteImportedCharacter(id: CharacterId) = library.delete(id)
 
     // ------------------------------------------------------------------
     // Local model management

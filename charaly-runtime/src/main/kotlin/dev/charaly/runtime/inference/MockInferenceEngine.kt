@@ -13,6 +13,17 @@ import java.util.concurrent.atomic.AtomicBoolean
  * tested on a plain JVM with no GGUF file, no device and no server. It is also
  * what the Android app falls back to when no model is loaded yet, so the UI stays
  * explorable offline.
+ *
+ * ## Why the cancel flag is cleared on read
+ *
+ * `CharalyRuntime.respond` calls `stop()` in a `finally` block after every turn, which is what
+ * aborts native generation when a caller abandons the flow. That makes "a stop was requested
+ * recently" a normal state between turns rather than an exceptional one, so the flag has to be
+ * consumed by the next `generate`/`stream` rather than latched.
+ *
+ * A latched flag makes the *second* turn of any conversation fail with `Cancelled` - which is
+ * indistinguishable from a real cancellation and is exactly the kind of defect that makes a
+ * test suite look like it is testing the engine when it is testing the harness.
  */
 class MockInferenceEngine(
     private val engineId: String = "mock",
@@ -26,6 +37,9 @@ class MockInferenceEngine(
 
     private val loaded = AtomicBoolean(initiallyLoaded)
     private val cancelled = AtomicBoolean(false)
+
+    /** Whether a generation is running. Mirrors what the native engine tracks. */
+    private val generating = AtomicBoolean(false)
     private var info: ModelInfo? = info?.takeIf { initiallyLoaded }
 
     override suspend fun loadModel(request: ModelLoadRequest): LoadOutcome {
@@ -58,19 +72,41 @@ class MockInferenceEngine(
     }
 
     override fun stream(request: InferenceRequest): Flow<StreamChunk> = flow {
+        generating.set(true)
         var tokens = 0
-        val full = responder(request)
-        full.chunked(chunkSize.coerceAtLeast(1)).forEach { chunk ->
-            if (cancelled.get()) throw InferenceError.Cancelled()
-            if (delayMillis > 0) delay(delayMillis)
-            tokens++
-            emit(StreamChunk(text = chunk, done = false, tokenCount = tokens))
+        try {
+            val full = responder(request)
+            full.chunked(chunkSize.coerceAtLeast(1)).forEach { chunk ->
+                // Read with `getAndSet` so one cancel aborts the stream once, rather than every
+                // remaining chunk re-observing the same latched flag.
+                if (cancelled.getAndSet(false)) throw InferenceError.Cancelled()
+                if (delayMillis > 0) delay(delayMillis)
+                tokens++
+                emit(StreamChunk(text = chunk, done = false, tokenCount = tokens))
+            }
+            emit(StreamChunk(text = "", done = true, tokenCount = tokens))
+        } finally {
+            // A completed generation is not a cancellation, so the flag is cleared here. The
+            // native engine behaves the same way for the same reason: `stop()` only reaches
+            // into a decode loop that is still running.
+            generating.set(false)
+            cancelled.set(false)
         }
-        emit(StreamChunk(text = "", done = true, tokenCount = tokens))
     }
 
+    /**
+     * Requests cancellation.
+     *
+     * Ignored when nothing is generating, which is what `LocalLlamaInferenceEngine.stop` does -
+     * it checks its own `generating` flag before touching the native handle.
+     *
+     * This is not a detail. `CharalyRuntime.respond` calls `stop()` in a `finally` after
+     * *every* turn, including successful ones, so a stop that latched regardless of state
+     * would cancel the following turn before it produced a token - and a conversation of six
+     * turns would fail on the second, reporting a cancellation nobody asked for.
+     */
     override fun stop() {
-        cancelled.set(true)
+        if (generating.get()) cancelled.set(true)
     }
 
     override fun isLoaded(): Boolean = loaded.get()

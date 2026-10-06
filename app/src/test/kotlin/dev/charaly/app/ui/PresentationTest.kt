@@ -482,7 +482,11 @@ class PresentationTest {
             catalog = BuiltInModelCatalog.DEFAULT,
             activeModelId = installed.id,
             loadedModelId = installed.id,
-            downloadsAvailable = false,
+            // This build wires a real transfer pipeline, so the presenter is told
+            // downloads are available. Passing `false` here would have kept the test
+            // green while the library's real configuration went unexercised - and would
+            // have hidden the stale "no network access" copy.
+            downloadsAvailable = true,
             availableRamBytes = 8_000_000_000L,
         )
 
@@ -492,10 +496,75 @@ class PresentationTest {
         assertTrue(snapshot.installed.first().detailRows.any { it.label == "Context" })
 
         assertTrue(snapshot.recommended.isNotEmpty())
+
+        // This build declares INTERNET and wires a real transfer, so the library offers
+        // downloads - and the note must not still claim there is no network, because
+        // that wording outlived the offline-only core it described.
+        assertTrue(
+            "this build has a real transfer pipeline, so downloads are available",
+            snapshot.canDownload,
+        )
+        assertFalse(
+            "the download note still claims there is no network: ${snapshot.downloadNote}",
+            snapshot.downloadNote.contains("no network access"),
+        )
+        assertTrue(
+            "the note should mention where models come from: ${snapshot.downloadNote}",
+            snapshot.downloadNote.contains("Hugging Face"),
+        )
+
+        // Per-card, the rule is narrower than "downloads are available": a card offers a
+        // download only if the engine can load the model, it is not already installed,
+        // and it fits this device. Every *refusal* states its reason, because a disabled
+        // button with no explanation is the thing this library exists to avoid.
+        //
+        // The converse does not hold, and the presenter is right about it: a card that is
+        // being offered a download carries an empty `disabledReason`, because there is
+        // nothing to disable. Asserting symmetry there would be asserting a bug.
+        val allCards = snapshot.recommended + snapshot.others
+        for (card in allCards.filterNot { it.actions.canDownload }) {
+            assertTrue(
+                "${card.name}: a refused download must say why",
+                card.actions.disabledReason.isNotBlank(),
+            )
+            // And an engine-unsupported model is never offered one, whatever else is true.
+            assertTrue(
+                "${card.name}: an engine-unsupported model must not offer a download",
+                card.engineSupportLabel.isNotBlank() || !card.needsEngineUpdate,
+            )
+        }
+
+        // At least one catalog entry the engine can load must actually be offered, or the
+        // availability flag is not reaching the cards.
+        assertTrue(
+            "no installable model was offered despite downloads being available",
+            allCards.any { it.actions.canDownload },
+        )
+    }
+
+    /**
+     * The same presenter, told downloads are unavailable.
+     *
+     * The offline case still exists - it is the fallback for a build variant with no
+     * transport - and it must say so precisely rather than offering a dead button.
+     */
+    @Test
+    fun `an offline build says downloads are unavailable`() {
+        val snapshot = ModelLibraryPresenter.build(
+            installedModels = emptyList(),
+            catalog = BuiltInModelCatalog.DEFAULT,
+            activeModelId = "",
+            loadedModelId = null,
+            downloadsAvailable = false,
+            availableRamBytes = 8_000_000_000L,
+        )
         assertFalse(snapshot.canDownload)
-        assertTrue(snapshot.downloadNote.contains("no network access"))
+        assertTrue(
+            "an offline build must say why: ${snapshot.downloadNote}",
+            snapshot.downloadNote.contains("no network access"),
+        )
         snapshot.others.forEach { card ->
-            assertFalse("a non-installed card must not offer a download", card.actions.canDownload)
+            assertFalse(card.actions.canDownload)
             assertTrue(card.actions.disabledReason.isNotBlank())
         }
     }

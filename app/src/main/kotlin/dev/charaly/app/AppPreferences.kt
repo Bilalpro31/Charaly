@@ -46,6 +46,36 @@ class AppPreferences(context: Context) {
         get() = prefs.getInt(KEY_THREADS, 0)
         set(value) = prefs.edit().putInt(KEY_THREADS, value.coerceIn(0, 16)).apply()
 
+    /**
+     * The user's language, as a BCP-47-ish tag: "en" or "tr".
+     *
+     * Empty means "follow the device". Explicit is stored so a Turkish user on an English
+     * phone keeps a Turkish app after a reboot, and so switching the language does not
+     * require the system setting to change.
+     */
+    var languageTag: String
+        get() = prefs.getString(KEY_LANGUAGE, "").orEmpty()
+        set(value) = prefs.edit().putString(KEY_LANGUAGE, value).apply()
+
+    /**
+     * The in-progress New Story draft, as JSON.
+     *
+     * ## Why this is persisted at all
+     *
+     * The navigator's back stack is saved across process death but the draft was not. So a
+     * user who opened the Storage Access Framework to import a GGUF - an operation that
+     * routinely takes tens of seconds on a multi-gigabyte file and therefore routinely
+     * causes the process to be killed - came back to a restored `EnterWorld` route with no
+     * draft behind it. The wizard rendered "This world is not here" with **no Continue
+     * button at all**, which is exactly the reported symptom.
+     *
+     * Persisting the draft closes that gap: the route and the thing the route needs now
+     * survive together.
+     */
+    var newStoryDraftJson: String
+        get() = prefs.getString(KEY_DRAFT, "").orEmpty()
+        set(value) = prefs.edit().putString(KEY_DRAFT, value).apply()
+
     companion object {
         const val FILE = "charaly_prefs"
         const val KEY_ONBOARDING = "onboarding_complete"
@@ -53,5 +83,7 @@ class AppPreferences(context: Context) {
         const val KEY_DARK = "dark_theme"
         const val KEY_REDUCE_MOTION = "reduce_motion"
         const val KEY_THREADS = "inference_threads"
+        const val KEY_LANGUAGE = "app_language"
+        const val KEY_DRAFT = "new_story_draft"
     }
 }
