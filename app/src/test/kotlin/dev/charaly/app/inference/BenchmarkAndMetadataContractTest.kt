@@ -126,12 +126,24 @@ class BenchmarkAndMetadataContractTest {
 
     @Test
     fun `metadata carries the keys LocalLlamaInferenceEngine reads`() {
-        listOf("parameters", "quantization").forEach { key ->
+        listOf("parameters", "description").forEach { key ->
             assertTrue(
-                "native must emit '$key'; ModelInfo reads metadata[\"$key\"]",
+                "native must emit '$key'",
                 flatNative.contains("out.emplace_back(\"$key\","),
             )
         }
+        // The quantization is the real GGUF file type, enumerated from the header, and
+        // mapped to a label on the Kotlin side. `llama_model_desc()` is not a quantization
+        // and must never be reported as one.
+        val engine = File("src/main/kotlin/dev/charaly/app/inference/LocalLlamaInferenceEngine.kt").readText()
+        assertTrue(
+            "quantLevel must come from general.file_type",
+            engine.contains("metadata[\"general.file_type\"]"),
+        )
+        assertFalse(
+            "desc must not be emitted as quantization",
+            native.contains("emplace_back(\"quantization\""),
+        )
     }
 
     @Test

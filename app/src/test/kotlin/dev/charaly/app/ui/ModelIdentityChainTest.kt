@@ -80,10 +80,16 @@ class ModelIdentityChainTest {
     // ==================================================================
 
     @Test
-    fun `an imported file gets a stable id derived from its path`() {
+    fun `an imported file gets a stable id derived from its content`() {
         assertTrue(
-            "the import id must derive from the path so a re-import reuses it",
-            manager.contains("\"local-\$slug-\${abs(entry.absolutePath.hashCode())}\""),
+            "the import id must derive from the content hash, not the path - a rename " +
+                "must not orphan a story binding",
+            File("src/main/kotlin/dev/charaly/app/model/ModelIds.kt").readText()
+                .contains("\"local-\$slug-\${sha256.take(12)}\""),
+        )
+        assertTrue(
+            "ModelManager must mint ids through ModelIds",
+            manager.contains("ModelIds.idFor("),
         )
     }
 

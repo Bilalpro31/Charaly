@@ -33,6 +33,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -363,10 +364,16 @@ std::vector<std::pair<std::string, std::string>> collect_metadata(const llama_mo
     out.emplace_back("size_bytes", std::to_string(llama_model_size(model)));
     out.emplace_back("context_train", std::to_string(llama_model_n_ctx_train(model)));
 
+    // `llama_model_desc()` is NOT the quantization: it is "<arch> <size> <ftype name>",
+    // and reporting it as the quantization put a whole sentence where "Q4_K_M" belongs.
+    // The real file type is in the GGUF metadata itself (`general.file_type`, the same
+    // `llama_ftype` enum the loader uses); it is emitted by the loop above, and the
+    // Kotlin side maps it to a label. Here we only record the human description
+    // under its own key.
     char description[512];
     const int description_written = llama_model_desc(model, description, sizeof(description));
     if (description_written > 0) {
-        out.emplace_back("quantization",
+        out.emplace_back("description",
                          std::string(description, static_cast<size_t>(description_written)));
     }
 
@@ -614,6 +621,26 @@ Java_dev_charaly_app_inference_LlamaNative_loadModel(
         release_model_locked();
     }
     clear_error();
+
+    // Defensive gate at the boundary: never hand a path llama.cpp will reject
+    // (or worse, a corrupt header llama.cpp may abort on) to the loader. Kotlin
+    // has already checked; this is the last check that cannot be bypassed by a
+    // caller that skipped it.
+    {
+        FILE * probe = std::fopen(model_path.c_str(), "rb");
+        if (probe == nullptr) {
+            set_error("cannot open model file");
+            return 0;
+        }
+        char magic[4] = {0, 0, 0, 0};
+        const size_t read = std::fread(magic, 1, sizeof(magic), probe);
+        std::fclose(probe);
+        if (read != sizeof(magic) || magic[0] != 'G' || magic[1] != 'G' ||
+            magic[2] != 'U' || magic[3] != 'F') {
+            set_error("not a GGUF file");
+            return 0;
+        }
+    }
 
     std::call_once(g_backend_once, []() { llama_backend_init(); });
 

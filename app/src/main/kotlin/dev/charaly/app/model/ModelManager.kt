@@ -2,11 +2,15 @@ package dev.charaly.app.model
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import dev.charaly.runtime.compat.GgufMetadataReader
+import dev.charaly.runtime.model.gguf.GgufCompatibility
+import dev.charaly.runtime.model.gguf.GgufReadResult
+import dev.charaly.runtime.model.gguf.GgufReader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
-import kotlin.math.abs
+import java.security.MessageDigest
 
 /**
  * Local model management.
@@ -120,7 +124,7 @@ class ModelManager(
                 quantization = quantization.ifBlank { model.quantization },
                 contextLength = contextLength.takeIf { it > 0 } ?: model.contextLength,
                 verified = true,
-                sha256 = model.sha256.ifBlank { "header-read" },
+                sha256 = model.sha256,
                 compatibility = model.compatibility.copy(loadFailed = false),
             ),
         )
@@ -274,7 +278,12 @@ class ModelManager(
 
         val destination = uniqueFile(canonical)
         val partial = File(managedDir, destination.name + PART_SUFFIX)
+        Log.i(TAG, "MODEL_IMPORT_START name=${destination.name} declaredBytes=$declaredBytes")
 
+        // SHA-256 is computed from the same stream, one pass, so importing a 4 GB
+        // model never buffers the weights in the Java heap: the digest folds each
+        // chunk as it is written and nothing but the digest survives.
+        val digest = MessageDigest.getInstance("SHA-256")
         val copied = try {
             context.contentResolver.openInputStream(uri)?.use { input ->
                 partial.outputStream().use { output ->
@@ -284,6 +293,7 @@ class ModelManager(
                         val read = input.read(buffer)
                         if (read < 0) break
                         output.write(buffer, 0, read)
+                        digest.update(buffer, 0, read)
                         total += read
                     }
                     output.flush()
@@ -312,17 +322,35 @@ class ModelManager(
             partial.delete()
             error(REASON_PARTIAL)
         }
-        // 3. Actually a GGUF.
-        if (!isGguf(partial)) {
-            partial.delete()
-            error(REASON_NOT_GGUF)
+        // 3. Actually a GGUF, and not just the magic: the whole header must
+        //    parse, and the architecture must be classifiable. A file that fails
+        //    here must never become a registry entry that a later launch hands
+        //    to the native loader.
+        val sha256Hex = digest.digest().joinToString("") { "%02x".format(it) }
+        Log.i(TAG, "MODEL_COPY_COMPLETE bytes=$copied sha256=${sha256Hex.take(12)}")
+        when (val parsed = GgufReader.read(partial.inputStream())) {
+            is GgufReadResult.Success -> {
+                Log.i(TAG, "MODEL_VALIDATION_COMPLETE architecture=${parsed.metadata.architecture}")
+                val verdict = GgufCompatibility.classify(parsed, fileSizeBytes = copied)
+                if (verdict.compatibility == dev.charaly.runtime.model.gguf.CharalyCompatibility.UNSUPPORTED) {
+                    partial.delete()
+                    Log.w(TAG, "MODEL_IMPORT_REJECTED reason=unsupported-architecture architecture=${parsed.metadata.architecture}")
+                    error(REASON_UNSUPPORTED)
+                }
+            }
+            is GgufReadResult.Failure -> {
+                partial.delete()
+                Log.w(TAG, "MODEL_IMPORT_REJECTED reason=invalid-gguf detail=${parsed.reason}")
+                error(REASON_INVALID_GGUF)
+            }
         }
 
             if (!partial.renameTo(destination)) {
             partial.delete()
             error(REASON_UNREADABLE)
         }
-        return destination.toEntry()
+        Log.i(TAG, "MODEL_READY path=${destination.name}")
+        return destination.toEntry(sha256Hex)
     }
 
     /**
@@ -398,19 +426,28 @@ class ModelManager(
     /**
      * A stable id for a file.
      *
-     * Derived from the absolute path, so importing the same model twice reuses the
-     * same registry entry and existing story bindings stay valid.
+     * Derived from the content hash, so importing the same weights under a
+     * different path (or after a storage migration) resolves to the same
+     * registry entry, and a story bound to it keeps working. The old scheme
+     * (`local-<slug>-<abs(path.hashCode())>`) changed the identity whenever the
+     * file was renamed or moved, orphaning every story binding in the process.
      */
-    private fun entryId(entry: ModelEntry): String {
-        val slug = entry.displayName.lowercase()
-            .map { if (it.isLetterOrDigit()) it else '-' }
-            .joinToString("")
-            .split('-')
-            .filter { it.isNotEmpty() }
-            .joinToString("-")
-            .take(48)
-            .ifBlank { "model" }
-        return "local-$slug-${abs(entry.absolutePath.hashCode())}"
+    internal fun entryId(entry: ModelEntry): String = ModelIds.idFor(entry.displayName, entry.sha256, entry.absolutePath)
+
+    /** Streams the file through SHA-256. Never buffers the file in memory. */
+    private suspend fun sha256Of(file: File): String = withContext(Dispatchers.IO) {
+        runCatching {
+            val digest = MessageDigest.getInstance("SHA-256")
+            file.inputStream().use { input ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    digest.update(buffer, 0, read)
+                }
+            }
+            digest.digest().joinToString("") { "%02x".format(it) }
+        }.getOrDefault("")
     }
 
     private fun catalogEntryIdFor(displayName: String): String {
@@ -435,17 +472,24 @@ class ModelManager(
         registry: dev.charaly.runtime.model.ModelRegistry,
         catalogHint: dev.charaly.runtime.model.ModelCatalogItem? = null,
     ): dev.charaly.runtime.model.InstalledModel {
-        val id = entryId(entry)
+        val hashed = if (entry.sha256.isBlank()) {
+            entry.copy(sha256 = sha256Of(File(entry.absolutePath)))
+        } else {
+            entry
+        }
+        val id = entryId(hashed)
         val existing = registry.get(id)
         val model = existing?.copy(
-            displayName = entry.displayName,
-            sizeBytes = entry.sizeBytes,
+            displayName = hashed.displayName,
+            sizeBytes = hashed.sizeBytes,
             origin = origin,
+            sha256 = hashed.sha256.ifBlank { existing.sha256 },
         ) ?: dev.charaly.runtime.model.InstalledModel(
             id = id,
-            displayName = entry.displayName,
-            absolutePath = entry.absolutePath,
-            sizeBytes = entry.sizeBytes,
+            displayName = hashed.displayName,
+            absolutePath = hashed.absolutePath,
+            sizeBytes = hashed.sizeBytes,
+            sha256 = hashed.sha256,
             origin = origin,
             catalogId = catalogHint?.id.orEmpty(),
             contextLength = catalogHint?.contextLength ?: 2048,
@@ -478,24 +522,19 @@ class ModelManager(
         }
     }.getOrNull()
 
-    private fun isGguf(file: File): Boolean = runCatching {
-        file.inputStream().use { stream ->
-            val header = ByteArray(4)
-            if (stream.read(header) != 4) return false
-            header[0] == 'G'.code.toByte() &&
-                header[1] == 'G'.code.toByte() &&
-                header[2] == 'U'.code.toByte() &&
-                header[3] == 'F'.code.toByte()
-        }
-    }.getOrDefault(false)
-
-    private fun File.toEntry() = ModelEntry(
+    private fun File.toEntry(sha256: String = "") = ModelEntry(
         absolutePath = absolutePath,
         displayName = nameWithoutExtension,
         sizeBytes = length(),
+        sha256 = sha256,
     )
 
+    /**
+     * The id is derived from the content hash, so importing the same file twice reuses the
+     * same registry entry and existing story bindings stay valid.
+     */
     companion object {
+        const val TAG = "ModelManager"
         const val PREFS = "charaly_models"
         const val KEY_SELECTED = "selected_model"
 
@@ -516,6 +555,8 @@ class ModelManager(
          * wording tweak silently turns an import failure into "something went wrong".
          */
         const val REASON_NOT_GGUF = "not-a-gguf"
+        const val REASON_INVALID_GGUF = "invalid-gguf"
+        const val REASON_UNSUPPORTED = "unsupported-architecture"
         const val REASON_UNREADABLE = "unreadable"
         const val REASON_PARTIAL = "partial-copy"
         const val REASON_NO_SPACE = "insufficient-storage"
@@ -526,6 +567,8 @@ data class ModelEntry(
     val absolutePath: String,
     val displayName: String,
     val sizeBytes: Long,
+    /** Content hash from the import copy. Blank only for legacy entries. */
+    val sha256: String = "",
 ) {
     fun sizeLabel(): String = when {
         sizeBytes >= 1L shl 30 -> "%.1f GB".format(sizeBytes / (1L shl 30))

@@ -124,9 +124,6 @@ object CharacterCardImporter {
  */
 object GgufMetadataReader {
 
-    /** "GGUF" read as a little-endian int32. */
-    private const val MAGIC = 0x46554747
-
     data class Metadata(
         val version: Int,
         val tensorCount: Long,
@@ -147,129 +144,56 @@ object GgufMetadataReader {
         ).joinToString(" ")
     }
 
+    /**
+     * Reads only the GGUF header, delegating the actual parsing to
+     * [dev.charaly.runtime.model.gguf.GgufReader].
+     *
+     * ## Why this used to be its own parser
+     *
+     * This object predates [dev.charaly.runtime.model.gguf.GgufReader], and the two
+     * then drifted apart: the array length was read as a 32-bit int where the GGUF
+     * spec encodes it as uint64, and the file-type table had fallen behind the
+     * `LLAMA_FTYPE_*` values this llama.cpp actually writes (file type 14 reported
+     * "Q6_K" where it means "Q4_K_S"). Both bugs are gone because the parsing now
+     * happens in exactly one place. [GgufReader] is the one with the bounds checks,
+     * the overflow guards and the version gating, and this reader keeps its
+     * callers' [Metadata] shape so nothing outside this file had to move.
+     */
     fun read(input: java.io.InputStream): Result<Metadata> = runCatching {
-        val data = input.buffered()
-        val magic = data.readIntLe()
-        require(magic == MAGIC) { "not a GGUF file (magic 0x%08x)".format(magic) }
-        val version = data.readIntLe()
-        val tensorCount = data.readLongLe()
-        val kvCount = data.readLongLe()
+        val result = dev.charaly.runtime.model.gguf.GgufReader.read(input)
+        val metadata = (result as? dev.charaly.runtime.model.gguf.GgufReadResult.Success)?.metadata
+            ?: throw IllegalArgumentException(
+                (result as? dev.charaly.runtime.model.gguf.GgufReadResult.Failure)?.reason
+                    ?: "not a GGUF file",
+            )
 
-        val values = linkedMapOf<String, String>()
-        repeat(kvCount.toInt().coerceAtMost(MAX_KEYS)) {
-            val key = data.readString()
-            val type = data.readIntLe()
-            values[key] = data.readValue(type)
-        }
+        val rendered = metadata.keyValues.mapValues { it.value.render() }
+        val fileType = metadata.keyValues["general.file_type"]?.asIntOrNull()
+            ?: rendered["general.file_type"]?.toIntOrNull()
+
+        fun firstBySuffix(suffix: String): Long? = rendered.entries
+            .firstOrNull { it.key.endsWith(suffix) }
+            ?.value?.toLongOrNull()
 
         Metadata(
-            version = version,
-            tensorCount = tensorCount,
-            kvCount = kvCount,
-            architecture = values["general.architecture"],
-            name = values["general.name"],
-            quantization = values["general.file_type"]?.let { quantName(it) }
-                ?: values["general.quantization_version"],
-            contextLength = values[values.keys.firstOrNull { it.endsWith(".context_length") } ?: ""]?.toLongOrNull(),
-            embeddingLength = values[values.keys.firstOrNull { it.endsWith(".embedding_length") } ?: ""]?.toLongOrNull(),
-            blockCount = values[values.keys.firstOrNull { it.endsWith(".block_count") } ?: ""]?.toLongOrNull(),
-            values = values,
+            version = metadata.version,
+            tensorCount = metadata.tensorCount,
+            kvCount = metadata.pairCount.toLong(),
+            architecture = metadata.architecture.takeIf { it.isNotBlank() },
+            name = metadata.name.takeIf { it.isNotBlank() },
+            quantization = fileType
+                ?.let { dev.charaly.runtime.model.gguf.GgufMetadata.FILE_TYPE_LABELS[it] }
+                ?: metadata.quantization.takeIf { it.isNotBlank() }
+                ?: rendered["general.quantization_version"],
+            contextLength = metadata.contextLength.takeIf { it > 0 }?.toLong()
+                ?: firstBySuffix(".context_length"),
+            embeddingLength = metadata.embeddingLength.takeIf { it > 0 }?.toLong()
+                ?: firstBySuffix(".embedding_length"),
+            blockCount = metadata.blockCount.takeIf { it > 0 }?.toLong()
+                ?: firstBySuffix(".block_count"),
+            values = rendered,
         )
     }
 
     fun read(bytes: ByteArray): Result<Metadata> = read(bytes.inputStream())
-
-    private fun quantName(fileType: String): String = when (fileType) {
-        "0" -> "F32"
-        "1" -> "F16"
-        "2" -> "Q4_0"
-        "3" -> "Q4_1"
-        "7" -> "Q8_0"
-        "8" -> "Q5_0"
-        "9" -> "Q5_1"
-        "10" -> "Q2_K"
-        "11" -> "Q3_K"
-        "12" -> "Q4_K"
-        "13" -> "Q5_K"
-        "14" -> "Q6_K"
-        "15" -> "Q8_K"
-        else -> "type $fileType"
-    }
-
-    private fun java.io.InputStream.readIntLe(): Int {
-        val b = readNBytes(4)
-        require(b.size == 4) { "truncated GGUF header" }
-        return (b[0].toInt() and 0xFF) or ((b[1].toInt() and 0xFF) shl 8) or
-            ((b[2].toInt() and 0xFF) shl 16) or ((b[3].toInt() and 0xFF) shl 24)
-    }
-
-    private fun java.io.InputStream.readLongLe(): Long {
-        val b = readNBytes(8)
-        require(b.size == 8) { "truncated GGUF header" }
-        var value = 0L
-        for (i in 7 downTo 0) {
-            value = (value shl 8) or (b[i].toLong() and 0xFF)
-        }
-        return value
-    }
-
-    private fun java.io.InputStream.readShortLe(): Int {
-        val b = readNBytes(2)
-        require(b.size == 2) { "truncated GGUF header" }
-        return (b[0].toInt() and 0xFF) or ((b[1].toInt() and 0xFF) shl 8)
-    }
-
-    private fun java.io.InputStream.readString(): String {
-        val length = readLongLe()
-        require(length in 0..MAX_STRING) { "implausible GGUF string length $length" }
-        val bytes = readNBytes(length.toInt())
-        require(bytes.size == length.toInt()) { "truncated GGUF string" }
-        return String(bytes, Charsets.UTF_8)
-    }
-
-    /** Reads one GGUF metadata value and returns its printable form. */
-    /** GGUF metadata value types, per the GGUF specification. */
-    private fun java.io.InputStream.readValue(type: Int): String = when (type) {
-        GGUF_TYPE_UINT8, GGUF_TYPE_INT8 -> readNBytes(1)[0].toInt().toString()
-        GGUF_TYPE_UINT16, GGUF_TYPE_INT16 -> readShortLe().toString()
-        GGUF_TYPE_UINT32, GGUF_TYPE_INT32 -> readIntLe().toString()
-        GGUF_TYPE_UINT64, GGUF_TYPE_INT64 -> readLongLe().toString()
-        GGUF_TYPE_FLOAT32 -> readFloatLe().toString()
-        GGUF_TYPE_FLOAT64 -> Double.fromBits(readLongLe()).toString()
-        GGUF_TYPE_BOOL -> (read().toInt() != 0).toString()
-        GGUF_TYPE_STRING -> readString()
-        GGUF_TYPE_ARRAY -> {
-            val elementType = readIntLe()
-            val count = readIntLe()
-            if (count < 0 || count > MAX_ARRAY) {
-                "[array x$count]"
-            } else {
-                // Arrays are walked but discarded: display metadata does not need
-                // them, and a phone must not buffer a whole vocabulary on open.
-                repeat(count) { readValue(elementType) }
-                "[array x$count of type $elementType]"
-            }
-        }
-        else -> "[unsupported type $type]"
-    }
-
-    private fun java.io.InputStream.readFloatLe(): Float = Float.fromBits(readIntLe())
-
-    private const val GGUF_TYPE_UINT8 = 0
-    private const val GGUF_TYPE_INT8 = 1
-    private const val GGUF_TYPE_UINT16 = 2
-    private const val GGUF_TYPE_INT16 = 3
-    private const val GGUF_TYPE_UINT32 = 4
-    private const val GGUF_TYPE_INT32 = 5
-    private const val GGUF_TYPE_FLOAT32 = 6
-    private const val GGUF_TYPE_BOOL = 7
-    private const val GGUF_TYPE_STRING = 8
-    private const val GGUF_TYPE_ARRAY = 9
-    private const val GGUF_TYPE_UINT64 = 10
-    private const val GGUF_TYPE_INT64 = 11
-    private const val GGUF_TYPE_FLOAT64 = 12
-
-    private const val MAX_KEYS = 4096
-    private const val MAX_ARRAY = 1 shl 22
-    private const val MAX_STRING = 1 shl 20
 }

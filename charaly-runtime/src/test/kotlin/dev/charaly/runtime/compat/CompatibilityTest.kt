@@ -298,7 +298,8 @@ class GgufMetadataReaderTest {
         val meta = GgufMetadataReader.read(bytes).getOrThrow()
         assertEquals("phi3", meta.architecture)
         assertEquals("Phi Three Tiny", meta.name)
-        assertEquals("Q6_K", meta.quantization)
+        // file_type 14 is LLAMA_FTYPE_MOSTLY_Q4_K_S (18 would be Q6_K).
+        assertEquals("Q4_K_S", meta.quantization)
         assertEquals(8192L, meta.contextLength)
     }
 }

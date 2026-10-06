@@ -2105,7 +2105,7 @@ class CharalyViewModel(
                     // blank architecture is read as "the engine does not know what this is"
                     // - which turned a perfectly good imported GGUF into a model whose Use
                     // control was disabled.
-                    val verified = readAndRecordHeader(registered)
+                    readAndRecordHeader(registered)
 
                     registry.setActive(registered.id)
                     val installed = runCatching { registry.list() }.getOrDefault(_state.value.installedModels)
@@ -2123,9 +2123,15 @@ class CharalyViewModel(
                     // model is still being read into memory.
                     syncModelState()
 
-                    // Warm the engine in the background. Failure here is recorded and shown,
-                    // but it no longer removes the model from the story flow.
-                    launch { loadModel(verified) }
+                    // IMPORT STOPS HERE.
+                    //
+                    // An earlier version warmed the engine in the background.
+                    // Importing is now strictly: copy, validate, hash, register,
+                    // READY. The native model is loaded lazily on the first
+                    // generation request via ensureModelResident(). The import
+                    // chain must never call the engine: a crash inside llama.cpp
+                    // then presents as "the app died while importing" even
+                    // though the import itself had already succeeded.
                 }
                 .onFailure { error ->
                     _state.update {
@@ -2172,6 +2178,8 @@ class CharalyViewModel(
     private fun importErrorMessage(error: Throwable): String =
         when (error.message) {
             dev.charaly.app.model.ModelManager.REASON_NOT_GGUF -> Loc.t("model.invalid_gguf")
+            dev.charaly.app.model.ModelManager.REASON_INVALID_GGUF -> Loc.t("model.invalid_gguf")
+            dev.charaly.app.model.ModelManager.REASON_UNSUPPORTED -> Loc.t("model.unsupported_arch")
             dev.charaly.app.model.ModelManager.REASON_PARTIAL -> Loc.t("error.import_partial")
             dev.charaly.app.model.ModelManager.REASON_NO_SPACE -> Loc.t("error.no_space")
             dev.charaly.app.model.ModelManager.REASON_UNREADABLE -> Loc.t("error.import_unreadable")

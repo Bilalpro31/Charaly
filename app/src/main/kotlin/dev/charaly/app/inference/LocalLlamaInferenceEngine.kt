@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
@@ -73,6 +74,18 @@ class LocalLlamaInferenceEngine(
     private val info = AtomicReference<ModelInfo?>(null)
 
     /**
+     * Serialises model loads.
+     *
+     * llama.cpp keeps one process-wide model/context, and two concurrent
+     * `loadModel` calls would unload each other's weights from under the
+     * in-flight load (`unload()` frees the handle the other coroutine just
+     * created). The UI already serialises with `modelLoadLock`; the engine
+     * must not depend on that caller-side discipline, so loads and unloads
+     * are one operation here too.
+     */
+    private val loadMutex = kotlinx.coroutines.sync.Mutex()
+
+    /**
      * The last native failure worth showing a user.
      *
      * Set whenever a native call fails, and cleared when one succeeds. The diagnostics
@@ -88,7 +101,8 @@ class LocalLlamaInferenceEngine(
 
     override fun lastDiagnostic(): String = nativeDiagnostic
 
-    override suspend fun loadModel(request: ModelLoadRequest): LoadOutcome = withContext(Dispatchers.IO) {
+    override suspend fun loadModel(request: ModelLoadRequest): LoadOutcome = loadMutex.withLock {
+        withContext(Dispatchers.IO) {
         unload()
 
         // Validate the user's file FIRST. These checks are pure Kotlin, so they
@@ -108,6 +122,39 @@ class LocalLlamaInferenceEngine(
             return@withContext LoadOutcome.Failed(
                 InferenceError.InvalidModel(request.path, "missing GGUF magic"),
             )
+        }
+
+        // Full header parse and architecture contract, before any native call.
+        //
+        // The 4-byte magic only proves the file *starts* like a model. A
+        // corrupt or truncated header, or an architecture this llama.cpp
+        // build does not register, becomes an abort inside
+        // llama_model_load_from_file / llama_init_from_model - a SIGABRT or
+        // GGML_ASSERT that a Kotlin try/catch cannot see. Rejecting it here is
+        // the only layer that can.
+        when (val parsed = runCatching {
+            file.inputStream().use { dev.charaly.runtime.model.gguf.GgufReader.read(it) }
+        }.getOrNull()) {
+            is dev.charaly.runtime.model.gguf.GgufReadResult.Failure ->
+                return@withContext LoadOutcome.Failed(
+                    InferenceError.InvalidModel(request.path, parsed.reason),
+                )
+            is dev.charaly.runtime.model.gguf.GgufReadResult.Success -> {
+                val architecture = parsed.metadata.architecture
+                if (architecture.isNotBlank() &&
+                    !dev.charaly.runtime.model.EngineCapabilities.supports(architecture)
+                ) {
+                    return@withContext LoadOutcome.Failed(
+                        InferenceError.Unsupported(
+                            dev.charaly.runtime.model.EngineVerdict.of(architecture).reason,
+                        ),
+                    )
+                }
+            }
+            null ->
+                return@withContext LoadOutcome.Failed(
+                    InferenceError.InvalidModel(request.path, "the file could not be read"),
+                )
         }
 
         // The Kotlin-level check, not the JNI call. On a build whose shared library is
@@ -164,7 +211,9 @@ class LocalLlamaInferenceEngine(
                 path = request.path,
                 displayName = request.displayName.ifBlank { file.nameWithoutExtension },
                 parameterCount = metadata["parameters"]?.toLongOrNull() ?: 0L,
-                quantLevel = metadata["quantization"].orEmpty(),
+                quantLevel = metadata["general.file_type"]?.toIntOrNull()
+                    ?.let { dev.charaly.runtime.model.gguf.GgufMetadata.FILE_TYPE_LABELS[it] }
+                    ?: metadata["quantization"].orEmpty(),
                 // Read from native, not assumed. Falling back to the requested value would
                 // report a context size llama.cpp never granted.
                 contextSize = nativeContextSize(opened),
@@ -190,9 +239,10 @@ class LocalLlamaInferenceEngine(
                 InferenceError.InvalidModel(request.path, error.message ?: "load failed"),
             )
         }
+        }
     }
 
-    override suspend fun unloadModel() = withContext(Dispatchers.IO) { unload() }
+    override suspend fun unloadModel() = loadMutex.withLock { withContext(Dispatchers.IO) { unload() } }
 
     override suspend fun generate(request: InferenceRequest): InferenceResult = withContext(Dispatchers.IO) {
         val current = requireHandle()
