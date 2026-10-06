@@ -166,7 +166,12 @@ class ModelTestRunner(
                     info = info,
                     backend = backendLabel(engine),
                     version = versionLabel(),
-                    failure = TestFailure.Other("the model produced no text"),
+                    failure = TestFailure.Other(
+                        // The engine's own reason, when it has one. "llama_decode failed
+                        // during generation" is actionable; "the model produced no text"
+                        // sends somebody hunting for a bad GGUF when the build is at fault.
+                        engine.lastDiagnostic().ifBlank { "the model produced no text" },
+                    ),
                 ),
             )
             return@flow

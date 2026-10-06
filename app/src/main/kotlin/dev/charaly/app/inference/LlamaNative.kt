@@ -6,6 +6,24 @@ package dev.charaly.app.inference
  * Everything here is a thin, blocking call into native code. It is always
  * invoked from a background dispatcher by [LocalLlamaInferenceEngine]; the
  * native side never touches the UI thread.
+ *
+ * ## Why the returns are `Array<String>` and not `Map` / `List`
+ *
+ * These signatures once read `Map<String, String>` and `List<String>`, while
+ * `charaly_jni.cpp` returned `jobjectArray`. That is not a stylistic difference,
+ * it is an ABI mismatch: the JVM resolves a native method by its mangled name
+ * and descriptor, so declaring `Map` where native produces `String[]` means the
+ * call site casts a `String[]` to `java.util.Map` and throws
+ * `ClassCastException` on the first device that reaches it.
+ *
+ * JNI can build a real `HashMap`, but doing so means several extra JNI calls per
+ * entry, a global ref to keep the map class alive, and a second failure mode to
+ * debug. The flat array is the contract the native side can satisfy exactly, and
+ * [NativeReturnParser] turns it into a `Map`/`List` in one place, under test, on
+ * the JVM.
+ *
+ * So: the boundary speaks `Array<String>`, and the parsing lives at
+ * [NativeReturnParser] where it can be asserted without a device.
  */
 internal object LlamaNative {
 
@@ -50,7 +68,19 @@ internal object LlamaNative {
      */
     fun isAvailable(): Boolean = loaded
 
-    /** True when native llama.cpp is present in this build. */
+    /**
+     * Confirms from the native side that the JNI bridge itself is callable.
+     *
+     * Distinct from [isAvailable] on purpose. [isAvailable] answers "did `loadLibrary`
+     * succeed", which is a fact about the process. This answers "can we actually call
+     * across the boundary", which is a fact about the native library being intact.
+     * Keeping both means a stripped or truncated `.so` is distinguishable from an
+     * absent one, rather than collapsing into a single boolean.
+     *
+     * It says nothing about a model being resident. That is
+     * [dev.charaly.runtime.model.ModelSelection.isResident], and it is measured
+     * somewhere else entirely.
+     */
     external fun nativeAvailable(): Boolean
 
     external fun nativeVersion(): String
@@ -70,8 +100,14 @@ internal object LlamaNative {
     /** Releases a model handle and frees the native context. */
     external fun freeModel(handle: Long)
 
-    /** Human readable metadata for the loaded model, key=value pairs. */
-    external fun modelMetadata(handle: Long): Map<String, String>
+    /**
+     * Human readable metadata for the loaded model.
+     *
+     * Flat `[key, value, key, value, ...]`. See [NativeReturnParser.parseKeyValues].
+     * An empty array means the model carries no metadata, which is different from
+     * the call having failed.
+     */
+    external fun modelMetadata(handle: Long): Array<String>
 
     /** Approximate context capacity for the loaded model. */
     external fun contextSize(handle: Long): Int
@@ -91,7 +127,15 @@ internal object LlamaNative {
         topK: Int,
         repeatPenalty: Float,
         seed: Long,
-        stopSequences: List<String>,
+        /**
+         * Stop sequences, as an array rather than a `List`.
+         *
+         * `jobjectArray` is what native receives for a Kotlin `Array<String>`. A
+         * Kotlin `List<String>` arrives as a `java.util.List`, which native cannot
+         * index with `GetObjectArrayElement` - so the array form is not a
+         * preference, it is the only shape the C++ can read.
+         */
+        stopSequences: Array<String>,
         tokenCallback: (String) -> Unit,
     ): String
 
@@ -110,23 +154,25 @@ internal object LlamaNative {
     /**
      * Runs one fixed prompt and reports what actually happened.
      *
-     * Returns key=value pairs (`tokens`, `elapsed_micros`, `prompt_micros`,
-     * `first_token_micros`) so the Kotlin side parses one shape rather than a struct,
-     * matching how [modelMetadata] already crosses the boundary. An empty map means the
-     * native call failed, and the caller must treat that as "no measurement" rather
-     * than as zero.
+     * Returns flat `[key, value, ...]` pairs (`tokens`, `elapsed_micros`,
+     * `prompt_micros`, `first_token_micros`) so the Kotlin side parses one shape
+     * rather than a struct, matching how [modelMetadata] already crosses the
+     * boundary. An empty array means the native call failed or produced nothing,
+     * and the caller must treat that as "no measurement" rather than as zero.
      */
     external fun benchmark(
         handle: Long,
         prompt: String,
         maxTokens: Int,
-    ): Map<String, String>
+    ): Array<String>
 
     /**
-     * Which compute backends this build was actually compiled with.
+     * Which compute devices this build was actually compiled with.
      *
      * Read from ggml's registry rather than hardcoded, so the answer cannot drift from
-     * the CMake flags. An empty list means CPU only, and the UI must then say CPU only.
+     * the CMake flags. A CPU-only build reports CPU because ggml registers a CPU
+     * device, not because this returns a constant. An empty array means ggml
+     * reported no devices, which the UI must show as unknown rather than as CPU.
      */
-    external fun availableBackends(): List<String>
+    external fun availableBackends(): Array<String>
 }

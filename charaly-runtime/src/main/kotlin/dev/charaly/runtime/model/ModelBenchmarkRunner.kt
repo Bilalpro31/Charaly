@@ -157,6 +157,19 @@ interface LocalInferenceEngine : dev.charaly.runtime.inference.InferenceEngine, 
     /** Layers offloaded to an accelerator. 0 today; see the app's engine configuration. */
     fun configGpuLayers(): Int = 0
 
+    /**
+     * A controlled, user-readable reason for the most recent native failure, or empty.
+     *
+     * This exists so "the model produced nothing" can be reported as *why* rather than as
+     * silence. Without it the only honest options at a call site are to return a default
+     * (which turns a broken ABI into an empty list) or to dump a JNI stack trace at a
+     * person.
+     *
+     * Defaulted to empty so the scripted engines in tests keep compiling; they have no
+     * native side to have a diagnostic about.
+     */
+    fun lastDiagnostic(): String = ""
+
     /** The context size this engine was configured with. */
     fun configContextSize(): Int = 2048
 }

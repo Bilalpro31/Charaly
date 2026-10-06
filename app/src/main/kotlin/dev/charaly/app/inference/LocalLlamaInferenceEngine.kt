@@ -14,11 +14,15 @@ import dev.charaly.runtime.inference.StopReason
 import dev.charaly.runtime.inference.StreamChunk
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
@@ -49,7 +53,7 @@ class LocalLlamaInferenceEngine(
          * Left at 0 on purpose. A hardcoded 4 was here before there was any way to measure
          * whether it was the right number, which made it a guess presented as a default.
          * With [computeDevices] and a real benchmark in place the value can be chosen from
-         * evidence; until then the engine decides.
+         * evidence; until then, the engine decides.
          */
         val threads: Int = 0,
         /**
@@ -68,6 +72,22 @@ class LocalLlamaInferenceEngine(
     private val generating = AtomicBoolean(false)
     private val info = AtomicReference<ModelInfo?>(null)
 
+    /**
+     * The last native failure worth showing a user.
+     *
+     * Set whenever a native call fails, and cleared when one succeeds. The diagnostics
+     * screen reads it, which is what lets "the model produced nothing" be reported as
+     * "llama_decode failed during generation" instead of as silence.
+     *
+     * Deliberately a message written for a person, not a `Throwable.toString()` of a JNI
+     * stack trace.
+     */
+    @Volatile
+    var nativeDiagnostic: String = ""
+        private set
+
+    override fun lastDiagnostic(): String = nativeDiagnostic
+
     override suspend fun loadModel(request: ModelLoadRequest): LoadOutcome = withContext(Dispatchers.IO) {
         unload()
 
@@ -75,7 +95,7 @@ class LocalLlamaInferenceEngine(
         // give a precise reason ("that file is not a GGUF model") even when the
         // native library is missing, and they stop a multi-gigabyte non-model
         // file from ever reaching native code.
-        val file = java.io.File(request.path)
+        val file = File(request.path)
         if (!file.exists() || !file.isFile || !file.canRead()) {
             return@withContext LoadOutcome.Failed(InferenceError.ModelNotFound(request.path))
         }
@@ -95,6 +115,7 @@ class LocalLlamaInferenceEngine(
         // out of `LlamaNative`'s failed initialiser rather than answer, and this load would
         // crash instead of reporting "this build has no local inference".
         if (!LlamaNative.isAvailable()) {
+            nativeDiagnostic = "Native engine unavailable: the llama.cpp library is not in this build."
             return@withContext LoadOutcome.Failed(
                 InferenceError.Unsupported(
                     "native llama.cpp is not available in this build; run scripts/setup-llama.sh and rebuild",
@@ -111,13 +132,31 @@ class LocalLlamaInferenceEngine(
                 gpuLayers = config.gpuLayers,
             ) { percent, stage -> request.progress(LoadProgress(percent, stage)) }
             if (opened == 0L) {
-                return@withContext LoadOutcome.Failed(
-                    InferenceError.InvalidModel(request.path, LlamaNative.lastError().ifBlank { "native loader refused the file" }),
-                )
+                val reason = LlamaNative.lastError().ifBlank { "the native loader refused the file" }
+                nativeDiagnostic = "Model load failed: $reason"
+                return@withContext LoadOutcome.Failed(InferenceError.InvalidModel(request.path, reason))
             }
             handle.set(opened)
             loaded.set(true)
-            val metadata = runCatching { LlamaNative.modelMetadata(opened) }.getOrDefault(emptyMap())
+            nativeDiagnostic = ""
+
+            // Metadata is read, not defaulted. An empty map is a legitimate answer
+            // ("this model carries no metadata"); a failed call is a different
+            // condition, and it is recorded rather than folded into the same empty map.
+            val metadata = when (val parsed = NativeReturnParser.parseKeyValuesCatching("model metadata") {
+                LlamaNative.modelMetadata(opened)
+            }) {
+                is NativeReturnParser.KeyValues.Ok -> parsed.values
+                is NativeReturnParser.KeyValues.Malformed -> {
+                    nativeDiagnostic = "Model metadata contract failure: ${parsed.detail}"
+                    emptyMap()
+                }
+                is NativeReturnParser.KeyValues.Failed -> {
+                    nativeDiagnostic = parsed.reason
+                    emptyMap()
+                }
+            }
+
             val modelInfo = ModelInfo(
                 // The registry's id, so "which model is loaded" is answerable with the same
                 // identifier every other layer uses. See [ModelLoadRequest.installedModelId].
@@ -126,18 +165,30 @@ class LocalLlamaInferenceEngine(
                 displayName = request.displayName.ifBlank { file.nameWithoutExtension },
                 parameterCount = metadata["parameters"]?.toLongOrNull() ?: 0L,
                 quantLevel = metadata["quantization"].orEmpty(),
-                contextSize = runCatching { LlamaNative.contextSize(opened) }.getOrDefault(config.contextSize),
+                // Read from native, not assumed. Falling back to the requested value would
+                // report a context size llama.cpp never granted.
+                contextSize = nativeContextSize(opened),
                 parameterSizeBytes = file.length(),
                 metadata = metadata,
             )
             info.set(modelInfo)
             LoadOutcome.Loaded(modelInfo)
+        } catch (error: OutOfMemoryError) {
+            unload()
+            nativeDiagnostic = "Model load failed: the device ran out of memory."
+            LoadOutcome.Failed(InferenceError.OutOfMemory(file.length()))
+        } catch (error: UnsatisfiedLinkError) {
+            unload()
+            nativeDiagnostic = "Native engine unavailable: the llama.cpp library is not in this build."
+            LoadOutcome.Failed(
+                InferenceError.Unsupported("native llama.cpp is not available in this build"),
+            )
         } catch (error: Throwable) {
             unload()
+            nativeDiagnostic = "Model load failed: ${error.message ?: error.javaClass.simpleName}"
             LoadOutcome.Failed(
-                InferenceError.OutOfMemory(file.length()),
-            ).takeIf { error is OutOfMemoryError }
-                ?: LoadOutcome.Failed(InferenceError.InvalidModel(request.path, error.message ?: "load failed"))
+                InferenceError.InvalidModel(request.path, error.message ?: "load failed"),
+            )
         }
     }
 
@@ -147,13 +198,33 @@ class LocalLlamaInferenceEngine(
         val current = requireHandle()
         generating.set(true)
         try {
-            val text = runGeneration(current, request) { }
-            InferenceResult(
-                text = text,
-                completionTokens = 0,
-                stopReason = StopReason.COMPLETED,
-                engineId = ENGINE_ID,
-            )
+            // Cancellation is wired here, not left to the caller: `generate` is a
+            // suspending function whose native half is a blocking call, so a cancelled
+            // coroutine would otherwise keep decoding until the model ran out of tokens.
+            val cancellation = coroutineContext[Job]?.invokeOnCompletion { cause ->
+                if (cause != null) requestStop(current)
+            }
+            try {
+                val text = runGeneration(current, request) { }
+                if (text.isEmpty()) {
+                    // Native distinguishes "the model said nothing" from "the decode
+                    // failed". Reporting the second as the first is how a broken model
+                    // looks like a quiet one.
+                    throw InferenceError.GenerationFailed(
+                        LlamaNative.lastError().ifBlank { nativeDiagnostic }.ifBlank {
+                            "the native decode produced no text"
+                        },
+                    )
+                }
+                InferenceResult(
+                    text = text,
+                    completionTokens = 0,
+                    stopReason = StopReason.COMPLETED,
+                    engineId = ENGINE_ID,
+                )
+            } finally {
+                cancellation?.dispose()
+            }
         } finally {
             generating.set(false)
         }
@@ -165,57 +236,117 @@ class LocalLlamaInferenceEngine(
      * `callbackFlow` is the right primitive here: the native decode loop is
      * synchronous and blocking, so it runs on an IO thread and pushes tokens
      * into a channel the collector consumes on whatever dispatcher the UI uses.
+     *
+     * ## Why the blocking call is not made in the flow's own body
+     *
+     * The decode blocks the thread it runs on until the model stops. Cancelling the
+     * collecting coroutine cannot interrupt a blocking JNI call - cancellation is
+     * cooperative, and there is no suspension point inside `llama.cpp` to suspend at.
+     *
+     * So the decode runs in a child coroutine and `awaitClose` registers the stop
+     * handler *before* that child starts. `awaitClose`'s block runs exactly when the
+     * flow is torn down - a Cancel press, a closed screen, a cancelled scope - which
+     * is the only moment a stop request can still matter. Previously the handler was
+     * empty and registered after the decode had already returned, so cancellation
+     * never reached `stopGeneration` at all and the model ran to the end of the
+     * reply regardless.
      */
     override fun stream(request: InferenceRequest): Flow<StreamChunk> = callbackFlow {
         val current = requireHandle()
-        generating.set(true)
-        var count = 0
-        try {
-            val text = runGeneration(current, request) { token ->
-                count++
-                trySend(StreamChunk(text = token, done = false, tokenCount = count))
+        val count = AtomicLong(0L)
+
+        coroutineScope {
+            val decode = launch(Dispatchers.IO) {
+                try {
+                    val text = runGeneration(current, request) { token ->
+                        val seen = count.incrementAndGet()
+                        trySend(StreamChunk(text = token, done = false, tokenCount = seen.toInt()))
+                    }
+                    val seen = count.get().toInt()
+                    if (text.isEmpty() && seen == 0) {
+                        // Nothing was produced and nothing was streamed. Say why rather
+                        // than reporting a clean, empty, successful turn.
+                        nativeDiagnostic = LlamaNative.lastError().ifBlank {
+                            "generation produced no tokens"
+                        }
+                    }
+                    trySend(StreamChunk(text = "", done = true, tokenCount = seen))
+                } catch (error: Throwable) {
+                    // The collector is gone (cancelled flow), so `trySend` fails and
+                    // throwing would only produce noise in the cancelled scope.
+                    if (error !is CancellationException) {
+                        nativeDiagnostic = error.message ?: "generation failed"
+                        trySend(StreamChunk(text = "", done = true, tokenCount = count.get().toInt()))
+                        throw error
+                    }
+                }
             }
-            trySend(StreamChunk(text = "", done = true, tokenCount = count))
-            if (text.isEmpty() && count == 0) {
-                // An empty but successful generation is still a completion.
-                trySend(StreamChunk(text = "", done = true, tokenCount = 0))
-            }
-        } catch (error: Throwable) {
-            trySend(StreamChunk(text = "", done = true, tokenCount = count))
-            throw error
-        } finally {
-            generating.set(false)
+            decode.invokeOnCompletion { close() }
         }
-        awaitClose { }
+
+        awaitClose {
+            // Reached on cancellation *and* on normal completion. On the normal path
+            // the decode has already returned and `stopGeneration` would be a no-op
+            // flag write, but it is skipped anyway so a finished turn leaves the
+            // cancellation flag exactly as it found it.
+            if (generating.get()) requestStop(current)
+            count.set(0L)
+        }
     }.flowOn(Dispatchers.IO)
 
     override fun stop() {
         val current = handle.get()
-        if (current != 0L && generating.get()) {
-            LlamaNative.stopGeneration(current)
-        }
+        if (current != 0L) requestStop(current)
     }
 
     override fun isLoaded(): Boolean = loaded.get() && handle.get() != 0L
 
     override fun modelInfo(): ModelInfo? = info.get()
 
+    /**
+     * Asks native to abandon the running decode.
+     *
+     * Wrapped so a stripped library cannot turn a Cancel press into a crash. The
+     * native side checks its flag between decoded tokens, which is the granularity
+     * the UI needs; llama.cpp has no hard abort.
+     */
+    private fun requestStop(current: Long) {
+        try {
+            LlamaNative.stopGeneration(current)
+        } catch (error: UnsatisfiedLinkError) {
+            nativeDiagnostic = "Native engine unavailable: cannot stop generation."
+        } catch (error: SecurityException) {
+            nativeDiagnostic = "Native engine unavailable: cannot stop generation."
+        }
+    }
+
     private fun runGeneration(
         nativeHandle: Long,
         request: InferenceRequest,
         onToken: (String) -> Unit,
-    ): String = LlamaNative.generate(
-        handle = nativeHandle,
-        prompt = buildPrompt(request),
-        maxTokens = request.params.maxTokens,
-        temperature = request.params.temperature,
-        topP = request.params.topP,
-        topK = request.params.topK,
-        repeatPenalty = request.params.repeatPenalty,
-        seed = request.params.seed,
-        stopSequences = request.params.stopSequences,
-        tokenCallback = onToken,
-    )
+    ): String {
+        generating.set(true)
+        return try {
+            LlamaNative.generate(
+                handle = nativeHandle,
+                prompt = buildPrompt(request),
+                maxTokens = request.params.maxTokens,
+                temperature = request.params.temperature,
+                topP = request.params.topP,
+                topK = request.params.topK,
+                repeatPenalty = request.params.repeatPenalty,
+                seed = request.params.seed,
+                // Array, not List: native indexes this as a jobjectArray, and a
+                // Kotlin List arrives as a java.util.List that it cannot read.
+                stopSequences = request.params.stopSequences.toTypedArray(),
+                tokenCallback = onToken,
+            )
+        } catch (error: UnsatisfiedLinkError) {
+            throw InferenceError.Unsupported(
+                "native llama.cpp is not available in this build",
+            )
+        }
+    }
 
     /**
      * Builds a plain-text prompt.
@@ -251,6 +382,25 @@ class LocalLlamaInferenceEngine(
         return current
     }
 
+    /**
+     * The context size llama.cpp actually granted, or [fallback] if it cannot be asked.
+     *
+     * The fallback is used only when native is unreachable, and never pretends to be a
+     * measurement: the caller passes the requested value because that is the best
+     * description of the *request*, not of the result.
+     */
+    private fun nativeContextSize(handle: Long, fallback: Int = config.contextSize): Int =
+        try {
+            val reported = LlamaNative.contextSize(handle)
+            if (reported > 0) reported else fallback
+        } catch (error: UnsatisfiedLinkError) {
+            nativeDiagnostic = "Native engine unavailable: context size could not be read."
+            fallback
+        } catch (error: SecurityException) {
+            nativeDiagnostic = "Native engine unavailable: context size could not be read."
+            fallback
+        }
+
     // ------------------------------------------------------------------
     // Benchmarking
     // ------------------------------------------------------------------
@@ -273,19 +423,47 @@ class LocalLlamaInferenceEngine(
             try {
                 // The prompt is built here rather than passed in, so a benchmark cannot be
                 // pointed at a story's context by a caller that has one.
-                val native = runCatching {
-                    LlamaNative.benchmark(
-                        handle = current,
-                        prompt = BENCHMARK_PROMPT,
-                        maxTokens = maxTokens.coerceIn(8, 256),
-                    )
-                }.getOrNull() ?: return@withContext null
+                val native = when (
+                    val parsed = NativeReturnParser.parseKeyValuesCatching("benchmark") {
+                        LlamaNative.benchmark(
+                            handle = current,
+                            prompt = BENCHMARK_PROMPT,
+                            maxTokens = maxTokens.coerceIn(8, 256),
+                        )
+                    }
+                ) {
+                    is NativeReturnParser.KeyValues.Ok -> parsed.values
+                    is NativeReturnParser.KeyValues.Malformed -> {
+                        nativeDiagnostic = "Benchmark contract failure: ${parsed.detail}"
+                        return@withContext null
+                    }
+                    is NativeReturnParser.KeyValues.Failed -> {
+                        nativeDiagnostic = parsed.reason
+                        return@withContext null
+                    }
+                }
 
-                val tokens = native["tokens"]?.toIntOrNull() ?: return@withContext null
-                val promptTokens = native["prompt_tokens"]?.toIntOrNull() ?: return@withContext null
-                val decodeMicros = native["decode_micros"]?.toLongOrNull() ?: return@withContext null
-                val promptMicros = native["prompt_micros"]?.toLongOrNull() ?: return@withContext null
-                if (tokens <= 0 || promptTokens <= 0) return@withContext null
+                if (native.isEmpty()) {
+                    // A legitimate "no measurement": the decode produced no tokens.
+                    nativeDiagnostic = LlamaNative.lastError().ifBlank {
+                        "Benchmark produced no tokens."
+                    }
+                    return@withContext null
+                }
+
+                val tokens = native["tokens"]?.toIntOrNull()
+                val promptTokens = native["prompt_tokens"]?.toIntOrNull()
+                val decodeMicros = native["decode_micros"]?.toLongOrNull()
+                val promptMicros = native["prompt_micros"]?.toLongOrNull()
+                if (tokens == null || promptTokens == null || decodeMicros == null || promptMicros == null) {
+                    nativeDiagnostic = "Benchmark result was missing required fields."
+                    return@withContext null
+                }
+                if (tokens <= 0 || promptTokens <= 0) {
+                    nativeDiagnostic = "Benchmark produced no tokens."
+                    return@withContext null
+                }
+                nativeDiagnostic = ""
 
                 BenchmarkObservation(
                     tokens = tokens,
@@ -295,9 +473,13 @@ class LocalLlamaInferenceEngine(
                     promptTokens = promptTokens,
                     contextSize = native["context_size"]?.toIntOrNull() ?: config.contextSize,
                 )
-            } catch (error: Throwable) {
+            } catch (error: OutOfMemoryError) {
                 // An OOM here is a fact about this device, not a crash: the caller
                 // unloads, reports "needs more memory", and records nothing.
+                nativeDiagnostic = "Benchmark ran out of memory on this device."
+                null
+            } catch (error: Throwable) {
+                nativeDiagnostic = "Benchmark failed: ${error.message ?: error.javaClass.simpleName}"
                 null
             } finally {
                 generating.set(false)
@@ -309,12 +491,23 @@ class LocalLlamaInferenceEngine(
      *
      * A build compiled CPU-only reports only CPU, and that is what the UI is required to
      * show. Nothing here is hardcoded, so the answer cannot drift from the CMake flags.
+     *
+     * An empty list means ggml reported no devices. That is *not* the same as "this build
+     * failed to answer": the caller gets an empty list in both cases only because the UI
+     * renders "unknown" for it, and a failure is additionally recorded in
+     * [nativeDiagnostic].
      */
     override fun computeDevices(): List<String> =
-        if (LlamaNative.isAvailable()) {
-            runCatching { LlamaNative.availableBackends() }.getOrDefault(emptyList())
-        } else {
+        if (!LlamaNative.isAvailable()) {
+            nativeDiagnostic = "Native engine unavailable: compute devices could not be read."
             emptyList()
+        } else {
+            NativeReturnParser.parseDevicesCatching("compute devices") {
+                LlamaNative.availableBackends()
+            }.getOrElse {
+                nativeDiagnostic = it.message ?: "compute devices could not be read"
+                emptyList()
+            }
         }
 
     // ------------------------------------------------------------------
@@ -339,7 +532,14 @@ class LocalLlamaInferenceEngine(
     private fun unload() {
         val current = handle.getAndSet(0L)
         if (current != 0L) {
-            runCatching { LlamaNative.freeModel(current) }
+            try {
+                LlamaNative.freeModel(current)
+            } catch (error: UnsatisfiedLinkError) {
+                // Nothing to free: the library was never there. Not a failure worth
+                // reporting, because unload() runs on the way out of a failed load.
+            } catch (error: SecurityException) {
+                // Same reasoning.
+            }
         }
         loaded.set(false)
         generating.set(false)
@@ -347,7 +547,7 @@ class LocalLlamaInferenceEngine(
     }
 
     /** Cheap header sniff so a renamed .txt never reaches native code. */
-    private fun looksLikeGguf(file: java.io.File): Boolean = runCatching {
+    private fun looksLikeGguf(file: File): Boolean = try {
         file.inputStream().use { stream ->
             val header = ByteArray(4)
             if (stream.read(header) != 4) return false
@@ -356,7 +556,9 @@ class LocalLlamaInferenceEngine(
                 header[2] == 'U'.code.toByte() &&
                 header[3] == 'F'.code.toByte()
         }
-    }.getOrDefault(false)
+    } catch (error: java.io.IOException) {
+        false
+    }
 
     companion object {
         const val ENGINE_ID = "llama.cpp-local"
@@ -381,7 +583,31 @@ class LocalLlamaInferenceEngine(
 
         fun nativeVersion(): String =
             if (!LlamaNative.isAvailable()) "unavailable"
-            else runCatching { LlamaNative.nativeVersion() }.getOrDefault("unavailable")
+            else try {
+                LlamaNative.nativeVersion()
+            } catch (error: UnsatisfiedLinkError) {
+                "unavailable"
+            } catch (error: SecurityException) {
+                "unavailable"
+            }
+
+        /**
+         * Whether the JNI bridge itself answers.
+         *
+         * "The library loaded" and "the bridge is callable" are different facts, and a
+         * truncated `.so` produces the first without the second. Nothing here claims a
+         * model is loaded, or that a GPU is present.
+         */
+        fun isNativeBridgeCallable(): Boolean {
+            if (!LlamaNative.isAvailable()) return false
+            return try {
+                LlamaNative.nativeAvailable()
+            } catch (error: UnsatisfiedLinkError) {
+                false
+            } catch (error: SecurityException) {
+                false
+            }
+        }
     }
 }
 
