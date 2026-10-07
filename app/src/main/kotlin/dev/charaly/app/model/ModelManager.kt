@@ -125,7 +125,11 @@ class ModelManager(
                 contextLength = contextLength.takeIf { it > 0 } ?: model.contextLength,
                 verified = true,
                 sha256 = model.sha256,
-                compatibility = model.compatibility.copy(loadFailed = false),
+                compatibility = model.compatibility.copy(
+                    loadFailed = false,
+                    engineSupport = dev.charaly.runtime.model.EngineVerdict
+                        .of(architecture.ifBlank { model.architecture }).support,
+                ),
             ),
         )
     }
@@ -332,11 +336,17 @@ class ModelManager(
             is GgufReadResult.Success -> {
                 Log.i(TAG, "MODEL_VALIDATION_COMPLETE architecture=${parsed.metadata.architecture}")
                 val verdict = GgufCompatibility.classify(parsed, fileSizeBytes = copied)
-                if (verdict.compatibility == dev.charaly.runtime.model.gguf.CharalyCompatibility.UNSUPPORTED) {
-                    partial.delete()
-                    Log.w(TAG, "MODEL_IMPORT_REJECTED reason=unsupported-architecture architecture=${parsed.metadata.architecture}")
-                    error(REASON_UNSUPPORTED)
-                }
+                // A valid header is accepted regardless of the engine verdict. This is
+                // deliberately *not* a gate: ENGINE_UPDATE_REQUIRED and UNKNOWN mean
+                // "import it, but never hand it to the native loader", which the
+                // registry entry's engineSupport records. The only verdict that
+                // refuses an import is an unreadable header (GgufReadResult.Failure),
+                // because a file that is not a valid GGUF can never become loadable.
+                Log.i(
+                    TAG,
+                    "MODEL_COMPATIBILITY architecture=${parsed.metadata.architecture} " +
+                        "support=${verdict.engineSupport} compatibility=${verdict.compatibility}",
+                )
             }
             is GgufReadResult.Failure -> {
                 partial.delete()

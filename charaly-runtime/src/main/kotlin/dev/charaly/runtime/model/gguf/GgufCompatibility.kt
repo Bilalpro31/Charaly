@@ -16,8 +16,9 @@ import dev.charaly.runtime.model.MetadataConfidence
  *   MANUAL_IMPORT_ONLY   the file itself is fine, but *this build* cannot run it.
  *                        Importing it is still useful - a newer Charaly, or another
  *                        engine, can use it - so the option is offered rather than hidden.
- *   UNSUPPORTED          the file is not something Charaly can ever load: no GGUF, a
- *                        corrupt header, or an architecture with no plausible mapping.
+ *   UNSUPPORTED          the file is not a model Charaly can ever load: not a
+ *                        GGUF, or a corrupt header. Never a valid file whose
+ *                        architecture the engine lacks - that case is importable.
  * ```
  *
  * Collapsing the middle case into the first is how a library ends up promising a
@@ -122,13 +123,16 @@ object GgufCompatibility {
         val hasTemplate = metadata.hasChatTemplate
 
         // --- 1. engine support ------------------------------------------------
+        //
+        // An engine verdict is *not* an import verdict. A valid GGUF whose
+        // architecture this build cannot (yet) load is still a real model file:
+        // the user may want it for a newer engine, another engine, or to keep.
+        // It is therefore MANUAL_IMPORT_ONLY - importable, registered, honestly
+        // labelled - and never UNSUPPORTED. UNSUPPORTED is reserved for a file
+        // that is not a valid GGUF at all (see classify(GgufReadResult)).
         if (!engineVerdict.isLoadable) {
-            val verdict = when (engineVerdict.support) {
-                EngineSupport.ENGINE_UPDATE_REQUIRED -> CharalyCompatibility.MANUAL_IMPORT_ONLY
-                else -> CharalyCompatibility.UNSUPPORTED
-            }
             return CompatibilityVerdict(
-                compatibility = verdict,
+                compatibility = CharalyCompatibility.MANUAL_IMPORT_ONLY,
                 architecture = architecture,
                 engineSupport = engineVerdict.support,
                 reason = engineVerdict.reason,

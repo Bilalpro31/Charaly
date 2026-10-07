@@ -212,7 +212,8 @@ class BuiltInModelCatalog(
                 publisher = "Qwen",
                 description = "The smallest model that still holds a conversation. A good first install on a modest phone.",
                 parameterCount = 1_700_000_000L,
-                sizeBytes = 1_120_000_000L,
+                // Real Q4_K_M artifact size, measured on the Hub 2026-10-07.
+                sizeBytes = 1_282_439_584L,
                 quantization = "Q4_K_M",
                 architecture = "Qwen3",
                 contextLength = 4096,
@@ -221,6 +222,19 @@ class BuiltInModelCatalog(
                 license = "Apache 2.0",
                 tags = listOf("small", "fast", "chat"),
                 isRecommended = true,
+                upstreamId = "bartowski/Qwen_Qwen3-1.7B-GGUF",
+                ggufArtifacts = listOf(
+                    "Qwen_Qwen3-1.7B-Q4_K_M.gguf",
+                    "Qwen_Qwen3-1.7B-Q5_K_M.gguf",
+                    "Qwen_Qwen3-1.7B-Q6_K.gguf",
+                    "Qwen_Qwen3-1.7B-Q8_0.gguf",
+                ),
+                download = DownloadMetadata(
+                    url = "https://huggingface.co/bartowski/Qwen_Qwen3-1.7B-GGUF/resolve/main/Qwen_Qwen3-1.7B-Q4_K_M.gguf",
+                    fileName = "Qwen_Qwen3-1.7B-Q4_K_M.gguf",
+                    sizeBytes = 1_282_439_584L,
+                    sha256 = "72c5c3cb38fa32d5256e2fe30d03e7a64c6c79e668ad84057e3bd66e250b24fb",
+                ),
             ),
             ModelCatalogItem(
                 id = "qwen3-4b-q4",
@@ -228,7 +242,8 @@ class BuiltInModelCatalog(
                 publisher = "Qwen",
                 description = "The sweet spot on a modern phone: noticeably better voice and memory than 1.7B.",
                 parameterCount = 4_000_000_000L,
-                sizeBytes = 2_600_000_000L,
+                // Real Q4_K_M artifact size, measured on the Hub 2026-10-07.
+                sizeBytes = 2_497_280_960L,
                 quantization = "Q4_K_M",
                 architecture = "Qwen3",
                 contextLength = 8192,
@@ -237,6 +252,19 @@ class BuiltInModelCatalog(
                 license = "Apache 2.0",
                 tags = listOf("roleplay", "recommended"),
                 isRecommended = true,
+                upstreamId = "bartowski/Qwen_Qwen3-4B-GGUF",
+                ggufArtifacts = listOf(
+                    "Qwen_Qwen3-4B-Q4_K_M.gguf",
+                    "Qwen_Qwen3-4B-Q5_K_M.gguf",
+                    "Qwen_Qwen3-4B-Q6_K.gguf",
+                    "Qwen_Qwen3-4B-Q8_0.gguf",
+                ),
+                download = DownloadMetadata(
+                    url = "https://huggingface.co/bartowski/Qwen_Qwen3-4B-GGUF/resolve/main/Qwen_Qwen3-4B-Q4_K_M.gguf",
+                    fileName = "Qwen_Qwen3-4B-Q4_K_M.gguf",
+                    sizeBytes = 2_497_280_960L,
+                    sha256 = "fbe1d5edd4ce802ae3ae7c7e4ab7d09789d697fdac1fc7929f8df4ca3c41bae3",
+                ),
             ),
             ModelCatalogItem(
                 id = "qwen3-8b-q4",
@@ -244,7 +272,8 @@ class BuiltInModelCatalog(
                 publisher = "Qwen",
                 description = "Strongest prose of the Qwen line, but heavy. Needs a recent device with plenty of free memory.",
                 parameterCount = 8_000_000_000L,
-                sizeBytes = 5_200_000_000L,
+                // Real Q4_K_M artifact size, measured on the Hub 2026-10-07.
+                sizeBytes = 5_027_784_224L,
                 quantization = "Q4_K_M",
                 architecture = "Qwen3",
                 contextLength = 8192,
@@ -252,6 +281,19 @@ class BuiltInModelCatalog(
                 roleplaySuitability = 5,
                 license = "Apache 2.0",
                 tags = listOf("roleplay", "large", "slow"),
+                upstreamId = "bartowski/Qwen_Qwen3-8B-GGUF",
+                ggufArtifacts = listOf(
+                    "Qwen_Qwen3-8B-Q4_K_M.gguf",
+                    "Qwen_Qwen3-8B-Q5_K_M.gguf",
+                    "Qwen_Qwen3-8B-Q6_K.gguf",
+                    "Qwen_Qwen3-8B-Q8_0.gguf",
+                ),
+                download = DownloadMetadata(
+                    url = "https://huggingface.co/bartowski/Qwen_Qwen3-8B-GGUF/resolve/main/Qwen_Qwen3-8B-Q4_K_M.gguf",
+                    fileName = "Qwen_Qwen3-8B-Q4_K_M.gguf",
+                    sizeBytes = 5_027_784_224L,
+                    sha256 = "54fffa050078e984116639c83dfb64b5aa6d4cd474e018b076777c632bbccccd",
+                ),
             ),
             ModelCatalogItem(
                 id = "llama-3.2-3b-q4",
@@ -259,7 +301,8 @@ class BuiltInModelCatalog(
                 publisher = "Meta",
                 description = "A reliable, widely supported general model. Comfortable on mid-range hardware.",
                 parameterCount = 3_200_000_000L,
-                sizeBytes = 2_000_000_000L,
+                // Real Q4_K_M artifact size, measured on the Hub 2026-10-07.
+                sizeBytes = 2_019_377_696L,
                 quantization = "Q4_K_M",
                 architecture = "Llama",
                 contextLength = 8192,
@@ -268,6 +311,48 @@ class BuiltInModelCatalog(
                 license = "Llama 3.2 Community License",
                 tags = listOf("chat", "general"),
                 isRecommended = true,
+                upstreamId = "bartowski/Llama-3.2-3B-Instruct-GGUF",
+                ggufArtifacts = listOf(
+                    "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+                    "Llama-3.2-3B-Instruct-Q5_K_M.gguf",
+                    "Llama-3.2-3B-Instruct-Q6_K.gguf",
+                    "Llama-3.2-3B-Instruct-Q8_0.gguf",
+                ),
+                download = DownloadMetadata(
+                    url = "https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+                    fileName = "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+                    sizeBytes = 2_019_377_696L,
+                    sha256 = "6c1a2b41161032677be168d354123594c0e6e67d2b9227c84f296ad037c728ff",
+                ),
+            ),
+            ModelCatalogItem(
+                id = "llama-3.2-1b-q4",
+                name = "Llama 3.2 1B Instruct",
+                publisher = "Meta",
+                description = "The smallest current Llama. Loads on nearly any phone and answers immediately.",
+                parameterCount = 1_200_000_000L,
+                sizeBytes = 807_694_464L,
+                quantization = "Q4_K_M",
+                architecture = "Llama",
+                contextLength = 8192,
+                recommendedRamBytes = 2_000_000_000L,
+                roleplaySuitability = 2,
+                license = "Llama 3.2 Community License",
+                tags = listOf("small", "fast", "general"),
+                isRecommended = true,
+                upstreamId = "bartowski/Llama-3.2-1B-Instruct-GGUF",
+                ggufArtifacts = listOf(
+                    "Llama-3.2-1B-Instruct-Q4_K_M.gguf",
+                    "Llama-3.2-1B-Instruct-Q5_K_M.gguf",
+                    "Llama-3.2-1B-Instruct-Q6_K.gguf",
+                    "Llama-3.2-1B-Instruct-Q8_0.gguf",
+                ),
+                download = DownloadMetadata(
+                    url = "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf",
+                    fileName = "Llama-3.2-1B-Instruct-Q4_K_M.gguf",
+                    sizeBytes = 807_694_464L,
+                    sha256 = "6f85a640a97cf2bf5b8e764087b1e83da0fdb51d7c9fab7d0fece9385611df83",
+                ),
             ),
             ModelCatalogItem(
                 id = "gemma-2-2b-q4",
@@ -275,7 +360,8 @@ class BuiltInModelCatalog(
                 publisher = "Google",
                 description = "Small, quick to load, and surprisingly good at staying in character for its size.",
                 parameterCount = 2_600_000_000L,
-                sizeBytes = 1_700_000_000L,
+                // Real Q4_K_M artifact size, measured on the Hub 2026-10-07.
+                sizeBytes = 1_708_582_752L,
                 quantization = "Q4_K_M",
                 architecture = "Gemma2",
                 contextLength = 8192,
@@ -283,6 +369,19 @@ class BuiltInModelCatalog(
                 roleplaySuitability = 3,
                 license = "Gemma Terms of Use",
                 tags = listOf("small", "fast"),
+                upstreamId = "bartowski/gemma-2-2b-it-GGUF",
+                ggufArtifacts = listOf(
+                    "gemma-2-2b-it-Q4_K_M.gguf",
+                    "gemma-2-2b-it-Q5_K_M.gguf",
+                    "gemma-2-2b-it-Q6_K.gguf",
+                    "gemma-2-2b-it-Q8_0.gguf",
+                ),
+                download = DownloadMetadata(
+                    url = "https://huggingface.co/bartowski/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf",
+                    fileName = "gemma-2-2b-it-Q4_K_M.gguf",
+                    sizeBytes = 1_708_582_752L,
+                    sha256 = "e0aee85060f168f0f2d8473d7ea41ce2f3230c1bc1374847505ea599288a7787",
+                ),
             ),
             ModelCatalogItem(
                 id = "mistral-nemo-12b-q4",
@@ -299,6 +398,14 @@ class BuiltInModelCatalog(
                 license = "Apache 2.0",
                 tags = listOf("large", "writer"),
                 confidence = MetadataConfidence.APPROXIMATE,
+                upstreamId = "bartowski/Mistral-Nemo-Instruct-2407-GGUF",
+                ggufArtifacts = listOf("Mistral-Nemo-Instruct-2407-Q4_K_M.gguf"),
+                download = DownloadMetadata(
+                    url = "https://huggingface.co/bartowski/Mistral-Nemo-Instruct-2407-GGUF/resolve/main/Mistral-Nemo-Instruct-2407-Q4_K_M.gguf",
+                    fileName = "Mistral-Nemo-Instruct-2407-Q4_K_M.gguf",
+                    sizeBytes = 7_477_208_192L,
+                    sha256 = "7c1a10d202d8788dbe5628dc962254d10654c853cae6aaeca0618f05490d4a46",
+                ),
             ),
             // ---- Gemma 4 -----------------------------------------------------
             //
@@ -324,8 +431,9 @@ class BuiltInModelCatalog(
             // architecture table and [EngineCapabilities.ARCHITECTURES] ever disagree - so
             // the next engine bump turns these live on its own, with no edit here.
             //
-            // Sizes are left unstated rather than guessed, because no verified GGUF artifact
-            // has been checked from this build.
+            // Sizes and downloads are now real: unsloth publishes the official Gemma 4
+            // GGUFs, and the artifact sizes/SHA-256 below are measured on the Hub repo
+            // tree (2026-10-07). The engine verdict is still ENGINE_UPDATE_REQUIRED.
             ModelCatalogItem(
                 id = "gemma-4-e2b-it",
                 name = "Gemma 4 E2B Instruct",
@@ -334,8 +442,9 @@ class BuiltInModelCatalog(
                     "aimed at phones and tablets with limited memory. Best starting point " +
                     "for smaller devices.",
                 parameterCount = 2_000_000_000L,
-                sizeBytes = 0L,
-                quantization = "",
+                // Real Q4_K_M artifact size, measured on the Hub 2026-10-07.
+                sizeBytes = 3_106_738_272L,
+                quantization = "Q4_K_M",
                 architecture = "gemma4",
                 contextLength = 8192,
                 recommendedRamBytes = 4_000_000_000L,
@@ -343,8 +452,19 @@ class BuiltInModelCatalog(
                 license = "Gemma Terms of Use",
                 licenseUrl = "https://ai.google.dev/gemma/terms",
                 tags = listOf("gemma", "edge", "mobile", "small", "recommended"),
-                upstreamId = "google/gemma-4-E2B-it",
-                confidence = MetadataConfidence.UNPUBLISHED,
+                upstreamId = "unsloth/gemma-4-E2B-it-GGUF",
+                ggufArtifacts = listOf(
+                    "gemma-4-E2B-it-Q4_K_M.gguf",
+                    "gemma-4-E2B-it-Q5_K_M.gguf",
+                    "gemma-4-E2B-it-Q8_0.gguf",
+                ),
+                download = DownloadMetadata(
+                    url = "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf",
+                    fileName = "gemma-4-E2B-it-Q4_K_M.gguf",
+                    sizeBytes = 3_106_738_272L,
+                    sha256 = "740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8",
+                ),
+                confidence = MetadataConfidence.VERIFIED,
             ),
             ModelCatalogItem(
                 id = "gemma-4-e4b-it",
@@ -354,8 +474,9 @@ class BuiltInModelCatalog(
                     "recommended balance for tablets and recent phones - noticeably better " +
                     "at holding a long conversation without drifting.",
                 parameterCount = 4_000_000_000L,
-                sizeBytes = 0L,
-                quantization = "",
+                // Real Q4_K_M artifact size, measured on the Hub 2026-10-07.
+                sizeBytes = 4_977_171_584L,
+                quantization = "Q4_K_M",
                 architecture = "gemma4",
                 contextLength = 8192,
                 recommendedRamBytes = 7_000_000_000L,
@@ -363,8 +484,19 @@ class BuiltInModelCatalog(
                 license = "Gemma Terms of Use",
                 licenseUrl = "https://ai.google.dev/gemma/terms",
                 tags = listOf("gemma", "edge", "mobile", "roleplay", "recommended"),
-                upstreamId = "google/gemma-4-E4B-it",
-                confidence = MetadataConfidence.UNPUBLISHED,
+                upstreamId = "unsloth/gemma-4-E4B-it-GGUF",
+                ggufArtifacts = listOf(
+                    "gemma-4-E4B-it-Q4_K_M.gguf",
+                    "gemma-4-E4B-it-Q5_K_M.gguf",
+                    "gemma-4-E4B-it-Q8_0.gguf",
+                ),
+                download = DownloadMetadata(
+                    url = "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf",
+                    fileName = "gemma-4-E4B-it-Q4_K_M.gguf",
+                    sizeBytes = 4_977_171_584L,
+                    sha256 = "85a896a047553e842f25297ee5b031d64ff30147d9c4af17b1e4b394cd1fab87",
+                ),
+                confidence = MetadataConfidence.VERIFIED,
             ),
         )
 

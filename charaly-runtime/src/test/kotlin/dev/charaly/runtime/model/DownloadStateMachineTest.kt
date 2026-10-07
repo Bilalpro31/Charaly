@@ -298,11 +298,12 @@ class DownloadStateMachineTest {
         url: String = "https://example.invalid/test-model.gguf",
         sizeBytes: Long,
         sha256: String = "",
+        architecture: String = "qwen2",
     ) = ModelCatalogItem(
         id = id,
         name = "Test Model",
         publisher = "test",
-        architecture = "qwen2",
+        architecture = architecture,
         sizeBytes = sizeBytes,
         download = DownloadMetadata(
             url = url,
@@ -365,7 +366,7 @@ class DownloadStateMachineTest {
      * Padded to the requested size with bytes after the header, which the reader ignores
      * because it stops at the metadata block.
      */
-    private fun validGgufBytes(totalSize: Int): ByteArray {
+    private fun validGgufBytes(totalSize: Int, architecture: String = "qwen2"): ByteArray {
         val out = java.io.ByteArrayOutputStream()
 
         // Declared before use: Kotlin local functions are not hoisted.
@@ -411,7 +412,7 @@ class DownloadStateMachineTest {
 
         writeString("general.architecture")
         writeU32(8L)            // value type STRING
-        writeString("qwen2")
+        writeString(architecture)
 
         writeUint32Pair("general.file_type", 15L)   // Q4_K_M
         writeUint32Pair("qwen2.context_length", 8192L)
@@ -602,25 +603,48 @@ class DownloadStateMachineTest {
     }
 
     /**
-     * A model the engine cannot load is never downloaded.
+     * A model the engine cannot load still downloads, and is labelled.
      *
-     * Spending the user's data and storage to produce a file that cannot be opened would
-     * be the worst possible outcome, so the refusal happens before the transfer.
+     * The transfer is *not* gated on engine support: a valid GGUF for an
+     * architecture this build lacks is a real file the user may want for a
+     * newer engine, another engine, or to keep. The engine verdict is
+     * recorded on the installed entry so the library shows ENGINE UNSUPPORTED
+     * rather than promising a load that will fail.
+     *
+     * What is still refused is a file that is not a valid GGUF at all - that
+     * is caught at install time from the bytes, never from the name.
      */
     @Test
-    fun `an unloadable model is refused before transferring`() = runTest {
+    fun `an unloadable model downloads and records the engine verdict`() = runTest {
         val dir = temporaryDirectory("unsupported")
-        val transport = ByteTransport(ByteArray(1000))
-        val downloads = pipeline(transport, RecordingRegistry(), dir)
+        // The fixture's own header must declare the unsupported
+        // architecture: the install step classifies from the file,
+        // never from the catalog entry's name field.
+        val payload = validGgufBytes(
+            totalSize = 1024,
+            architecture = "definitely-not-an-architecture",
+        )
+        val transport = ByteTransport(payload)
+        val registry = RecordingRegistry()
+        val downloads = pipeline(transport, registry, dir)
 
-        val unsupported = catalogItem(sizeBytes = 1000L).copy(
+        val unsupported = catalogItem(
+            sizeBytes = payload.size.toLong(),
             architecture = "definitely-not-an-architecture",
         )
         val final = downloads.download(unsupported).toList().last()
-
-        assertEquals(DownloadState.FAILED, final.state)
-        assertEquals(0, transport.openCount)
-        assertNotNull("the refusal must carry the engine's reason", final.message)
+        assertEquals(
+            "a valid GGUF must still reach READY: ${final.state} ${final.message}",
+            DownloadState.READY,
+            final.state,
+        )
+        assertEquals("the transfer must happen, not be pre-refused", 1, transport.openCount)
+        assertEquals("the model must be registered", 1, registry.registered.size)
+        assertEquals(
+            "the engine verdict must be recorded, not hidden",
+            EngineSupport.UNKNOWN_ARCHITECTURE,
+            registry.registered.single().compatibility.engineSupport,
+        )
 
         dir.deleteRecursively()
     }

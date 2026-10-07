@@ -2,6 +2,7 @@ package dev.charaly.runtime.presentation
 
 import dev.charaly.runtime.domain.StoryInstance
 import dev.charaly.runtime.domain.StoryPack
+import dev.charaly.runtime.model.EngineSupport
 import dev.charaly.runtime.model.InstallState
 import dev.charaly.runtime.model.InstalledModel
 import dev.charaly.runtime.model.ModelActions
@@ -479,9 +480,9 @@ object ModelLibraryPresenter {
         // with a file the app cannot load, which is worse than saying nothing can.
         val reason = when {
             isInstalled -> "Already installed"
-            !engineVerdict.isLoadable -> engineVerdict.reason
             !fits -> "This model may exceed the available device memory."
             !downloadsAvailable -> "Import a GGUF from your device instead."
+            !engineVerdict.isLoadable -> "Valid model - this build's engine cannot load it yet"
             else -> ""
         }
         return CatalogModelCard(
@@ -504,12 +505,13 @@ object ModelLibraryPresenter {
             isInstalled = isInstalled,
             fitsDevice = fits,
             actions = ModelActions(
-                // A model the engine cannot load must not offer a download, however
-                // much the build supports downloads.
+                // An unloadable-by-this-build model is still worth downloading: the
+                // file is real, it installs as ENGINE UNSUPPORTED, and the user
+                // keeps it. Only storage/network actually block the transfer.
                 canUse = false,
                 canDelete = false,
                 canVerify = false,
-                canDownload = downloadsAvailable && fits && !isInstalled && engineVerdict.isLoadable,
+                canDownload = downloadsAvailable && fits && !isInstalled,
                 canResume = false,
                 canCancel = false,
                 disabledReason = reason,
@@ -566,6 +568,8 @@ object ModelLibraryPresenter {
             },
             stateLabel = when {
                 model.compatibility.loadFailed -> "Could not load"
+                model.compatibility.engineSupport == EngineSupport.ENGINE_UPDATE_REQUIRED -> "Engine update required"
+                model.compatibility.engineSupport == EngineSupport.UNKNOWN_ARCHITECTURE -> "Engine support unknown"
                 isLoaded -> "Ready"
                 else -> "Installed"
             },
@@ -592,7 +596,9 @@ object ModelLibraryPresenter {
                 )
             },
             actions = ModelActions(
-                canUse = !model.compatibility.loadFailed,
+                canUse = !model.compatibility.loadFailed &&
+                    (model.compatibility.engineSupport == null ||
+                        model.compatibility.engineSupport == EngineSupport.SUPPORTED),
                 canDelete = true,
                 canVerify = true,
                 canDownload = false,

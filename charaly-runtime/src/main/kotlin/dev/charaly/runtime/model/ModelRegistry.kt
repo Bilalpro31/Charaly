@@ -96,6 +96,13 @@ data class ModelCompatibility(
     val failureReason: String = "",
     val lastLoadedAtEpochMs: Long = 0L,
     val chatTemplateDetected: String = "",
+    /**
+     * The bundled engine's verdict for this model's architecture, recorded at
+     * import/verify/install time. Drives the "VALID GGUF but ENGINE UNSUPPORTED"
+     * presentation. Null until the first header read; a blank default is never
+     * serialised as a real verdict.
+     */
+    val engineSupport: EngineSupport? = null,
 ) {
     companion object {
         val UNKNOWN = ModelCompatibility()

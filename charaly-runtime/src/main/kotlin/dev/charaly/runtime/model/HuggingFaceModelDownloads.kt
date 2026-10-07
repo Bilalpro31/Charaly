@@ -96,7 +96,12 @@ class HuggingFaceModelDownloads(
     override fun canDownload(item: ModelCatalogItem): Boolean {
         val download = item.download ?: return false
         if (download.url.isBlank()) return false
-        if (!item.isEngineLoadable) return false
+        // Engine support is NOT a download gate. A valid GGUF for an
+        // architecture this build lacks still gets installed and registered -
+        // labelled ENGINE_UNSUPPORTED - rather than silently refused, because
+        // the file is real and may be used after an engine update. Only a
+        // genuinely unreadable file is refused, and that is discovered at
+        // install time from the file itself, never from the name.
         return hasRoomFor(download.sizeBytes)
     }
 
@@ -106,17 +111,9 @@ class HuggingFaceModelDownloads(
             emit(fail(item.id, DownloadUnavailable.Other("This model has no download source.")))
             return@flow
         }
-        // A model the engine cannot load is never downloaded. Offering it would spend the
-        // user's data and storage to produce a file that cannot be opened.
-        if (!item.isEngineLoadable) {
-            emit(
-                fail(
-                    item.id,
-                    DownloadUnavailable.Other(item.engineVerdict.reason),
-                ),
-            )
-            return@flow
-        }
+        // The engine verdict is recorded on the model, not used to refuse the
+        // transfer. See canDownload for why a valid-but-unsupported GGUF is
+        // still installed.
         val outcome = runTransfer(
             onProgress = { emit(it) },
             catalogId = item.id,
@@ -521,6 +518,11 @@ class HuggingFaceModelDownloads(
                 failureReason = "",
                 lastLoadedAtEpochMs = 0L,
                 chatTemplateDetected = artifact?.chatTemplate?.takeIf { it.isNotBlank() }?.let { "present" }.orEmpty(),
+                // The engine verdict observed from the file's own header, so an
+                // unsupported architecture shows up as ENGINE UNSUPPORTED in the
+                // library instead of as a model that fails at first use.
+                engineSupport = EngineVerdict
+                    .of(verdict.architecture.ifBlank { architectureHint }).support,
             ),
         )
         registry.register(installed)

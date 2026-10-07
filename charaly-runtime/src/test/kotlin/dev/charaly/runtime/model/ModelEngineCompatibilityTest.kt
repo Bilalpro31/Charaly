@@ -115,8 +115,8 @@ class ModelEngineCompatibilityTest {
         assertEquals("Gemma 4 E2B Instruct", e2b!!.name)
         assertEquals("Gemma 4 E4B Instruct", e4b!!.name)
         assertEquals("Google", e2b.publisher)
-        assertEquals("google/gemma-4-E2B-it", e2b.upstreamId)
-        assertEquals("google/gemma-4-E4B-it", e4b.upstreamId)
+        assertEquals("unsloth/gemma-4-E2B-it-GGUF", e2b.upstreamId)
+        assertEquals("unsloth/gemma-4-E4B-it-GGUF", e4b.upstreamId)
     }
 
     @Test
@@ -150,21 +150,20 @@ class ModelEngineCompatibilityTest {
     }
 
     @Test
-    fun `unpublished sizes are admitted rather than invented`() {
+    fun `real published sizes replace the old placeholders`() {
         val e2b = catalog.byId("gemma-4-e2b-it")!!
-        assertEquals(MetadataConfidence.UNPUBLISHED, e2b.confidence)
-        assertEquals(0L, e2b.sizeBytes)
-        assertEquals(
-            "the UI must be told the size is unknown, not given a guess",
-            "size not published",
-            e2b.sizeDisplay,
-        )
+        assertEquals(MetadataConfidence.VERIFIED, e2b.confidence)
+        assertEquals(3_106_738_272L, e2b.sizeBytes)
+        assertEquals("2.9 GB", e2b.sizeLabel)
+        assertTrue(e2b.sizeDisplay != "size not published")
+        assertTrue("gemma 4 must have a real download URL", e2b.download != null && e2b.download!!.url.startsWith("https://huggingface.co/"))
     }
 
     @Test
-    fun `approximate memory requirements are labelled as approximate`() {
+    fun `verified memory requirements are labelled without hedging`() {
         val e4b = catalog.byId("gemma-4-e4b-it")!!
-        assertTrue("unexpected label: ${e4b.ramLabel}", e4b.ramLabel.startsWith("about "))
+        assertTrue("unexpected label: ${e4b.ramLabel}", e4b.ramLabel.endsWith(" free"))
+        assertFalse("verified numbers must not be called approximate", e4b.ramLabel.startsWith("about "))
     }
 
     @Test

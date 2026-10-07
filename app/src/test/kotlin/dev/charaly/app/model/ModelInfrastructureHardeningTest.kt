@@ -110,6 +110,38 @@ class ModelInfrastructureHardeningTest {
     }
 
     @Test
+    fun `a valid but engine-unsupported gguf is importable and native load stays blocked`() = runTest {
+        val file = Files.createTempFile("gemma4", ".gguf").toFile()
+        file.writeBytes(minimalGguf("gemma4"))
+        try {
+            // 1. The file is a VALID GGUF...
+            val read = dev.charaly.runtime.model.gguf.GgufReader.read(file.inputStream())
+            assertTrue("the header must parse", read is dev.charaly.runtime.model.gguf.GgufReadResult.Success)
+
+            // 2. ...and it is importable (NOT scored UNSUPPORTED / never deleted).
+            val verdict = dev.charaly.runtime.model.gguf.GgufCompatibility.classify(read, file.length())
+            assertTrue(verdict.compatibility.isImportable)
+            assertTrue(verdict.compatibility != dev.charaly.runtime.model.gguf.CharalyCompatibility.UNSUPPORTED)
+
+            // 3. ...and the native engine still refuses to load it.
+            val outcome = LocalLlamaInferenceEngine().loadModel(ModelLoadRequest(path = file.absolutePath))
+            assertTrue(outcome is LoadOutcome.Failed)
+            assertTrue((outcome as LoadOutcome.Failed).error is InferenceError.Unsupported)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun `the import path must not reject or delete unsupported-but-valid files`() {
+        val manager = File("src/main/kotlin/dev/charaly/app/model/ModelManager.kt").readText()
+        assertTrue(
+            "import must not delete a valid-but-unsupported model",
+            !manager.contains("error(REASON_UNSUPPORTED)"),
+        )
+    }
+
+    @Test
     fun `model ids come from content, not from the path`() {
         val sha = "deadbeef".repeat(8)
         val a = ModelIds.idFor("Qwen3-4B", sha, "/models/qwen.gguf")
