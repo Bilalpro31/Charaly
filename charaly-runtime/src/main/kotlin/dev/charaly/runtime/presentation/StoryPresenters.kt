@@ -95,11 +95,11 @@ enum class GenerationPhase {
 
 /** The composer's mode buttons. They shape *input*, never world state. */
 enum class ComposerMode(val label: String, val prefix: String, val hint: String) {
-    SAY("Say", "", "What do you say?"),
-    DO("Act", "*", "What do you do?"),
-    THINK("Think", "", "What are you thinking?"),
-    OBSERVE("Observe", "", "What do you notice?"),
-    INTERACT("Interact", "", "What do you try?"),
+    SAY("Söyle", "", "Ne diyorsun?"),
+    DO("Yap", "*", "Ne yapıyorsun?"),
+    THINK("Düşün", "", "Nedir düşündüğün?"),
+    OBSERVE("Gözle", "", "Ne fark ediyorsun?"),
+    INTERACT("Dene", "", "Ne deniyorsun?"),
     ;
 
     /**
@@ -338,7 +338,7 @@ object StoryPresenter {
                     id = entry.id,
                     kind = if (entry.role == TranscriptRole.SYSTEM) LineKind.SYSTEM else LineKind.NARRATION,
                     speakerId = "narrator",
-                    speakerName = if (entry.role == TranscriptRole.SYSTEM) "The world" else "Narration",
+                    speakerName = if (entry.role == TranscriptRole.SYSTEM) "Dünya" else "Anlatım",
                     speakerAccent = ResolvedTheme.BRAND.ink,
                     speakerArtwork = dev.charaly.runtime.domain.PackArtwork.generated("narrator"),
                     segments = NarrativeSegments.parse(entry.text),
@@ -511,19 +511,19 @@ object StoryPresenter {
         // gone wrong, so a high value is unambiguous.
         return when {
             relationship.tension >= TENSION_HIGH ->
-                if (relationship.trust <= TRUST_LOW) "Still blaming you" else "Holding something back"
+                if (relationship.trust <= TRUST_LOW) "Hâlâ sizi suçluyor" else "Bir şey saklıyor"
             relationship.trust >= TRUST_HIGH && relationship.affinity >= AFFINITY_HIGH ->
-                "Confidently in your corner"
-            relationship.trust >= TRUST_HIGH -> "Trusts you"
-            relationship.affinity <= AFFINITY_LOW && relationship.trust <= TRUST_LOW -> "Cold toward you"
-            relationship.affinity <= AFFINITY_LOW -> "Wary of you"
-            relationship.affinity >= AFFINITY_HIGH -> "Warms to you easily"
-            relationship.trust <= TRUST_LOW -> "Does not trust you yet"
+                "Güvenle yanınızda"
+            relationship.trust >= TRUST_HIGH -> "Size güveniyor"
+            relationship.affinity <= AFFINITY_LOW && relationship.trust <= TRUST_LOW -> "Size karşı soğuk"
+            relationship.affinity <= AFFINITY_LOW -> "Sizden çekiniyor"
+            relationship.affinity >= AFFINITY_HIGH -> "Çabuk ısınıyor"
+            relationship.trust <= TRUST_LOW -> "Henüz size güvenmiyor"
             // Untouched axes and a stranger stage means no opinion has formed, which is
             // different from a neutral one and worth saying nothing about.
             relationship.stage == dev.charaly.runtime.domain.RelationshipStage.STRANGER &&
                 relationship.familiarity == 0 -> ""
-            else -> "Getting to know you"
+            else -> "Sizi tanımaya çalışıyor"
         }
     }
 
@@ -542,10 +542,10 @@ object StoryPresenter {
         val speaker = definition.character(instance.focusCharacterId)?.name
         return when (phase) {
             GenerationPhase.IDLE -> ""
-            GenerationPhase.THINKING -> "${speaker ?: "The character"} is thinking…"
-            GenerationPhase.STREAMING -> "${speaker ?: "The character"} is speaking…"
-            GenerationPhase.STOPPED -> "Stopped"
-            GenerationPhase.FAILED -> "Something interrupted the scene"
+            GenerationPhase.THINKING -> "${speaker ?: "Karakter"} düşünüyor…"
+            GenerationPhase.STREAMING -> "${speaker ?: "Karakter"} konuşuyor…"
+            GenerationPhase.STOPPED -> "Durduruldu"
+            GenerationPhase.FAILED -> "Bir şey sahneyi kesti"
         }
     }
 

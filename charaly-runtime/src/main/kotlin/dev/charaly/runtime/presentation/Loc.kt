@@ -97,7 +97,7 @@ private val EN: Map<String, String> = mapOf(
     // ---- navigation -------------------------------------------------------
     "nav.home" to "Home",
     "nav.worlds" to "Worlds",
-    "nav.chat" to "Chat",
+    "nav.chat" to "Stage",
     "nav.library" to "Library",
     "nav.settings" to "Settings",
     "nav.models" to "Models",
@@ -439,12 +439,12 @@ private val EN: Map<String, String> = mapOf(
 
 private val TR: Map<String, String> = mapOf(
     // ---- navigation -------------------------------------------------------
-    "nav.home" to "Ana Sayfa",
+    "nav.home" to "Ana",
     "nav.worlds" to "Dünyalar",
-    "nav.chat" to "Sohbet",
+    "nav.chat" to "Sahne",
     "nav.library" to "Kitaplık",
     "nav.settings" to "Ayarlar",
-    "nav.models" to "Modeller",
+    "nav.models" to "Motor",
     "nav.back" to "Geri",
 
     // ---- common actions --------------------------------------------------
@@ -476,7 +476,7 @@ private val TR: Map<String, String> = mapOf(
 
     // ---- home -------------------------------------------------------------
     "home.worlds_header" to "Dünyalar",
-    "home.worlds_caption" to "%1${'$'}d dünyaya adım at",
+    "home.worlds_caption" to "%1${'$'}d dünyaya adım atın",
     "home.stories_header" to "Hikâyeleriniz",
     "home.continuation" to "Devam Et",
     "home.model_ready_pill" to "Hazır",
@@ -494,6 +494,10 @@ private val TR: Map<String, String> = mapOf(
     "worlds.clear_filters" to "Filtreleri temizle",
     "worlds.empty_title" to "Henüz dünya yok.",
     "worlds.empty_body" to "Açtığınız dünyalar burada görünür.",
+    "worlds.feed_title" to "Dünya Akışı",
+    "worlds.dominant" to "ÖNE ÇIKAN",
+    "worlds.full" to "TAM",
+    "worlds.quiet" to "SAKİN",
 
     // ---- story setup ------------------------------------------------------
     "setup.step.scenario.title" to "Bir açılış seçin",
@@ -547,11 +551,11 @@ private val TR: Map<String, String> = mapOf(
 
     // ---- model library ---------------------------------------------------
     "models.title" to "Modeller",
-    "models.library" to "Model Kütüphanesi",
-    "models.your_models" to "Bu cihazdakiler",
+    "models.library" to "Motor Kütüphanesi",
+    "models.your_models" to "Bu cihazda",
     "models.explore" to "Modelleri keşfet",
-    "models.choose_prompt" to "Dünyalarınızı yaşatmak için bir yerel model seçin.",
-    "models.import_hint" to "Elinizdeki bir GGUF dosyasını içe aktarın. Cihazdan hiçbir yere gönderilmez.",
+    "models.choose_prompt" to "Dünyalarınızı canlandırmak için bir yerel model seçin.",
+    "models.import_hint" to "Elinizde olan bir GGUF dosyasını içe aktarın. Cihazınızdan hiçbir yere gönderilmez.",
     "models.offline" to "Çevrimdışısınız.",
     "models.offline_action" to "Yüklü modeller yine çalışır",
     "models.retry_search" to "Tekrar Dene",
@@ -569,7 +573,7 @@ private val TR: Map<String, String> = mapOf(
     "models.not_verified" to "Doğrulanmadı",
     "models.yes" to "Evet",
     "models.detail" to "Model",
-    "models.choose_local_body" to "Charaly bu cihazdaki bir modelle konuşur. Hiçbir şey gönderilmez.",
+    "models.choose_local_body" to "Charaly, bu cihazdaki bir modelle konuşur. Hiçbir şey gönderilmez.",
 
     // ---- chat -------------------------------------------------------------
     "chat.needs_model" to "Bu hikâye devam edebilmek için bir yerel modele ihtiyaç duyuyor.",
@@ -588,6 +592,9 @@ private val TR: Map<String, String> = mapOf(
     "chat.there_nearby" to "Yakında",
     "chat.there_elsewhere" to "Başka yerde",
     "chat.day" to "%1${'$'}d. gün",
+    "chat.scene_title" to "Sahne",
+    "chat.your_move" to "Hamleniniz",
+    "chat.world_is_moving" to "Dünya hareket ediyor…",
 
     // ---- settings ---------------------------------------------------------
     "settings.title" to "Ayarlar",
@@ -602,6 +609,19 @@ private val TR: Map<String, String> = mapOf(
     "settings.reduce_motion" to "Hareketi azalt",
     "settings.reduce_motion_caption" to "Geçişler yer değiştirmez. İçerik yine değişir.",
     "settings.build_world" to "Bir dünya kur",
+    "settings.storage" to "Depolama",
+    "settings.appearance" to "Görünüm",
+    "settings.story" to "Hikâye",
+    "settings.text_size" to "Metin boyutu",
+    "settings.auto_advance" to "Otomatik ilerle",
+    "settings.narration" to "Anlatım",
+    "settings.current_model" to "Geçerli model",
+    "settings.model_hub" to "Model Hub",
+    "settings.story_packs" to "Hikâye Paketleri",
+    "settings.models" to "Modeller",
+    "settings.cache" to "Önbellek",
+    "settings.about" to "Hakkında",
+    "settings.version" to "Charaly sürümü",
     "settings.back" to "Geri",
 
     // ---- empty states / errors -------------------------------------------

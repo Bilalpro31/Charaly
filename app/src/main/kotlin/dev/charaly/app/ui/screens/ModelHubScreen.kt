@@ -302,7 +302,7 @@ fun ModelHubScreen(
             CharalySectionHeader(
                 title = Loc.t("models.explore"),
                 micro = true,
-                caption = if (isOnline) "From the Hugging Face Hub" else ModelStagePresenter.OFFLINE_TITLE,
+                caption = if (isOnline) "Hugging Face Hub'dan" else ModelStagePresenter.OFFLINE_TITLE,
             )
         }
 
@@ -310,7 +310,7 @@ fun ModelHubScreen(
             CharalySearchField(
                 value = query,
                 onValueChange = onQueryChange,
-                placeholder = "Search models and publishers",
+                placeholder = "Modeller ve yayıncılar ara",
             )
         }
 
@@ -382,8 +382,8 @@ fun ModelHubScreen(
                     state = EmptyState(
                         title = Loc.t("models.empty_title"),
                         body = "Download one from the Hub, or import a GGUF from your device. " +
-                            "Everything else in Charaly works without one.",
-                        actionLabel = "Import GGUF",
+                            "Charaly'deki her şey bir model olmadan da çalışır.",
+                        actionLabel = "GGUF İçe Aktar",
                         artSeed = "charaly-empty-models",
                     ),
                     action = {
@@ -566,7 +566,7 @@ private fun ModelCardRow(
             }
             CharalyPill(
                 label = card.stateLabel,
-                selected = card.stateLabel == "READY" || card.stateLabel == "ACTIVE",
+                selected = card.stateLabel == "HAZIR" || card.stateLabel == "ETKİN",
             )
         }
 
@@ -614,12 +614,12 @@ private fun ModelCardRow(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             when {
-                card.actionLabel == "Use model" -> CharalyAction(
+                card.actionLabel == "Modeli kullan" -> CharalyAction(
                     label = card.actionLabel,
                     onClick = { onUse(card.id) },
                 )
 
-                card.actionLabel == "In use" -> CharalyPill(label = Loc.t("models.in_use"), selected = true)
+                card.actionLabel == "Kullanımda" -> CharalyPill(label = Loc.t("models.in_use"), selected = true)
 
                 card.actionIsDownload -> CharalyAction(
                     label = card.actionLabel,
@@ -896,7 +896,7 @@ private fun DownloadSurface(
             )
             if (transfer.technicalDetail.isNotBlank()) {
                 CharalyQuietAction(
-                    label = if (showDetail) "Hide details" else "Details",
+                    label = if (showDetail) "Ayrıntıları gizle" else "Ayrıntılar",
                     onClick = { showDetail = !showDetail },
                 )
                 if (showDetail) {
@@ -918,7 +918,7 @@ private fun DownloadSurface(
             }
             if (transfer.canResume) {
                 CharalyAction(
-                    label = if (transfer.hasFailure) "Try again" else "Resume",
+                    label = if (transfer.hasFailure) "Tekrar dene" else "Devam et",
                     onClick = onResume,
                 )
             }

@@ -342,7 +342,7 @@ object ChatStagePresenter {
                     .takeIf { it.isNotBlank() },
             ).joinToString(" · "),
             clockLabel = instance.worldClock.now.formatClock(),
-            dayLabel = "Day ${instance.worldClock.now.day}",
+            dayLabel = "${instance.worldClock.now.day}. Gün",
             presenceLabel = presenceLabel(instance, definition, playerId),
             theme = theme,
             artwork = PackArtwork.generated("banner-${instance.storyPackId.value}"),
@@ -715,8 +715,8 @@ object ChatStagePresenter {
 
     private fun phaseLabel(phase: GenerationPhase, speaker: String?): String = when (phase) {
         GenerationPhase.IDLE -> ""
-        GenerationPhase.THINKING -> if (speaker != null) "$speaker is thinking…" else "They are thinking…"
-        GenerationPhase.STREAMING -> if (speaker != null) "$speaker is speaking…" else "They are speaking…"
+        GenerationPhase.THINKING -> if (speaker != null) "$speaker düşünüyor…" else "Düşünüyor…"
+        GenerationPhase.STREAMING -> if (speaker != null) "$speaker konuşuyor…" else "Konuşuyor…"
         GenerationPhase.STOPPED -> Loc.t("chat.stopped")
         GenerationPhase.FAILED -> Loc.t("chat.failed")
     }

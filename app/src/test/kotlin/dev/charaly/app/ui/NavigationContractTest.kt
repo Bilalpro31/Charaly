@@ -3,7 +3,7 @@ package dev.charaly.app.ui
 import dev.charaly.app.ui.nav.CharalyNavigator
 import dev.charaly.app.ui.nav.Route
 import dev.charaly.app.ui.nav.decodeRoute
-import dev.charaly.app.ui.nav.destinationOrNull
+import dev.charaly.app.ui.nav.tabOrNull
 import dev.charaly.runtime.domain.CharalySurface
 import dev.charaly.runtime.domain.HeroTreatment
 import dev.charaly.runtime.domain.PackColor
@@ -53,18 +53,20 @@ class NavigationContractTest {
     fun `every route round-trips`() {
         val routes = listOf(
             Route.Home,
-            Route.Worlds,
+            Route.Sessions,
+            Route.Create,
             Route.Showcase("pack-miraculous-shadows-of-paris"),
             Route.EnterWorld("pack-miraculous-shadows-of-paris"),
             Route.Chat,
             Route.Stage("story-1"),
             Route.Library,
+            Route.Settings,
             Route.StoryRecord("story-1"),
             Route.Models,
             Route.ModelDetail("local-1"),
-            Route.Settings,
             Route.Developer,
             Route.Authoring,
+            Route.CharacterImport,
         )
         for (route in routes) {
             assertEquals("${route.encode()} did not round-trip", route, decodeRoute(route.encode()))
@@ -131,37 +133,42 @@ class NavigationContractTest {
     }
 
     /**
-     * Four destinations, and the bar offers all four.
+     * Five tab destinations, and the bar offers all five.
      *
-     * Asserted on the enum rather than on the shell so the count cannot drift: the previous
-     * bar had seven items, which is one more than a thumb can reliably cover.
+     * Asserted on the app's own tab enum rather than on the runtime's destination enum so
+     * the count cannot drift: V5's bar is five icons a thumb can reach without reading,
+     * and a sixth is one more than that.
      */
     @Test
     fun `the bar offers exactly four destinations`() {
-        assertEquals(4, CharalyDestination.PRIMARY.size)
+        assertEquals(5, Route.Tab.entries.size)
         assertEquals(
-            listOf("Home", "Worlds", "Chat", "Library"),
-            CharalyDestination.PRIMARY.map { it.label },
+            listOf("HOME", "SESSIONS", "CREATE", "LIBRARY", "ME"),
+            Route.Tab.entries.map { it.name },
         )
-        // And every label is a word, not an internal name.
-        CharalyDestination.entries.forEach {
-            assertTrue("${it.name} has a label a user would recognise", it.label.isNotBlank())
+        // And every primary route resolves to one of them, so the bar never highlights
+        // something other than where the user is.
+        for (route in listOf(Route.Home, Route.Sessions, Route.Create, Route.Library, Route.Settings)) {
+            assertNotNull(
+                "${route.encode()} resolves to no tab, so selecting it would blank the bar",
+                route.tabOrNull(),
+            )
         }
     }
 
     @Test
-    fun `every tab root resolves to a destination the shell can draw`() {
+    fun `every tab root resolves to a tab the shell can draw`() {
         for (tab in Route.Tab.entries) {
             val root = requireNotNull(ROOT_OF[tab]) { "no root route declared for ${tab.name}" }
             assertNotNull(
-                "${tab.name} resolves to no destination, so selecting it would blank the bar",
-                root.destinationOrNull(),
+                "${tab.name} resolves to no tab, so selecting it would blank the bar",
+                root.tabOrNull(),
             )
         }
-        // And the tab's own destination is the one it selects, so the bar never highlights
+        // And the tab's own resolution is the one it selects, so the bar never highlights
         // something other than where the user is.
         for (tab in Route.Tab.entries) {
-            assertEquals(tab.destination, requireNotNull(ROOT_OF[tab]).destinationOrNull())
+            assertEquals(tab, requireNotNull(ROOT_OF[tab]).tabOrNull())
         }
     }
 
@@ -206,7 +213,7 @@ class NavigationContractTest {
 
         val returning = PackShowcaseBuilder.build(pack, canContinue = true)
         assertTrue(returning.canContinue)
-        assertEquals("Continue Story", returning.continueLabel)
+        assertEquals("Hikâyeye Devam Et", returning.continueLabel)
     }
 
     /**
@@ -354,7 +361,7 @@ class NavigationContractTest {
         File("src/main/kotlin/dev/charaly/app/$relativePath")
 
     /**
-     * The app's dark scheme is pure black.
+     * The app's dark scheme sits on V5's `#0F0F11` floor.
      *
      * Asserted on the source rather than on a rendered colour, because Compose cannot be
      * inspected from a JVM unit test. The token value is separately asserted here, so the
@@ -364,12 +371,12 @@ class NavigationContractTest {
     fun `the dark colour scheme uses pure black`() {
         val scheme = appSource("ui/theme/CharalyTheme.kt").readText()
         assertTrue(
-            "the dark scheme must set a pure-black background",
-            scheme.contains("background = Color(0xFF000000)"),
+            "the dark scheme must set the V5 background floor",
+            scheme.contains("background = Color(0xFF0F0F11)"),
         )
         assertTrue(
-            "the dark scheme must set a pure-black surface",
-            scheme.contains("surface = Color(0xFF000000)"),
+            "the dark scheme must set the V5 surface floor",
+            scheme.contains("surface = Color(0xFF0F0F11)"),
         )
         // And not the navy it used to be.
         assertFalse(
@@ -688,7 +695,7 @@ class NavigationContractTest {
         // the honest signal: they are computed from state that is always in memory.
         val alwaysPresent = listOf(
             "HomeScreen.kt" to "snapshot: LobbySnapshot",
-            "WorldsScreen.kt" to "snapshot: WorldsFeedSnapshot",
+            "SessionsScreen.kt" to "shelf: LibraryShelf",
             "LibraryScreen.kt" to "shelf: LibraryShelf",
         )
         for ((file, signature) in alwaysPresent) {
@@ -747,9 +754,9 @@ class NavigationContractTest {
             assertFalse("WorldFeedItem exposes '$forbidden'", fields.contains(forbidden))
         }
 
-        val source = appSource("ui/screens/WorldsScreen.kt").readText()
+        val source = appSource("ui/screens/LibraryScreen.kt").readText()
         for (forbidden in listOf("characters.size", "locations.size", "events.size")) {
-            assertFalse("the worlds feed renders $forbidden", source.contains(forbidden))
+            assertFalse("the pack shelf renders $forbidden", source.contains(forbidden))
         }
     }
 
@@ -788,7 +795,7 @@ class NavigationContractTest {
         val app = appSource("ui/CharalyApp.kt").readText()
         val router = app.substringAfter("when (route) {").substringBefore("private fun ChatRoute")
         val routes = listOf(
-            "Route.Home", "Route.Worlds", "Route.Chat", "Route.Library",
+            "Route.Home", "Route.Sessions", "Route.Create", "Route.Chat", "Route.Library",
             "Route.Models", "Route.Settings", "Route.Developer", "Route.Authoring",
             "Route.Showcase", "Route.EnterWorld", "Route.Stage", "Route.ModelDetail",
             "Route.StoryRecord",
@@ -927,9 +934,10 @@ class NavigationContractTest {
     private companion object {
         val ROOT_OF: Map<Route.Tab, Route> = mapOf(
             Route.Tab.HOME to Route.Home,
-            Route.Tab.WORLDS to Route.Worlds,
-            Route.Tab.CHAT to Route.Chat,
+            Route.Tab.SESSIONS to Route.Sessions,
+            Route.Tab.CREATE to Route.Create,
             Route.Tab.LIBRARY to Route.Library,
+            Route.Tab.ME to Route.Settings,
         )
     }
 }

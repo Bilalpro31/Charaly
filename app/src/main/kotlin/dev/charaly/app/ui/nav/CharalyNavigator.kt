@@ -23,21 +23,20 @@ import dev.charaly.runtime.presentation.CharalyDestination
 /**
  * NAVIGATION.
  *
- * ## Four destinations, and what is deliberately absent
+ * ## Five destinations, and what is deliberately absent
  *
  * ```
- *   HOME      the world lobby
- *   WORLDS    discovery
- *   CHAT      the stage
- *   LIBRARY   what you have made
+ *   HOME      the lobby
+ *   SESSIONS  the stories being played
+ *   CREATE    make something of your own
+ *   LIBRARY   the packs and the people
+ *   ME        settings, models, the self
  * ```
  *
- * Settings is not one of them. In a consumer app a settings destination occupies the same
- * visual weight as the thing the user came for, and this user came for a world. Settings is
- * a secondary route from Home.
- *
- * Models is also secondary, and deliberately so: it is a real screen with real downloads,
- * but it is a *tool* for making the other four work, not a place to spend an evening.
+ * V5's bar is icons-only: five items a thumb can reach without reading. Settings is *in*
+ * the bar as Me, because a profile destination is where a person expects to find their own
+ * preferences - and Models lives under Me rather than on the bar, because a model is a tool
+ * for making the other four work, not a place to spend an evening.
  *
  * ## Routes are data, not strings
  *
@@ -49,26 +48,30 @@ import dev.charaly.runtime.presentation.CharalyDestination
 @Stable
 sealed interface Route {
 
-    /** The four primary destinations. */
-    enum class Tab(val destination: CharalyDestination) {
-        HOME(CharalyDestination.HOME),
-        WORLDS(CharalyDestination.WORLDS),
-        CHAT(CharalyDestination.CHAT),
-        LIBRARY(CharalyDestination.LIBRARY),
+    /** The five primary destinations. */
+    enum class Tab {
+        HOME,
+        SESSIONS,
+        CREATE,
+        LIBRARY,
+        ME,
     }
 
-    // ---- the four primaries ---------------------------------------------
+    // ---- the five primaries ---------------------------------------------
 
     data object Home : Route
 
-    /** Discovery. The world's own name, not "Story Packs". */
-    data object Worlds : Route
+    /** The stories being played, live and earlier. */
+    data object Sessions : Route
 
-    /** The stage for the currently open story. */
-    data object Chat : Route
+    /** Making something of your own: a world, a character, a pack. */
+    data object Create : Route
 
-    /** Every story on this device. */
+    /** The packs, the people met, and everything resumable. */
     data object Library : Route
+
+    /** The self: settings, models, storage. */
+    data object Settings : Route
 
     // ---- worlds ----------------------------------------------------------
 
@@ -89,11 +92,13 @@ sealed interface Route {
     /** A specific story. Carries a streaming state through process death. */
     data class Stage(val instanceId: String) : Route
 
+    /** The stage for the currently open story. */
+    data object Chat : Route
+
     // ---- secondary -------------------------------------------------------
 
     data object Models : Route
     data class ModelDetail(val modelId: String) : Route
-    data object Settings : Route
     data object Developer : Route
     data object Authoring : Route
 
@@ -112,11 +117,12 @@ sealed interface Route {
 
     fun encode(): String = when (this) {
         Home -> "home"
-        Worlds -> "worlds"
+        Sessions -> "sessions"
+        Create -> "create"
         Chat -> "chat"
         Library -> "library"
-        Models -> "models"
         Settings -> "settings"
+        Models -> "models"
         Developer -> "developer"
         Authoring -> "authoring"
         CharacterImport -> "characters/import"
@@ -140,11 +146,12 @@ fun decodeRoute(value: String?): Route? {
     if (value == null || value.isBlank()) return null
     return when {
         value == "home" -> Route.Home
-        value == "worlds" -> Route.Worlds
+        value == "sessions" -> Route.Sessions
+        value == "create" -> Route.Create
         value == "chat" -> Route.Chat
         value == "library" -> Route.Library
-        value == "models" -> Route.Models
         value == "settings" -> Route.Settings
+        value == "models" -> Route.Models
         value == "developer" -> Route.Developer
         value == "authoring" -> Route.Authoring
         value == "characters/import" -> Route.CharacterImport
@@ -168,36 +175,35 @@ private fun String.id(prefix: String): String? =
  * A null answer is what *hides* the navigation, so it is a real design decision rather than
  * an absence.
  *
- * ## The stage is the one primary screen that hides it
+ * ## The full-screen exceptions, from the handoff
  *
- * `[Stage]` returns null, and that is the load-bearing exception in this table. The stage
- * owns the bottom edge because the composer is pinned there, and a floating nav pill above
- * the composer is precisely the layout mistake this app replaced: two navigation surfaces
- * competing for the same attention. So entering a story *is* leaving the navigation, and
- * the stage's own back affordance is how you come back - see `Route.Stage.backTarget`.
- *
- * `Chat` still returns `CHAT`, because the CHAT route is also what the user lands on when
- * no story is open, and a destination with no navigation cannot be switched away from.
- * `CharalyApp` therefore resolves Chat's destination from the *stage*, not from the route
- * alone, so the pill disappears the moment a story is actually on screen.
+ * Pack detail, Enter Story, the Stage, Authoring, CharacterImport, ModelDetail and
+ * Onboarding all hide the bar: each owns the whole display and carries its own back
+ * affordance and bottom CTA. Models is *not* in that list - it is Me's sub-screen, so the
+ * bar stays and Me stays lit, which is how a user finds their way back from a model
+ * download to wherever they were.
  */
-fun Route.destinationOrNull(): CharalyDestination? = when (this) {
-    Route.Home -> CharalyDestination.HOME
-    Route.Worlds, is Route.Showcase, is Route.EnterWorld -> CharalyDestination.WORLDS
-    Route.Chat -> CharalyDestination.CHAT
-    is Route.Stage -> null
-    Route.Library, is Route.StoryRecord -> CharalyDestination.LIBRARY
-    // The import flow is full-screen like Settings and Authoring: it is a tool the user
-    // steps into rather than a tab, and it hides the navigation for the same reason they do.
-    Route.Models, is Route.ModelDetail, Route.Settings, Route.Developer, Route.Authoring,
-    Route.CharacterImport -> null
+fun Route.tabOrNull(): Route.Tab? = when (this) {
+    Route.Home -> Route.Tab.HOME
+    Route.Sessions -> Route.Tab.SESSIONS
+    Route.Create -> Route.Tab.CREATE
+    Route.Library, is Route.StoryRecord -> Route.Tab.LIBRARY
+    Route.Settings, Route.Models -> Route.Tab.ME
+    // The stage owns the bottom edge: the composer is pinned there and a nav above it is
+    // two navigation surfaces competing for the same attention.
+    Route.Chat, is Route.Stage -> null
+    is Route.Showcase, is Route.EnterWorld -> null
+    Route.Authoring, Route.CharacterImport -> null
+    is Route.ModelDetail -> null
+    Route.Developer -> null
 }
 
 private fun rootOf(tab: Route.Tab): Route = when (tab) {
     Route.Tab.HOME -> Route.Home
-    Route.Tab.WORLDS -> Route.Worlds
-    Route.Tab.CHAT -> Route.Chat
+    Route.Tab.SESSIONS -> Route.Sessions
+    Route.Tab.CREATE -> Route.Create
     Route.Tab.LIBRARY -> Route.Library
+    Route.Tab.ME -> Route.Settings
 }
 
 /**
@@ -245,9 +251,13 @@ class CharalyNavigator(initial: Route = Route.Home) {
         current = root
     }
 
-    /** Selects by destination, which is what the navigation bar actually holds. */
-    fun select(destination: CharalyDestination) {
-        Route.Tab.entries.firstOrNull { it.destination == destination }?.let(::selectTab)
+    /** Selects by tab, which is what the navigation bar actually holds. */
+    fun select(tab: Route.Tab) {
+        val root = rootOf(tab)
+        if (current == root && backStack.size == 1) return
+        backStack.clear()
+        backStack.add(root)
+        current = root
     }
 
     /** Pops one level. False means the activity should finish. */
@@ -261,8 +271,7 @@ class CharalyNavigator(initial: Route = Route.Home) {
     /** Pops back to the destination's root. */
     fun popToRoot(): Boolean {
         if (backStack.size <= 1) return false
-        val root = Route.Tab.entries
-            .firstOrNull { it.destination == current.destinationOrNull() }
+        val root = current.tabOrNull()
             ?.let(::rootOf)
             ?: Route.Home
         backStack.clear()

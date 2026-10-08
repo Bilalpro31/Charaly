@@ -667,7 +667,12 @@ Java_dev_charaly_app_inference_LlamaNative_loadModel(
     report(60, "creating context");
     auto ctx_params = llama_context_default_params();
     ctx_params.n_ctx = static_cast<uint32_t>(j_context_size > 0 ? j_context_size : 2048);
-    ctx_params.n_threads = j_threads > 0 ? j_threads : 4;
+    // The Kotlin contract (LocalLlamaInferenceEngine): threads == 0 means "the
+    // engine picks". The default from llama_context_default_params() IS that
+    // choice - the old `j_threads > 0 ? j_threads : 4` silently overrode it
+    // with a hard-coded 4, disagreeing with the documented contract and with
+    // whatever llama.cpp's default becomes in future checkouts.
+    if (j_threads > 0) ctx_params.n_threads = j_threads;
     ctx_params.n_batch = 512;
 
     llama_context * ctx = llama_init_from_model(model, ctx_params);

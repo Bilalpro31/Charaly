@@ -2,10 +2,6 @@ package dev.charaly.app.ui.shell
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -28,8 +24,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Chat
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -38,16 +37,18 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import dev.charaly.app.R
 import dev.charaly.app.ui.design.Charaly
-import dev.charaly.app.ui.design.CharalyShapes
+import dev.charaly.app.ui.nav.Route
 import dev.charaly.app.ui.theme.motionDuration
-import dev.charaly.runtime.presentation.CharalyDestination
 import dev.charaly.runtime.presentation.LayoutPolicy
 
 /**
@@ -63,26 +64,30 @@ import dev.charaly.runtime.presentation.LayoutPolicy
  * ## Phone and tablet are intentionally different
  *
  * ```
- *   phone    a floating pill, inset from the edges, over the content
+ *   phone    the V5 bar: five icons over a gradient, at the bottom edge
  *   tablet   a persistent rail on the leading edge
  * ```
  *
  * Never both. A rail *and* a bar on the same screen is the layout mistake this replaces:
- * two navigation surfaces competing for the same attention, with the bar sitting directly
- * above the composer.
+ * two navigation surfaces competing for the same attention.
  *
- * The choice is made by [LayoutPolicy], which is unit tested on the JVM rather than
- * branching on `LocalConfiguration` inside a composable - so "a tablet gets a rail" is a
- * fact a test can assert rather than a detail to rediscover on hardware.
+ * ## V5's bar is icons-only
+ *
+ * Five destinations, each a 48dp target with a content description and no label. The words
+ * are the screen's own vocabulary; the bar's job is to be found by thumb, and an icon row
+ * with five labels under it is a legend, not a control. The Sessions item carries the blue
+ * unread dot - the one colour on the bar that means "new for you".
  */
 @Composable
 fun CharalyScaffold(
     policy: LayoutPolicy,
-    destination: CharalyDestination?,
-    onSelect: (CharalyDestination) -> Unit,
+    tab: Route.Tab?,
+    onSelectTab: (Route.Tab) -> Unit,
     modifier: Modifier = Modifier,
     /** Drawn behind the content: the world's atmosphere. */
     atmosphere: (@Composable () -> Unit)? = null,
+    /** Whether Sessions shows the blue unread dot. */
+    sessionsUnread: Boolean = false,
     snackbarHost: @Composable () -> Unit = {},
     content: @Composable (Modifier) -> Unit,
 ) {
@@ -93,13 +98,14 @@ fun CharalyScaffold(
     ) {
         atmosphere?.invoke()
 
-        val rail = destination != null && policy.navigationRail
+        val rail = tab != null && policy.navigationRail
 
         Row(Modifier.fillMaxSize()) {
             if (rail) {
                 CharalyNavigationRail(
-                    selected = destination,
-                    onSelect = onSelect,
+                    selected = tab,
+                    onSelect = onSelectTab,
+                    sessionsUnread = sessionsUnread,
                 )
             }
             Box(
@@ -111,14 +117,14 @@ fun CharalyScaffold(
             }
         }
 
-        if (destination != null && !rail) {
-            CharalyFloatingNav(
-                selected = destination,
-                onSelect = onSelect,
+        if (tab != null && !rail) {
+            CharalyBottomNav(
+                selected = tab,
+                onSelect = onSelectTab,
+                sessionsUnread = sessionsUnread,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .windowInsetsPadding(WindowInsets.navigationBars)
-                    .padding(Charaly.space.md),
+                    .fillMaxWidth(),
             )
         }
 
@@ -127,39 +133,58 @@ fun CharalyScaffold(
 }
 
 /**
- * The floating navigation pill.
+ * The V5 bottom bar.
  *
- * ## Why it floats
+ * ## Why it is a gradient and not a solid bar
  *
- * A bar pinned to the bottom edge with a solid fill says "this is a utility". A pill
- * inset from the edges, over the content, says "you are looking at something" - and it
- * keeps the artwork beneath it visible, which is the difference between a cinema poster
- * with a caption and a form with a footer.
+ * A solid bar draws a horizon across the artwork; a gradient lets the content dissolve
+ * into the bar's floor so the bar reads as *the bottom of the screen* rather than as a
+ * control laid over it. Icons sit clear of it, on 48dp targets.
  *
- * Labels rather than glyphs alone: four destinations are ambiguous as icons, and the words
- * are the product's vocabulary.
+ * ## The unread dot
+ *
+ * Sessions carries V5's blue dot when something is new. It is the only colour on the bar
+ * that is not white-on-dark, and it is reserved for "new for you" everywhere in the app -
+ * so its meaning is learned once.
  */
 @Composable
-private fun CharalyFloatingNav(
-    selected: CharalyDestination?,
-    onSelect: (CharalyDestination) -> Unit,
+private fun CharalyBottomNav(
+    selected: Route.Tab,
+    onSelect: (Route.Tab) -> Unit,
     modifier: Modifier = Modifier,
+    sessionsUnread: Boolean = false,
 ) {
-    Row(
-        modifier = modifier
-            .clip(CircleShape)
-            .background(Charaly.surface.overlay)
-            .padding(4.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        CharalyDestination.PRIMARY.forEach { destination ->
-            NavItem(
-                destination = destination,
-                isSelected = selected == destination,
-                onClick = { onSelect(destination) },
-                modifier = Modifier.width(74.dp),
-            )
+    Column(modifier = modifier) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(120.dp)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            Color(0x000F0F11),
+                            Charaly.surface.base,
+                        ),
+                    ),
+                ),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Charaly.surface.base)
+                .windowInsetsPadding(WindowInsets.navigationBars)
+                .padding(horizontal = Charaly.space.xl, vertical = Charaly.space.xs),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Route.Tab.entries.forEach { tab ->
+                NavIcon(
+                    tab = tab,
+                    isSelected = tab == selected,
+                    onClick = { onSelect(tab) },
+                    unread = tab == Route.Tab.SESSIONS && sessionsUnread,
+                )
+            }
         }
     }
 }
@@ -167,8 +192,9 @@ private fun CharalyFloatingNav(
 /** The persistent rail, for expanded widths. */
 @Composable
 private fun CharalyNavigationRail(
-    selected: CharalyDestination?,
-    onSelect: (CharalyDestination) -> Unit,
+    selected: Route.Tab?,
+    onSelect: (Route.Tab) -> Unit,
+    sessionsUnread: Boolean = false,
 ) {
     Column(
         modifier = Modifier
@@ -183,72 +209,66 @@ private fun CharalyNavigationRail(
         verticalArrangement = Arrangement.spacedBy(Charaly.space.xs),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        CharalyDestination.PRIMARY.forEach { destination ->
+        Route.Tab.entries.forEach { tab ->
             RailItem(
-                destination = destination,
-                isSelected = selected == destination,
-                onClick = { onSelect(destination) },
+                tab = tab,
+                isSelected = selected == tab,
+                onClick = { onSelect(tab) },
+                unread = tab == Route.Tab.SESSIONS && sessionsUnread,
             )
         }
     }
 }
 
+/** One icon destination in the bar. 48dp, described, no label. */
 @Composable
-private fun NavItem(
-    destination: CharalyDestination,
+private fun NavIcon(
+    tab: Route.Tab,
     isSelected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    unread: Boolean = false,
 ) {
     val tint by animateColorAsState(
-        targetValue = if (isSelected) Charaly.ink.primary else Charaly.ink.muted,
+        targetValue = if (isSelected) Charaly.ink.primary else Color(0xFFCFCFD6),
         animationSpec = tween(motionDuration(Charaly.timing.standard)),
         label = "nav-tint",
     )
+    val description = stringResource(tab.labelRes())
 
-    Column(
+    Box(
         modifier = modifier
+            .size(48.dp)
             .clip(CircleShape)
             .clickable(onClick = onClick)
-            .semantics { contentDescription = destination.label }
-            .padding(vertical = Charaly.space.xs),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(2.dp),
+            .semantics { contentDescription = description },
+        contentAlignment = Alignment.Center,
     ) {
-        Box(contentAlignment = Alignment.Center, modifier = Modifier.size(38.dp)) {
-            // Selection is carried by *shape* as well as colour: a lit disc behind the icon.
-            // Colour alone would leave the destination unreadable to a user who cannot
-            // tell the accent from the muted ink.
-            if (isSelected) {
-                Box(
-                    Modifier
-                        .size(38.dp)
-                        .clip(CircleShape)
-                        .background(Charaly.atmosphere.accent.copy(alpha = 0.16f)),
-                )
-            }
-            Icon(
-                imageVector = iconFor(destination),
-                contentDescription = null,
-                tint = tint,
-                modifier = Modifier.size(if (isSelected) 20.dp else 19.dp),
+        Icon(
+            imageVector = iconFor(tab, filled = isSelected),
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(if (isSelected) 28.dp else 26.dp),
+        )
+        if (unread) {
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 6.dp, end = 6.dp)
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(Charaly.signal.blue),
             )
         }
-        Text(
-            text = destination.label,
-            style = MaterialTheme.typography.labelSmall,
-            color = tint,
-            textAlign = TextAlign.Center,
-            maxLines = 1,
-        )
     }
 }
 
 @Composable
 private fun RailItem(
-    destination: CharalyDestination,
+    tab: Route.Tab,
     isSelected: Boolean,
     onClick: () -> Unit,
+    unread: Boolean = false,
 ) {
     val tint by animateColorAsState(
         targetValue = if (isSelected) Charaly.ink.primary else Charaly.ink.muted,
@@ -257,28 +277,45 @@ private fun RailItem(
     )
     val lift by animateColorAsState(
         targetValue = if (isSelected) {
-            Charaly.atmosphere.accent.copy(alpha = 0.12f)
+            Charaly.ink.primary.copy(alpha = 0.10f)
         } else {
             Color.Transparent
         },
         animationSpec = tween(motionDuration(Charaly.timing.standard)),
         label = "rail-lift",
     )
+    val description = stringResource(tab.labelRes())
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(CharalyShapes.soft)
+            .clip(CircleShape)
             .background(lift)
             .clickable(onClick = onClick)
-            .semantics { contentDescription = destination.label }
+            .semantics { contentDescription = description }
             .padding(vertical = Charaly.space.sm),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Icon(iconFor(destination), contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                imageVector = iconFor(tab, filled = isSelected),
+                contentDescription = null,
+                tint = tint,
+                modifier = Modifier.size(24.dp),
+            )
+            if (unread) {
+                Box(
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(Charaly.signal.blue),
+                )
+            }
+        }
         Text(
-            text = destination.label,
+            text = description,
             style = MaterialTheme.typography.labelSmall,
             color = tint,
             textAlign = TextAlign.Center,
@@ -287,11 +324,26 @@ private fun RailItem(
     }
 }
 
-private fun iconFor(destination: CharalyDestination): ImageVector = when (destination) {
-    CharalyDestination.HOME -> Icons.Outlined.Home
-    CharalyDestination.WORLDS -> Icons.Outlined.Public
-    CharalyDestination.CHAT -> Icons.AutoMirrored.Outlined.Chat
-    CharalyDestination.LIBRARY -> Icons.AutoMirrored.Outlined.MenuBook
+private fun Route.Tab.labelRes(): Int = when (this) {
+    Route.Tab.HOME -> R.string.nav_home
+    Route.Tab.SESSIONS -> R.string.nav_sessions
+    Route.Tab.CREATE -> R.string.nav_create
+    Route.Tab.LIBRARY -> R.string.nav_library
+    Route.Tab.ME -> R.string.nav_me
+}
+
+/**
+ * The bar's icons.
+ *
+ * V5 fills the icon for the two "self" destinations - Home and Me - when they are active,
+ * and outlines the rest. Create is a plus in a ring, unmistakably "make something".
+ */
+private fun iconFor(tab: Route.Tab, filled: Boolean): ImageVector = when (tab) {
+    Route.Tab.HOME -> if (filled) Icons.Filled.Home else Icons.Outlined.Home
+    Route.Tab.SESSIONS -> Icons.AutoMirrored.Outlined.Chat
+    Route.Tab.CREATE -> Icons.Filled.Add
+    Route.Tab.LIBRARY -> Icons.AutoMirrored.Outlined.MenuBook
+    Route.Tab.ME -> if (filled) Icons.Filled.Person else Icons.Outlined.Person
 }
 
 /**
@@ -305,9 +357,9 @@ fun Modifier.statusBarInset(): Modifier =
     this.windowInsetsPadding(WindowInsets.statusBars)
 
 /**
- * Bottom padding that clears the floating navigation pill.
+ * Bottom padding that clears the bottom navigation bar.
  *
- * A screen needs this only if its last element would otherwise sit *under* the pill. The
+ * A screen needs this only if its last element would otherwise sit *under* the bar. The
  * stage does not: its composer is already at the bottom edge, so it hosts no navigation
  * and needs no such padding.
  */
@@ -327,17 +379,21 @@ fun Modifier.navigationInset(policy: LayoutPolicy): Modifier = if (policy.naviga
  */
 @Composable
 internal fun sheetEnter(): androidx.compose.animation.EnterTransition =
-    scaleIn(
+    androidx.compose.animation.scaleIn(
         initialScale = 0.96f,
         animationSpec = tween(motionDuration(Charaly.timing.standard)),
-    ) + fadeIn(animationSpec = tween(motionDuration(Charaly.timing.quick)))
+    ) + androidx.compose.animation.fadeIn(
+        animationSpec = tween(motionDuration(Charaly.timing.quick)),
+    )
 
 @Composable
 internal fun sheetExit(): androidx.compose.animation.ExitTransition =
-    scaleOut(
+    androidx.compose.animation.scaleOut(
         targetScale = 0.98f,
         animationSpec = tween(motionDuration(Charaly.timing.quick)),
-    ) + fadeOut(animationSpec = tween(motionDuration(Charaly.timing.quick)))
+    ) + androidx.compose.animation.fadeOut(
+        animationSpec = tween(motionDuration(Charaly.timing.quick)),
+    )
 
 /** Optical spacing between major sections on a scrolling screen. */
 @Composable

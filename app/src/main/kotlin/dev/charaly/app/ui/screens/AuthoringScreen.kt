@@ -101,7 +101,7 @@ fun AuthoringScreen(
                 )
                 Spacer(Modifier.size(Charaly.space.xs))
                 Text(
-                    text = if (review) "Review" else "Build a world",
+                    text = if (review) "Gözden geçir" else "Bir dünya kur",
                     style = MaterialTheme.typography.headlineLarge,
                     color = Charaly.ink.primary,
                     modifier = Modifier.semantics { heading() },
@@ -112,9 +112,8 @@ fun AuthoringScreen(
         if (!review) {
             item(key = "intro") {
                 Text(
-                    text = "A world is a set of people, places and rules that remember what " +
-                        "happened in them. Start with its name and its pitch; the engine will " +
-                        "build the rest around whatever you write here.",
+                    text = "Bir dünya; insanları, yerleri ve kurallarıyla hatırlayan bir bütündür. " +
+                        "Adı ve önerisiyle başlayın; motor geri kalanını yazdıklarınıza göre kurar.",
                     style = MaterialTheme.typography.bodyLarge,
                     color = Charaly.ink.secondary,
                 )
@@ -122,34 +121,34 @@ fun AuthoringScreen(
 
             item(key = "title-field") {
                 AuthoringField(
-                    label = "Name",
+                    label = "Ad",
                     value = title,
-                    placeholder = "The Last Lighthouse",
+                    placeholder = "Son Fener",
                     onChange = { title = it },
                 )
             }
             item(key = "tagline-field") {
                 AuthoringField(
-                    label = "Tagline",
+                    label = "Slogan",
                     value = tagline,
-                    placeholder = "The light has been out for nine nights.",
+                    placeholder = "Işık dokuz gece söndü.",
                     onChange = { tagline = it },
                 )
             }
             item(key = "premise-field") {
                 AuthoringField(
-                    label = "Premise",
+                    label = "Önerme",
                     value = premise,
-                    placeholder = "One or two sentences on what this world is.",
+                    placeholder = "Bu dünyanın ne olduğunu anlatan bir iki cümle.",
                     onChange = { premise = it },
                     minHeight = 96.dp,
                 )
             }
             item(key = "tone-field") {
                 AuthoringField(
-                    label = "Tone",
+                    label = "Ton",
                     value = tone,
-                    placeholder = "Salt, weather, stubbornness.",
+                    placeholder = "Tuz, hava, inat.",
                     onChange = { tone = it },
                 )
             }
@@ -162,12 +161,12 @@ fun AuthoringScreen(
                 ) {
                     Column(Modifier.weight(1f)) {
                         Text(
-                            text = "Feature this world",
+                            text = "Bu dünyayı öne çıkar",
                             style = MaterialTheme.typography.bodyLarge,
                             color = Charaly.ink.primary,
                         )
                         Text(
-                            text = "Featured worlds rank above the rest in Worlds.",
+                            text = "Öne çıkarılan dünyalar, Dünyalar listesinde üstte yer alır.",
                             style = MaterialTheme.typography.bodySmall,
                             color = Charaly.ink.muted,
                         )
@@ -176,7 +175,7 @@ fun AuthoringScreen(
                         checked = featured,
                         onCheckedChange = { featured = it },
                         modifier = Modifier.semantics {
-                            contentDescription = "Feature this world"
+                            contentDescription = "Bu dünyayı öne çıkar"
                         },
                     )
                 }
@@ -297,8 +296,8 @@ private fun buildPack(
         characters = listOf(
             dev.charaly.runtime.domain.CharacterDefinition(
                 id = dev.charaly.runtime.domain.CharacterId("protagonist"),
-                name = "The one who arrives",
-                tagline = "Whichever role you take.",
+                name = "Gelen kişi",
+                tagline = "Hangi rolü üstlenirseniz üstlenin.",
                 accentHex = dev.charaly.runtime.domain.CharalyAccent.NEUTRAL.primaryHex,
                 startingLocationId = dev.charaly.runtime.domain.LocationId("the-place"),
             ),
@@ -306,8 +305,8 @@ private fun buildPack(
         locations = listOf(
             dev.charaly.runtime.domain.Location(
                 id = dev.charaly.runtime.domain.LocationId("the-place"),
-                name = "The place it starts",
-                summaryLine = "Where every story in this world opens.",
+                name = "Başlayan yer",
+                summaryLine = "Bu dünyadaki her hikâyenin açıldığı yer.",
             ),
         ),
         startTime = dev.charaly.runtime.domain.StoryTime.of(day = 1, hour = 18, minute = 0),

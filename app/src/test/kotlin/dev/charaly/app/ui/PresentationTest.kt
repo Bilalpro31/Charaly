@@ -91,7 +91,7 @@ class PresentationTest {
         assertTrue(snapshot.hasContinue)
         assertEquals(instance.id.value, card!!.storyId)
         assertEquals(3, snapshot.packs.size)
-        assertEquals("10 min ago", card.lastPlayedLabel)
+        assertEquals("10 dk önce", card.lastPlayedLabel)
         assertTrue(card.companionName.isNotBlank())
     }
 
@@ -184,7 +184,7 @@ class PresentationTest {
         )
         assertEquals(0, nothing.visiblePacks)
         assertNotNull(nothing.emptyState)
-        assertEquals("Nothing matches that.", nothing.emptyState!!.title)
+        assertEquals("Bununla eşleşen bir şey yok.", nothing.emptyState!!.title)
     }
 
     @Test
@@ -212,7 +212,7 @@ class PresentationTest {
     fun `library empty state has real copy`() {
         val snapshot = LibraryPresenter.build(nowEpochMs = 1L, packs = emptyList(), instances = emptyList())
         assertNotNull(snapshot.emptyState)
-        assertEquals("No story packs yet.", snapshot.emptyState!!.title)
+        assertEquals("Henüz hikâye paketi yok.", snapshot.emptyState!!.title)
     }
 
     // -------------------------------------------------------- Pack detail
@@ -380,7 +380,7 @@ class PresentationTest {
             phase = dev.charaly.runtime.presentation.GenerationPhase.THINKING,
         )
         assertTrue(snapshot.phaseLabel.startsWith(speaker))
-        assertTrue(snapshot.phaseLabel.contains("thinking"))
+        assertTrue(snapshot.phaseLabel.contains("düşünüyor"))
         assertTrue(snapshot.isGenerating)
         assertFalse(snapshot.composerEnabled)
     }
@@ -460,8 +460,8 @@ class PresentationTest {
     fun `sessions empty state invites the user into a world`() {
         val snapshot = SessionsPresenter.build(1L, emptyList(), packs)
         assertNotNull(snapshot.emptyState)
-        assertEquals("No stories yet.", snapshot.emptyState!!.title)
-        assertEquals("Explore Story Packs", snapshot.emptyState!!.actionLabel)
+        assertEquals("Henüz hikâye yok.", snapshot.emptyState!!.title)
+        assertEquals("Hikâye Paketlerini Keşfet", snapshot.emptyState!!.actionLabel)
     }
 
     // ----------------------------------------------------------- Models
@@ -491,9 +491,9 @@ class PresentationTest {
         )
 
         assertEquals(1, snapshot.installed.size)
-        assertEquals("Ready", snapshot.installed.first().stateLabel)
+        assertEquals("Hazır", snapshot.installed.first().stateLabel)
         assertTrue(snapshot.installed.first().actions.canUse)
-        assertTrue(snapshot.installed.first().detailRows.any { it.label == "Context" })
+        assertTrue(snapshot.installed.first().detailRows.any { it.label == "Bağlam" })
 
         assertTrue(snapshot.recommended.isNotEmpty())
 
@@ -585,7 +585,7 @@ class PresentationTest {
             availableRamBytes = 2_000_000_000L,
         )
         assertEquals("TOO_LARGE", snapshot.verdictLevel)
-        assertTrue(snapshot.verdictMessage.contains("memory"))
+        assertTrue(snapshot.verdictMessage.contains("belle"))
         assertTrue(snapshot.builtInProfiles.isNotEmpty())
     }
 
@@ -607,7 +607,7 @@ class PresentationTest {
             isLoaded = false,
             availableRamBytes = 0L,
         )
-        assertEquals("Could not load", snapshot.stateLabel)
+        assertEquals("Yüklenemedi", snapshot.stateLabel)
         assertFalse(snapshot.actions.canUse)
         assertEquals("This model file could not be loaded.", snapshot.verdictMessage)
     }
@@ -632,12 +632,12 @@ class PresentationTest {
     @Test
     fun `relative time reads like a person wrote it`() {
         val now = 1_700_000_000_000L
-        assertEquals("Just now", RelativeTime.describe(now, now - 5_000L))
-        assertEquals("12 min ago", RelativeTime.describe(now, now - 12 * 60_000L))
-        assertEquals("3 h ago", RelativeTime.describe(now, now - 3 * 3_600_000L))
-        assertEquals("Yesterday", RelativeTime.describe(now, now - 30 * 3_600_000L))
-        assertEquals("3 days ago", RelativeTime.describe(now, now - 3 * 86_400_000L))
-        assertEquals("never", RelativeTime.describe(now, 0L))
+        assertEquals("Şimdi", RelativeTime.describe(now, now - 5_000L))
+        assertEquals("12 dk önce", RelativeTime.describe(now, now - 12 * 60_000L))
+        assertEquals("3 sa önce", RelativeTime.describe(now, now - 3 * 3_600_000L))
+        assertEquals("Dün", RelativeTime.describe(now, now - 30 * 3_600_000L))
+        assertEquals("3 gün önce", RelativeTime.describe(now, now - 3 * 86_400_000L))
+        assertEquals("hiç", RelativeTime.describe(now, 0L))
     }
 
     @Test

@@ -22,8 +22,11 @@
     <!-- Navigation -->
     <string name="nav_home">Ana Sayfa</string>
     <string name="nav_worlds">Dünyalar</string>
-    <string name="nav_chat">Sohbet</string>
+    <string name="nav_chat">Sahne</string>
+    <string name="nav_sessions">Oturumlar</string>
+    <string name="nav_create">Oluştur</string>
     <string name="nav_library">Kitaplık</string>
+    <string name="nav_me">Ben</string>
     <string name="nav_settings">Ayarlar</string>
     <string name="nav_models">Modeller</string>
 
@@ -32,6 +35,23 @@
     <string name="action_cancel">İptal</string>
     <string name="action_retry">Tekrar Dene</string>
     <string name="action_dismiss">Kapat</string>
+
+    <!-- Sessions -->
+    <string name="sessions_title">Oturumlar</string>
+    <string name="sessions_playing_now">Şimdi oynanan</string>
+    <string name="sessions_earlier">Daha önce</string>
+
+    <!-- Library sections -->
+    <string name="library_continue_playing">Oynamaya devam et</string>
+    <string name="library_previously_on">Daha önce…</string>
+    <string name="library_story_packs">Hikâye paketleri</string>
+
+    <!-- Create -->
+    <string name="create_title">Oluştur</string>
+    <string name="create_write_world">Kendi dünyanı yaz</string>
+    <string name="create_write_world_desc">İnsanlar, mekânlar ve bir ilk sahne. Gerisini Charaly halleder.</string>
+    <string name="create_import_character">Karakter içe aktar</string>
+    <string name="create_import_character_desc">SillyTavern kartı (.png veya .json). Önce kartın tamamını görürsünüz.</string>
     <string name="action_back">Geri</string>
     <string name="action_change">Değiştir</string>
     <string name="action_import_gguf">Model İçe Aktar (GGUF)</string>
@@ -45,7 +65,7 @@
 
     <!-- Ana sayfa -->
     <string name="home_worlds">Dünyalar</string>
-    <string name="home_worlds_caption">%1$d dünyaya adım at</string>
+    <string name="home_worlds_caption">%1$d dünyaya adım atın</string>
     <string name="home_your_stories">Hikâyeleriniz</string>
     <string name="home_library">Kitaplık</string>
     <string name="home_browse_worlds">Tüm dünyalara göz at</string>
@@ -79,6 +99,9 @@
     <!-- Sohbet -->
     <string name="chat_leave_story">Hikâyeden çık</string>
     <string name="chat_scene_details">Sahne ayrıntıları</string>
+    <string name="chat_memory">Hafıza</string>
+    <string name="chat_story">Hikâye</string>
+    <string name="chat_fiction_note">Buradaki her şey kurgudur, hikâye tarafından canlı yazılır</string>
     <string name="chat_ways_of_acting">Nasıl davranılır</string>
     <string name="chat_close_ways_of_acting">Nasıl davranılır seçeneğini kapat</string>
     <string name="chat_send">Gönder</string>

@@ -365,9 +365,9 @@ class BenchmarkSpeedVerdictTest {
         assertTrue("18.7 tok/s" in verdict.evidence)
         // The conditions travel with the number, because 18 tok/s on four threads is a
         // different fact from 18 tok/s on an accelerator.
-        assertTrue("4 threads" in verdict.conditions)
+        assertTrue("4 iş parçacığı" in verdict.conditions)
         assertTrue("CPU" in verdict.conditions)
-        assertTrue("measured" in verdict.evidence)
+        assertTrue("ölçüldü" in verdict.evidence)
     }
 
     @Test
@@ -375,7 +375,7 @@ class BenchmarkSpeedVerdictTest {
         val verdict = dev.charaly.runtime.presentation.BenchmarkPresenter.verdict(record = null)
 
         assertEquals(dev.charaly.runtime.presentation.SpeedState.UNMEASURED, verdict.state)
-        assertEquals("Not measured", verdict.label)
+        assertEquals("Ölçülmedi", verdict.label)
         assertFalse(verdict.hasMeasurement)
         assertEquals("", verdict.evidence)
         // "Not measured" is a state, not a dead end: measuring is cheap next to being wrong.
@@ -395,7 +395,7 @@ class BenchmarkSpeedVerdictTest {
         )
         // The device's own name, not a generic "GPU", and the offload count beside it.
         assertTrue("Adreno (TM) 740" in gpu.conditions)
-        assertTrue("20 layers offloaded" in gpu.conditions)
+        assertTrue("20 katman devredildi" in gpu.conditions)
     }
 
     @Test
@@ -411,8 +411,8 @@ class BenchmarkSpeedVerdictTest {
     @Test
     fun `first-token latency and peak memory are shown when measured`() {
         val verdict = dev.charaly.runtime.presentation.BenchmarkPresenter.verdict(measurement())
-        assertTrue("0.2s" in verdict.latencyLabel)
-        assertTrue("peak" in verdict.memoryLabel)
+        assertTrue("0.2 sn" in verdict.latencyLabel)
+        assertTrue("en yüksek" in verdict.memoryLabel)
     }
 
     @Test

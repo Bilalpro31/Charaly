@@ -302,9 +302,9 @@ object MemoryPanelPresenter {
         if (count == 1) "1 $singular" else "$count $plural"
 
     private fun emptyState() = EmptyState(
-        title = "Nothing remembered yet.",
-        body = "Memories appear here as the story accumulates them - what people " +
-            "experienced, and what they decided about you.",
+        title = "Henüz hiçbir şey hatırlanmadı.",
+        body = "Anılar hikâye ilerledikçe burada birikir - insanların ne yaşadığı " +
+            "ve sizin hakkınızda neye karar verdiği.",
         artSeed = "charaly-empty-memory",
     )
 

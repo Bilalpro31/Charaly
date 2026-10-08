@@ -2,7 +2,7 @@ package dev.charaly.app.ui
 
 import dev.charaly.app.ui.nav.CharalyNavigator
 import dev.charaly.app.ui.nav.Route
-import dev.charaly.app.ui.nav.destinationOrNull
+import dev.charaly.app.ui.nav.tabOrNull
 import dev.charaly.runtime.presentation.CharalyDestination
 import dev.charaly.runtime.presentation.ComposerMode
 import dev.charaly.runtime.presentation.LayoutPolicy
@@ -261,7 +261,7 @@ class SourceContractTest {
         val runtime = File(
             "../charaly-runtime/src/main/kotlin/dev/charaly/runtime/presentation/StoryPresenters.kt",
         ).readText()
-        assertEquals("Say", ComposerMode.entries.first().label)
+        assertEquals("Söyle", ComposerMode.entries.first().label)
         // And the stage projects all three player modes rather than only SAY.
         val stage = File(
             "../charaly-runtime/src/main/kotlin/dev/charaly/runtime/presentation/ChatStage.kt",
@@ -338,37 +338,24 @@ class SourceContractTest {
      * vertical hat, which is the thing the brief rules out. Asserted against the source
      * because the sizes are literal `Dp` values in the composable.
      */
+    /**
+     * The worlds feed is gone; V5's Library shows every pack as an equal poster.
+     *
+     * What replaced the weight system is a *poster grid*: every story and every pack at
+     * the same 3:4.1 shape, two columns, because a shelf of worlds is a set you choose
+     * between rather than a headline to be dominated by. The one weight that remains is
+     * the Continue card on Home, which is asserted there.
+     */
     @Test
-    fun `the three feed weights are drawn at three different sizes`() {
-        val source = appText("ui/screens/WorldsScreen.kt")
-        for (weight in WorldWeight.entries) {
-            assertTrue(
-                "the feed screen never branches on $weight, so its weight does nothing",
-                source.contains("WorldWeight.$weight"),
-            )
-        }
-
-        // The three heights, read from the `when` that maps weight to size. Asserted as an
-        // ordering rather than as literals: what matters is that they differ and descend,
-        // not that someone retyped 380.
-        val heights = WorldWeight.entries.map { weight ->
-            val match = Regex("""WorldWeight\.${weight.name} -> ([\d.]+)\.dp""")
-                .find(source)
-            assertNotNull(
-                "no height is declared for $weight, so all three cards are the same size - " +
-                    "which is a grid wearing a vertical hat",
-                match,
-            )
-            match!!.groupValues[1].toFloat()
-        }
-        assertEquals(
-            "two weights share a height, so they are not differentiated",
-            heights.size,
-            heights.distinct().size,
-        )
+    fun `the library draws its posters at one shape rather than a weighted feed`() {
+        val source = appText("ui/screens/LibraryScreen.kt")
         assertTrue(
-            "the feed's heights must descend: $heights",
-            heights.zipWithNext().all { (dominant, next) -> dominant > next },
+            "the poster grid must set one aspect ratio for every cover",
+            source.contains("aspectRatio(3f / 4.1f)"),
+        )
+        assertFalse(
+            "a weight system survived into the poster grid",
+            source.contains("WorldWeight"),
         )
     }
 
@@ -417,7 +404,7 @@ class SourceContractTest {
         ).readText()
         assertTrue(
             "the lobby headline must be the question the brief specifies",
-            runtime.contains("""const val HEADLINE = "Where do you want to go?""""),
+            runtime.contains("""const val HEADLINE = "Nereye gitmek istersiniz?""""),
         )
         // And Home renders it rather than inventing its own.
         val home = appText("ui/screens/HomeScreen.kt")
@@ -499,16 +486,19 @@ class SourceContractTest {
     // ------------------------------------------------------------------
 
     /**
-     * Settings is secondary, reached from Home - not a bar item.
+     * Me is the profile destination, and Settings lives inside it.
      *
-     * In a consumer app a settings destination occupies the same visual weight as the thing
-     * the user came for, and this user came for a world.
+     * V5 puts the self in the bar: a person expects to find their own preferences under
+     * their own profile, and the handoff is explicit that "Models, Me'nin alt ekranıdır
+     * (Me aktif kalır)". What stays true from the previous design is the *weight*: Me is
+     * one icon among five, not a bar item that competes with the stories.
      */
     @Test
     fun `settings is reached from home and not from the bar`() {
-        assertNull(
-            "Settings must not own a navigation destination",
-            Route.Settings.destinationOrNull(),
+        assertEquals(
+            "Settings must resolve to Me, the profile destination",
+            Route.Tab.ME,
+            Route.Settings.tabOrNull(),
         )
         val home = appText("ui/screens/HomeScreen.kt")
         assertTrue(
@@ -516,15 +506,11 @@ class SourceContractTest {
             home.contains("onOpenSettings"),
         )
         val shell = appText("ui/shell/CharalyShell.kt")
-        assertFalse(
-            "the navigation shell must not draw a settings item",
-            shell.contains("Settings"),
-        )
-        // And the bar offers exactly the four, by name.
-        for (destination in CharalyDestination.PRIMARY) {
+        // And the bar offers exactly the five tabs, by name.
+        for (tab in Route.Tab.entries) {
             assertTrue(
-                "the shell does not draw ${destination.label}",
-                shell.contains("${destination.label}") || shell.contains("iconFor(destination)"),
+                "the shell does not draw the ${tab.name} tab",
+                shell.contains("Route.Tab.${tab.name}"),
             )
         }
     }
@@ -538,14 +524,20 @@ class SourceContractTest {
     @Test
     fun `the library offers no swipe to delete`() {
         val library = appText("ui/screens/LibraryScreen.kt")
+        val sessions = appText("ui/screens/SessionsScreen.kt")
         for (forbidden in listOf("swipeable", "SwipeToDismiss", "detectHorizontalDragGestures")) {
             assertFalse(
                 "the library offers `$forbidden`: losing a story must be deliberate",
                 library.contains(forbidden),
             )
+            assertFalse(
+                "the sessions list offers `$forbidden`: losing a story must be deliberate",
+                sessions.contains(forbidden),
+            )
         }
         // And the record screen's delete is behind an explicit control.
-        assertTrue(library.contains("onDelete"))
+        val record = appText("ui/screens/StoryRecordScreen.kt")
+        assertTrue(record.contains("onDelete"))
     }
 
     // ------------------------------------------------------------------

@@ -165,7 +165,7 @@ fun CharacterImportScreen(
                 ) {
                     Text(
                         text = snapshot.error?.detail.orEmpty().ifBlank {
-                            "This file is not a SillyTavern character card."
+                            "Bu dosya bir SillyTavern karakter kartı değil."
                         },
                         style = MaterialTheme.typography.bodyLarge,
                         color = Charaly.ink.primary,
@@ -268,7 +268,7 @@ fun CharacterImportScreen(
                                     (if (card.loreCount == 1) "entry" else "entries") +
                                     " imported with this character."
                             },
-                            emptyText = "This card has no lore entries.",
+                            emptyText = "Bu kartın dünya bilgisi yok.",
                         )
                     }
 

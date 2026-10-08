@@ -565,7 +565,7 @@ class CharalyViewModel(
                         it.copy(
                             hubState = HubSearchState.Failed(
                                 message = error.message?.takeIf { it.isNotBlank() }
-                                    ?: "The model library could not be reached.",
+                                    ?: "Model kütüphanesine ulaşılamadı.",
                                 actionLabel = "Retry",
                                 offline = NetworkCapability.offline(),
                             ),
@@ -642,7 +642,7 @@ class CharalyViewModel(
                             hubDetailState = HubDetailState.Failed(
                                 repoId = repoId,
                                 message = error.message?.takeIf { message -> message.isNotBlank() }
-                                    ?: "This model could not be opened.",
+                                    ?: "Bu model açılamadı.",
                                 offline = NetworkCapability.offline(),
                             ),
                         )
@@ -676,7 +676,7 @@ class CharalyViewModel(
      */
     fun startHubDownload(detail: HubRepoDetail, file: HubFileOption) {
         val services = hub ?: run {
-            _state.update { it.copy(error = "Internet connection required.") }
+            _state.update { it.copy(error = "İnternet bağlantısı gerekli.") }
             return
         }
         val repo = detail.toRepoRecord()
@@ -690,7 +690,7 @@ class CharalyViewModel(
                 ?.ggufFiles
                 ?.firstOrNull { it.path == file.path }
             if (source == null) {
-                _state.update { it.copy(error = "That file is no longer available on the Hub.") }
+                _state.update { it.copy(error = "Bu dosya artık Hub'da mevcut değil.") }
                 return@launch
             }
             val item = ModelHubPresenter.toCatalogItem(repo, source, file.verdict)
@@ -1103,7 +1103,7 @@ class CharalyViewModel(
         val plain = runtime.turnCost(userInputChars = 0, appliedActions = 0).minutes
         val withActions = runtime.turnCost(userInputChars = 0, appliedActions = 2).minutes
         val ceiling = dev.charaly.runtime.session.TurnClockPolicy.MAX_TURN_MINUTES
-        return "A turn costs $plain min, $withActions min with actions, at most $ceiling."
+        return "Sade bir tur $plain dk, eylemlerle $withActions dk, en fazla $ceiling dk sürer."
     }
 
     /** The imported-characters library screen. */
@@ -1125,7 +1125,7 @@ class CharalyViewModel(
                 dev.charaly.runtime.presentation.StoryContextPresenter
                     .timeOfDayLabel(instance.worldClock.now.hour)
                     .takeIf { it.isNotBlank() },
-                "Day ${instance.worldClock.now.day}".takeIf { instance.worldClock.now.day > 1 },
+                "%1${'$'}d. Gün".format(instance.worldClock.now.day).takeIf { instance.worldClock.now.day > 1 },
             ).joinToString(" · "),
             beats = dev.charaly.runtime.presentation.StoryPresenter.build(
                 instance = instance,
@@ -1403,7 +1403,7 @@ class CharalyViewModel(
                     newStoryStep = NewStoryStep.SCENARIO,
                     lastCreatedStoryId = instance.id.value,
                     notice = when (brought) {
-                        0 -> "Stepped into ${instance.displayTitle}"
+                        0 -> "${instance.displayTitle} hikâyesine girildi"
                         1 -> "Stepped into ${instance.displayTitle} with 1 imported character"
                         else -> "Stepped into ${instance.displayTitle} with $brought imported characters"
                     },
@@ -1914,11 +1914,11 @@ class CharalyViewModel(
                         }
 
                         is GenerationUpdate.AppliedAction -> _state.update {
-                            it.copy(notice = "World updated: ${update.changes.joinToString("; ")}")
+                            it.copy(notice = "Dünya güncellendi: ${update.changes.joinToString("; ")}")
                         }
 
                         is GenerationUpdate.RejectedAction -> _state.update {
-                            it.copy(notice = "Ignored an invalid world action: ${update.review.reason}")
+                            it.copy(notice = "Geçersiz bir dünya eylemi yok sayıldı: ${update.review.reason}")
                         }
 
                         is GenerationUpdate.Finished -> {
@@ -1986,7 +1986,7 @@ class CharalyViewModel(
         viewModelScope.launch {
             val (trimmed, lastInput) = runCatching { runtime.prepareRegeneration(story) }.getOrDefault(story to null)
             if (lastInput.isNullOrBlank()) {
-                _state.update { it.copy(notice = "Nothing to regenerate yet") }
+                _state.update { it.copy(notice = "Henüz yeniden üretilecek bir şey yok") }
                 return@launch
             }
             _state.update { it.copy(story = trimmed) }
@@ -2034,7 +2034,7 @@ class CharalyViewModel(
             _state.update {
                 it.copy(
                     story = advanced,
-                    notice = "Clock advanced to ${advanced.worldClock.now.formatClock()}",
+                    notice = "Saat ${advanced.worldClock.now.formatClock()} zamanına ilerledi",
                 )
             }
             refreshInstances()
@@ -2075,7 +2075,7 @@ class CharalyViewModel(
             val branch = runCatching {
                 runtime.duplicateStory(instance, StoryInstanceId("story-${now()}"), nowEpochMs = now())
             }.getOrNull() ?: return@launch
-            _state.update { it.copy(notice = "Branched into ${branch.displayTitle}") }
+            _state.update { it.copy(notice = "${branch.displayTitle} hikâyesine dallanıldı") }
             refreshInstances()
         }
     }
@@ -2097,31 +2097,52 @@ class CharalyViewModel(
             _state.update { it.copy(modelBusy = true, modelImport = ModelImportState.IMPORTING, error = null) }
             models.importFrom(uri)
                 .onSuccess { entry ->
-                    _state.update { it.copy(modelImport = ModelImportState.VERIFYING) }
-                    val registered = models.registerImported(entry, registry, catalog)
+                    // The copy is done; everything after it is registry bookkeeping, and a
+                    // failure there must not take the process down with it. This block used
+                    // to run unguarded: any throw from the registry write or the header
+                    // record escaped the coroutine and closed the app - *after* a
+                    // multi-gigabyte copy had already succeeded, which is the worst possible
+                    // moment for it. Now the same honest failure path serves both halves.
+                    val outcome = runCatching {
+                        _state.update { it.copy(modelImport = ModelImportState.VERIFYING) }
+                        val registered = models.registerImported(entry, registry, catalog)
 
-                    // Read the GGUF header *before* anything asks whether this model can
-                    // run. Without it the registry entry has a blank architecture, and a
-                    // blank architecture is read as "the engine does not know what this is"
-                    // - which turned a perfectly good imported GGUF into a model whose Use
-                    // control was disabled.
-                    readAndRecordHeader(registered)
+                        // Read the GGUF header *before* anything asks whether this model can
+                        // run. Without it the registry entry has a blank architecture, and a
+                        // blank architecture is read as "the engine does not know what this is"
+                        // - which turned a perfectly good imported GGUF into a model whose Use
+                        // control was disabled.
+                        readAndRecordHeader(registered)
 
-                    registry.setActive(registered.id)
-                    val installed = runCatching { registry.list() }.getOrDefault(_state.value.installedModels)
-                    _state.update {
-                        it.copy(
-                            modelBusy = false,
-                            modelImport = ModelImportState.READY,
-                            installedModels = installed,
-                            activeModelId = registered.id,
-                            notice = Loc.t("model.imported_ok", registered.displayName),
-                        )
+                        registry.setActive(registered.id)
+                        registered
                     }
-                    // State is complete and correct *before* the engine is touched, so the
-                    // Continue button is usable immediately even while a multi-gigabyte
-                    // model is still being read into memory.
-                    syncModelState()
+                    outcome.onSuccess { registered ->
+                        val installed = runCatching { registry.list() }.getOrDefault(_state.value.installedModels)
+                        _state.update {
+                            it.copy(
+                                modelBusy = false,
+                                modelImport = ModelImportState.READY,
+                                installedModels = installed,
+                                activeModelId = registered.id,
+                                notice = Loc.t("model.imported_ok", registered.displayName),
+                            )
+                        }
+                        // State is complete and correct *before* the engine is touched, so the
+                        // Continue button is usable immediately even while a multi-gigabyte
+                        // model is still being read into memory.
+                        syncModelState()
+                    }
+                    outcome.onFailure { error ->
+                        _state.update {
+                            it.copy(
+                                modelBusy = false,
+                                modelImport = ModelImportState.NONE,
+                                error = importErrorMessage(error),
+                            )
+                        }
+                        syncModelState()
+                    }
 
                     // IMPORT STOPS HERE.
                     //
@@ -2215,7 +2236,7 @@ class CharalyViewModel(
             }
             val next = installed.firstOrNull { it.id == active }
             engineStatus.value = if (next == null) {
-                EngineStatus.Failed("No model installed yet. Import a GGUF to generate replies.")
+                EngineStatus.Failed("Henüz model yüklü değil. Yanıt üretmek için bir GGUF içe aktarın.")
             } else {
                 loadModel(next)
             }
@@ -2255,7 +2276,7 @@ class CharalyViewModel(
             if (model != null) {
                 loadModel(model)
             }
-            _state.update { it.copy(story = updated, notice = "This story now runs ${profile.name}") }
+            _state.update { it.copy(story = updated, notice = "Bu hikâye artık ${profile.name} profilini kullanıyor") }
             refreshInstances()
         }
     }
@@ -2338,6 +2359,42 @@ class CharalyViewModel(
     private suspend fun loadModelLocked(model: InstalledModel): EngineStatus {
         _state.update { it.copy(modelBusy = true) }
         engineStatus.value = EngineStatus.Loading
+
+        // PRE-FLIGHT, before the native loader is touched.
+        //
+        // Two conditions are cheaper and more honest to catch here than inside
+        // llama.cpp, where the same situation is a crash or a hang rather than a
+        // sentence:
+        //
+        //  * an architecture the engine does not support - the registry records
+        //    this at import time, but a hand-edited or migrated entry can still
+        //    carry one, and the engine's own answer to it is a failed load with
+        //    no explanation;
+        //  * a file larger than the memory the device can offer. llama.cpp maps
+        //    the weights, so this is a heuristic rather than a law - but a model
+        //    that cannot fit even as a mapping will not generate, and the user
+        //    deserves the refusal up front, not a native OOM.
+        //
+        // Unknown memory (0) never refuses: a device that will not report its
+        // free memory must not be unable to load anything at all.
+        if (model.architecture.isNotBlank() &&
+            !dev.charaly.runtime.model.EngineCapabilities.supports(model.architecture)
+        ) {
+            val status = EngineStatus.Failed(Loc.t("model.unsupported_arch"))
+            engineStatus.value = status
+            _state.update { it.copy(modelBusy = false) }
+            runCatching { models.markLoadFailure(registry, model.id, status.reason) }
+            return status
+        }
+        val availableRam = models.availableRamBytes()
+        if (availableRam > 0L && model.sizeBytes > availableRam) {
+            val status = EngineStatus.Failed(Loc.t("error.too_large_model"))
+            engineStatus.value = status
+            _state.update { it.copy(modelBusy = false) }
+            runCatching { models.markLoadFailure(registry, model.id, status.reason) }
+            return status
+        }
+
         val status = when (
             val outcome = runCatching {
                 runtime.loadModel(
@@ -2523,7 +2580,7 @@ class CharalyViewModel(
      */
     fun storyHealth(): String {
         val story = _state.value.story ?: return "No story open."
-        val report = runCatching { runtime.storyHealth(story) }.getOrNull() ?: return "Could not analyse."
+        val report = runCatching { runtime.storyHealth(story) }.getOrNull() ?: return "Analiz edilemedi."
         return buildString {
             appendLine(report.summarise())
             if (report.findings.isEmpty()) return@buildString
@@ -2560,7 +2617,7 @@ fun causalityGraph(): String {
         val story = _state.value.story ?: return "No story open."
         val state = story.worldState
         if (state.causality.isEmpty()) {
-            return "No causal links recorded yet. Every event starts as a cause rather than a reason."
+            return "Henüz nedensel bağ kurulmadı. Her olay, sebep olarak başlar."
         }
         return buildString {
             appendLine("${state.causality.size} links from ${state.eventLog.size} events")
@@ -2643,7 +2700,7 @@ fun causalityGraph(): String {
     fun contextSectionBreakdown(): String {
         val story = _state.value.story ?: return "No story open."
         val sections = runCatching { runtime.contextSections(story) }.getOrNull()
-            ?: return "Could not build a context."
+            ?: return "Bağlam oluşturulamadı."
         if (sections.isEmpty()) return "No context could be built."
         return buildString {
             val total = sections.sumOf { it.chars }

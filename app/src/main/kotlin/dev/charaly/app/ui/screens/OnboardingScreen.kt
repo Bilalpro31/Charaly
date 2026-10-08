@@ -71,20 +71,20 @@ fun OnboardingScreen(onFinish: () -> Unit) {
             OnboardingPage(
                 seed = "charaly-onboarding-stories",
                 title = Loc.t("onboarding.stories_title"),
-                body = "Conversations, memories and worlds are files on this device. " +
-                    "Nothing you write is sent anywhere.",
+                body = "Sohbetler, anılar ve dünyalar bu cihazınızdaki dosyalardır. " +
+                    "Yazdığınız hiçbir şey hiçbir yere gönderilmez.",
             ),
             OnboardingPage(
                 seed = "charaly-onboarding-worlds",
                 title = Loc.t("onboarding.worlds_title"),
-                body = "A world holds people, places and rules that remember what happened " +
-                    "in them. So a story can go somewhere you did not plan.",
+                body = "Bir dünya; insanları, mekânları ve olanı hatırlayan kuralları barındırır. " +
+                    "Böylece bir hikâye, planlamadığınız bir yere gidebilir.",
             ),
             OnboardingPage(
                 seed = "charaly-onboarding-model",
                 title = Loc.t("onboarding.model_title"),
-                body = "Replies come from a model on your phone. Download one, or bring " +
-                    "your own - and with no connection at all, everything else keeps working.",
+                body = "Yanıtlar telefonunuzdaki bir modelden gelir. Bir tane indirin ya da " +
+                    "kendi modelinizi getirin; hiçbir bağlantı olmadan her şey çalışmaya devam eder.",
             ),
         )
     }
@@ -158,7 +158,7 @@ fun OnboardingScreen(onFinish: () -> Unit) {
             Spacer(Modifier.weight(1f))
             if (!isLast) {
                 CharalyQuietAction(
-                    label = "Skip",
+                    label = "Geç",
                     onClick = { index = pages.lastIndex },
                 )
             }
@@ -167,7 +167,7 @@ fun OnboardingScreen(onFinish: () -> Unit) {
         Spacer(Modifier.height(Charaly.space.md))
 
         CharalyAction(
-            label = if (isLast) "Step in" else "Continue",
+            label = if (isLast) "İçeri adım at" else "Devam Et",
             onClick = {
                 if (isLast) onFinish() else index += 1
             },

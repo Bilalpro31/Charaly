@@ -314,10 +314,10 @@ class ModelHubProjectionTest {
 
     @Test
     fun `the status line reads honestly in all four states`() {
-        assertEquals("Local · Offline ready", ModelStagePresenter.statusLine(isOnline = false, hasInstalledModel = true))
-        assertEquals("Local · No model yet", ModelStagePresenter.statusLine(isOnline = false, hasInstalledModel = false))
-        assertEquals("Local · Online", ModelStagePresenter.statusLine(isOnline = true, hasInstalledModel = true))
-        assertEquals("Local · Ready to install", ModelStagePresenter.statusLine(isOnline = true, hasInstalledModel = false))
+        assertEquals("Yerel · Çevrimdışı hazır", ModelStagePresenter.statusLine(isOnline = false, hasInstalledModel = true))
+        assertEquals("Yerel · Henüz model yok", ModelStagePresenter.statusLine(isOnline = false, hasInstalledModel = false))
+        assertEquals("Yerel · Çevrimiçi", ModelStagePresenter.statusLine(isOnline = true, hasInstalledModel = true))
+        assertEquals("Yerel · Yüklemeye hazır", ModelStagePresenter.statusLine(isOnline = true, hasInstalledModel = false))
     }
 
     @Test
@@ -326,11 +326,11 @@ class ModelHubProjectionTest {
         // mode tells the user the *app* is broken.
         assertTrue(
             "offline copy must say installed models still work",
-            ModelStagePresenter.OFFLINE_BODY.contains("Installed models"),
+            ModelStagePresenter.OFFLINE_BODY.contains("Yüklü modeller"),
         )
         assertTrue(
             "offline copy must say worlds and stories still work",
-            ModelStagePresenter.OFFLINE_BODY.contains("world"),
+            ModelStagePresenter.OFFLINE_BODY.contains("dünya"),
         )
         assertTrue(ModelStagePresenter.OFFLINE_TITLE.isNotBlank())
         assertTrue(ModelStagePresenter.OFFLINE_ACTION.isNotBlank())

@@ -58,6 +58,41 @@ class GgufMetadataReaderHardeningTest {
     }
 
     @Test
+    fun `a tokenizer array parses together with the key that follows it`() {
+        // A real GGUF v3 header: tokenizer.ggml.tokens is an ARRAY of STRING with
+        // count 2, followed by general.architecture. The array count is uint64.
+        //
+        // This is the decisive width test. The count above (3) has a zero high
+        // dword, so a reader that wrongly read it as uint32 would still consume
+        // the right number of elements when tail bytes happen to follow - the
+        // existing test cannot tell the two readers apart. Here the second key
+        // only parses if the count was read at full width: a 32-bit read leaves
+        // the high 4 bytes of the count field in the stream, which the reader
+        // then takes for the first element's length, and every later byte is
+        // garbage.
+        val out = ByteArrayOutputStream()
+        out.write("GGUF".toByteArray())
+        le32(out, 3)
+        le64(out, 1L) // tensor count
+        le64(out, 2L) // kv count
+        str(out, "tokenizer.ggml.tokens")
+        le32(out, 9) // GGUF_TYPE_ARRAY
+        le32(out, 8) // elements are STRING
+        le64(out, 2L) // element count: uint64
+        str(out, "<s>")
+        str(out, "</s>")
+        str(out, "general.architecture")
+        le32(out, 8) // STRING
+        str(out, "llama")
+
+        val result = GgufMetadataReader.read(out.toByteArray())
+        assertTrue("expected success, got $result", result.isSuccess)
+        val meta = result.getOrThrow()
+        assertEquals("llama", meta.architecture)
+        assertEquals("[<s>, </s>]", meta.values["tokenizer.ggml.tokens"])
+    }
+
+    @Test
     fun `a huge declared array count is rejected, not allocated`() {
         val bytes = ggufWithArray(elementType = 4, count = 1L shl 40)
         assertTrue(GgufMetadataReader.read(bytes).isFailure)

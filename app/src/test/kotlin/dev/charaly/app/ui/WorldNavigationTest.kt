@@ -3,8 +3,7 @@ package dev.charaly.app.ui
 import dev.charaly.app.ui.nav.CharalyNavigator
 import dev.charaly.app.ui.nav.Route
 import dev.charaly.app.ui.nav.decodeRoute
-import dev.charaly.app.ui.nav.destinationOrNull
-import dev.charaly.runtime.presentation.CharalyDestination
+import dev.charaly.app.ui.nav.tabOrNull
 import dev.charaly.runtime.presentation.NewStoryStep
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -16,14 +15,14 @@ import org.junit.Test
  * THE WORLD FLOW, end to end.
  *
  * ```
- *   WORLDS  ->  SHOWCASE  ->  ENTER WORLD  ->  STAGE
+ *   LIBRARY  ->  SHOWCASE  ->  ENTER WORLD  ->  STAGE
  * ```
  *
  * Three decisions live in this flow and each of them is a place a navigation bug is
  * invisible until a user is standing in it:
  *
  * 1. **The showcase is a destination, not a modal.** It round-trips, so returning to it
- *    after a process death lands on the same world's page rather than on the feed.
+ *    after a process death lands on the same world's page rather than on the shelf.
  * 2. **Entering a world replaces the stack.** Otherwise "back" from inside a story walks
  *    the user back through a form they have already submitted, which reads as the app
  *    forgetting they are in a story.
@@ -46,11 +45,11 @@ class WorldNavigationTest {
     }
 
     @Test
-    fun `the showcase belongs to the same destination as the feed it came from`() {
-        // Not so a bar can be drawn - the showcase hides it - but so returning from it
-        // highlights Worlds rather than leaving the bar unlit.
-        assertEquals(Route.Worlds.destinationOrNull(), Route.Showcase("pack-x").destinationOrNull())
-        assertEquals(CharalyDestination.WORLDS, Route.Showcase("pack-x").destinationOrNull())
+    fun `the showcase hides the bar because it owns the whole display`() {
+        // V5's rule: the pack detail carries its own back affordance and bottom CTA, so
+        // the bar would compete with the poster for the same attention.
+        assertNull(Route.Showcase("pack-x").tabOrNull())
+        assertNull(Route.EnterWorld("pack-x").tabOrNull())
     }
 
     @Test
@@ -71,9 +70,9 @@ class WorldNavigationTest {
     // ------------------------------------------------------------------
 
     @Test
-    fun `the whole world flow walks forward and returns to the feed`() {
+    fun `the whole world flow walks forward and returns to the lobby`() {
         val navigator = CharalyNavigator()
-        navigator.selectTab(Route.Tab.WORLDS)
+        navigator.selectTab(Route.Tab.LIBRARY)
         navigator.navigateTo(Route.Showcase("pack-the-last-kingdom"))
         navigator.navigateTo(Route.EnterWorld("pack-the-last-kingdom"))
         navigator.replaceAll(Route.Stage("story-1"))
@@ -89,14 +88,14 @@ class WorldNavigationTest {
 
     @Test
     fun `leaving the stage with history behind it pops instead`() {
-        // Reached from the library rather than by entering a world, so there is somewhere
-        // real to go back to.
+        // Reached from the sessions list rather than by entering a world, so there is
+        // somewhere real to go back to.
         val navigator = CharalyNavigator()
-        navigator.selectTab(Route.Tab.LIBRARY)
+        navigator.selectTab(Route.Tab.SESSIONS)
         navigator.navigateTo(Route.Stage("story-1"))
 
         assertTrue(navigator.leaveImmersive())
-        assertEquals(Route.Library, navigator.current)
+        assertEquals(Route.Sessions, navigator.current)
     }
 
     @Test
@@ -121,20 +120,20 @@ class WorldNavigationTest {
         // The one place in the flow where back *should* show the previous screen: the user
         // has not entered anything yet, so the form is genuinely cancelable.
         val navigator = CharalyNavigator()
-        navigator.selectTab(Route.Tab.WORLDS)
+        navigator.selectTab(Route.Tab.LIBRARY)
         navigator.navigateTo(Route.Showcase("pack-the-last-kingdom"))
         navigator.navigateTo(Route.EnterWorld("pack-the-last-kingdom"))
 
         assertTrue(navigator.pop())
         assertEquals(Route.Showcase("pack-the-last-kingdom"), navigator.current)
         assertTrue(navigator.pop())
-        assertEquals(Route.Worlds, navigator.current)
+        assertEquals(Route.Library, navigator.current)
     }
 
     @Test
     fun `re-entering a world does not grow the stack without bound`() {
         val navigator = CharalyNavigator()
-        navigator.selectTab(Route.Tab.WORLDS)
+        navigator.selectTab(Route.Tab.LIBRARY)
         val depth = navigator.backStack.size
 
         repeat(10) {
@@ -143,13 +142,13 @@ class WorldNavigationTest {
         }
 
         assertEquals(depth, navigator.backStack.size)
-        assertEquals(Route.Worlds, navigator.current)
+        assertEquals(Route.Library, navigator.current)
     }
 
     @Test
     fun `the world flow survives process recreation with its whole stack`() {
         val navigator = CharalyNavigator()
-        navigator.selectTab(Route.Tab.WORLDS)
+        navigator.selectTab(Route.Tab.LIBRARY)
         navigator.navigateTo(Route.Showcase("pack-neon-district-afterlight"))
         navigator.navigateTo(Route.EnterWorld("pack-neon-district-afterlight"))
 
@@ -169,22 +168,21 @@ class WorldNavigationTest {
     fun `the stage hides the navigation, because the composer wants the bottom edge`() {
         assertNull(
             "a bar or rail on the stage competes with the composer for the same edge",
-            Route.Stage("story-1").destinationOrNull(),
+            Route.Stage("story-1").tabOrNull(),
         )
-        // The Chat route is the one primary destination that keeps its bar, because it is
-        // also what the user lands on when there is no story to show. `CharalyApp` drops it
-        // to null the moment a story is actually on screen.
-        assertEquals(CharalyDestination.CHAT, Route.Chat.destinationOrNull())
+        // The Chat route also hides the bar: it is the stage for the open story, and when
+        // no story is open `CharalyApp` resolves it to Sessions rather than drawing a bar
+        // over a "nothing here yet" screen.
+        assertNull(Route.Chat.tabOrNull())
     }
 
     @Test
-    fun `a stage reached from the library is the same screen as the chat destination`() {
+    fun `a stage reached from the sessions list is the same screen as the chat destination`() {
         // Two routes to one screen is fine; two *versions* of one screen is not, and
         // `CharalyApp` routes both through `ChatRoute`.
         val stageRoute = Route.Stage("story-1")
         assertEquals("stage/story-1", stageRoute.encode())
         assertEquals(Route.Stage("story-1"), dev.charaly.app.ui.nav.decodeRoute(stageRoute.encode()))
-        assertEquals(CharalyDestination.CHAT, Route.Chat.destinationOrNull())
     }
 
     @Test
@@ -217,15 +215,16 @@ class WorldNavigationTest {
 
     @Test
     fun `the world flow never offers a tab root the shell cannot render`() {
-        // The four tab roots are the only routes `selectTab` can land on, so the immersive
+        // The five tab roots are the only routes `selectTab` can land on, so the immersive
         // routes must not be among them.
         val tabRoots: List<Route> = listOf(
             Route.Home,
-            Route.Worlds,
-            Route.Chat,
+            Route.Sessions,
+            Route.Create,
             Route.Library,
+            Route.Settings,
         )
-        assertEquals(4, Route.Tab.entries.size)
+        assertEquals(5, Route.Tab.entries.size)
         assertFalse(
             "the stage must not be a tab root",
             tabRoots.contains(Route.Stage("story-1")),
@@ -239,9 +238,9 @@ class WorldNavigationTest {
             tabRoots.contains(Route.EnterWorld("pack-x")),
         )
         assertEquals(
-            "every tab root must resolve to a destination the shell draws",
-            4,
-            tabRoots.count { it.destinationOrNull() != null },
+            "every tab root must resolve to a tab the shell draws",
+            5,
+            tabRoots.count { it.tabOrNull() != null },
         )
     }
 }

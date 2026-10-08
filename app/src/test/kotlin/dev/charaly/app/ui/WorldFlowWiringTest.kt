@@ -108,17 +108,20 @@ class WorldFlowWiringTest {
         )
         assertTrue(
             "the stage does not project the day",
-            presenter.contains("dayLabel = \"Day ${'$'}{instance.worldClock.now.day}\""),
+            presenter.contains("dayLabel = \"${'$'}{instance.worldClock.now.day}. Gün\""),
         )
 
         val screen = appSource("ui/screens/StageScreen.kt").readText()
+        // V5 renders the clock as the amber pill in the header, and the day in the World
+        // sheet beside it - the header stays one line, the sheet carries the calendar.
         assertTrue(
             "the stage header does not render the clock",
             screen.contains("stage.clockLabel"),
         )
+        val sheets = appSource("ui/sheets/StageSheets.kt").readText()
         assertTrue(
-            "the stage header does not render the day",
-            screen.contains("stage.dayLabel"),
+            "the world sheet does not render the day",
+            sheets.contains("world.dayLabel") || sheets.contains("dayLabel"),
         )
     }
 
@@ -357,7 +360,7 @@ class WorldFlowWiringTest {
         assertTrue("the route cannot be encoded", navigator.contains("CharacterImport -> \"characters/import\""))
         assertTrue("the route cannot be decoded", navigator.contains("Route.CharacterImport"))
         // And it is a full-screen destination, so the navigation pill hides for it.
-        val destinationBlock = navigator.substringAfter("fun Route.destinationOrNull()")
+        val destinationBlock = navigator.substringAfter("fun Route.tabOrNull()")
             .substringBefore("private fun rootOf")
         assertTrue(
             "the import route is not full-screen",
@@ -485,7 +488,7 @@ class WorldFlowWiringTest {
             store.all().isEmpty(),
         )
         // And the presenter renders that absence as words.
-        assertEquals("Not measured", BenchmarkPresenter.verdict(null).label)
+        assertEquals("Ölçülmedi", BenchmarkPresenter.verdict(null).label)
     }
 
     /** A model with no measurement is never shown a speed. */
@@ -504,7 +507,7 @@ class WorldFlowWiringTest {
             downloadsAvailable = true,
             benchmark = null,
         )
-        assertEquals("Not measured", card.speed.label)
+        assertEquals("Ölçülmedi", card.speed.label)
         assertFalse(card.speed.hasMeasurement)
         assertTrue("an unmeasured model must be offered a benchmark", card.canBenchmark)
     }

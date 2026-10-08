@@ -354,15 +354,15 @@ object StoryFeed {
             // A memory stamped slightly ahead of the clock - which happens when the clock
             // is advanced after the fact - is "now", not "in the future". Rendering
             // "-1 hours ago" would be worse than clamping.
-            delta < 0 -> "Just now"
-            delta < 60 -> "Just now"
-            delta < 60 * 4 -> "${delta / 60} hours ago"
-            delta < 60 * 12 -> "Earlier today"
+            delta < 0 -> "Şimdi"
+            delta < 60 -> "Şimdi"
+            delta < 60 * 4 -> "${delta / 60} saat önce"
+            delta < 60 * 12 -> "Bugün daha erken"
             // Under a day: name the part of the day it fell in, which is what "Last
             // night" means in the world's own terms.
-            delta < 60 * 24 -> "Last night"
-            delta < 60 * 36 -> "Yesterday"
-            else -> "${delta / (60 * 24)} days ago"
+            delta < 60 * 24 -> "Dün gece"
+            delta < 60 * 36 -> "Dün"
+            else -> "${delta / (60 * 24)} gün önce"
         }
     }
 

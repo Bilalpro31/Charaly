@@ -182,10 +182,10 @@ data class ModelBenchmark(
  * is [TIER_TOO_SLOW] rather than a bad Fast.
  */
 enum class PerformanceTier(val label: String) {
-    FAST("Fast"),
-    BALANCED("Balanced"),
-    QUALITY("Quality"),
-    TOO_SLOW("Too slow for long scenes"),
+    FAST("Hızlı"),
+    BALANCED("Dengeli"),
+    QUALITY("Kaliteli"),
+    TOO_SLOW("Uzun sahneler için çok yavaş"),
     ;
 
     val isUsable: Boolean get() = this != TOO_SLOW
@@ -268,10 +268,10 @@ object ModelRecommender {
                 tier = tier,
                 basis = RecommendationBasis.MEASURED_ON_THIS_DEVICE,
                 label = when (tier) {
-                    PerformanceTier.TOO_SLOW -> "Too slow for long scenes"
-                    else -> "${tier.label} on this device"
+                    PerformanceTier.TOO_SLOW -> "Uzun sahneler için çok yavaş"
+                    else -> "Bu cihazda ${tier.label}"
                 },
-                evidence = "%.1f tok/s, measured".format(benchmark.tokensPerSecond),
+                evidence = "%.1f tok/s, ölçüldü".format(benchmark.tokensPerSecond),
                 memoryWarning = memoryWarning,
             )
         }
@@ -287,8 +287,8 @@ object ModelRecommender {
                 RecommendationBasis.UNKNOWN
             },
             label = when {
-                memoryWarning.isNotEmpty() -> "Too large for this device"
-                device.hasMemoryFigures -> "Fits your device"
+                memoryWarning.isNotEmpty() -> "Bu cihaz için çok büyük"
+                device.hasMemoryFigures -> "Cihazınıza uygun"
                 else -> ""
             },
             evidence = "",
@@ -312,8 +312,8 @@ object ModelRecommender {
             contextLength = model.contextLength,
         )
         if (needed <= device.availableRamBytes) return ""
-        return "Needs about ${formatBytes(needed)} free; this device reports " +
-            "${formatBytes(device.availableRamBytes)}."
+        return "Yaklaşık ${formatBytes(needed)} boş alan gerekiyor; bu cihaz " +
+            "${formatBytes(device.availableRamBytes)} bildiriyor."
     }
 
     private fun formatBytes(bytes: Long): String = when {

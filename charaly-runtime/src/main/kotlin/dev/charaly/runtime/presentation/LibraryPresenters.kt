@@ -260,7 +260,7 @@ object HomePresenter {
                 progressLabel = progressLabel(instance),
                 sceneLocation = location?.name.orEmpty(),
                 sceneTimeOfDay = StoryContextPresenter.timeOfDayLabel(now.hour),
-                sceneDayLabel = "Day ${now.day}",
+                sceneDayLabel = "${now.day}. Gün",
                 currentBeat = currentBeat,
                 presentNames = presentNames,
                 presenceLabel = StoryContextPresenter.presenceLabel(presentNames.size),
@@ -600,13 +600,13 @@ object LibraryPresenter {
             theme = ResolvedTheme.BRAND,
             emptyState = if (filtered.isEmpty()) {
                 EmptyState(
-                    title = if (packs.isEmpty()) "No story packs yet." else "Nothing matches that.",
+                    title = if (packs.isEmpty()) "Henüz hikâye paketi yok." else "Bununla eşleşen bir şey yok.",
                     body = if (packs.isEmpty()) {
                         "Create a world with characters, places and events, then step inside it."
                     } else {
                         "Try a different search, or clear the filters."
                     },
-                    actionLabel = if (packs.isEmpty()) "Create Story Pack" else "Clear filters",
+                    actionLabel = if (packs.isEmpty()) "Hikâye Paketi Oluştur" else "Filtreleri temizle",
                     artSeed = "charaly-empty-library",
                 )
             } else {
@@ -635,7 +635,7 @@ object LibraryPresenter {
 private fun canonLinesOf(canon: dev.charaly.runtime.domain.CanonBible): List<String> = buildList {
     if (canon.universe.isNotBlank()) add("Setting: ${canon.universe}")
     canon.worldRules.forEach { rule ->
-        add(if (rule.secret) "Secret rule: ${rule.statement}" else "Rule: ${rule.statement}")
+        add(if (rule.secret) "Gizli kural: ${rule.statement}" else "Kural: ${rule.statement}")
         rule.forbids.forEach { add("  never: $it") }
     }
     canon.timeline.forEach { era ->
@@ -868,7 +868,7 @@ object PackDetailPresenter {
 
     fun triggerLabel(event: PackEventDefinition): String = when (val trigger = event.trigger) {
         is dev.charaly.runtime.domain.EventTrigger.StoryStart ->
-            if (trigger.isUniversal) "When the story starts" else "When a chosen opening begins"
+            if (trigger.isUniversal) "Hikâye başladığında" else "Seçilen bir açılış başladığında"
         is dev.charaly.runtime.domain.EventTrigger.AfterDelay -> "${trigger.delayMinutes} min after the start"
         is dev.charaly.runtime.domain.EventTrigger.AtStoryTime -> "At ${trigger.time.storyLabel()}"
         is dev.charaly.runtime.domain.EventTrigger.WhenConditionMet -> "Whenever the world lines up"

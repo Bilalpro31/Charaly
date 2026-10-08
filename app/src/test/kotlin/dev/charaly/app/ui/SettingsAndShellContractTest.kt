@@ -66,22 +66,22 @@ class SettingsAndShellContractTest {
         // GGUF from the Hub. The honest sentence names the permission and what it is for -
         // a user who checks the manifest and finds INTERNET deserves to find the app
         // already told them so.
-        assertEquals("Charaly works on this device.", SettingsPresenter.PRIVACY_HEADLINE)
+        assertEquals("Charaly bu cihazda çalışır.", SettingsPresenter.PRIVACY_HEADLINE)
         assertTrue(
             "the privacy body must say network access exists",
-            SettingsPresenter.PRIVACY_BODY.contains("Network access"),
+            SettingsPresenter.PRIVACY_BODY.contains("Ağ erişimi"),
         )
         assertTrue(
             "the privacy body must say what it is used for",
-            SettingsPresenter.PRIVACY_BODY.contains("model discovery and download"),
+            SettingsPresenter.PRIVACY_BODY.contains("model keşfi ve indirme"),
         )
         assertTrue(
             "the privacy body must say it is optional",
-            SettingsPresenter.PRIVACY_BODY.contains("optional"),
+            SettingsPresenter.PRIVACY_BODY.contains("isteğe bağlı"),
         )
         assertTrue(
             "the privacy body must say what never leaves the device",
-            SettingsPresenter.PRIVACY_BODY.contains("never leave this device"),
+            SettingsPresenter.PRIVACY_BODY.contains("asla bu cihazdan çıkmaz"),
         )
         // And it must not make the claim the manifest disproves.
         for (falsehood in listOf("no internet", "never uses the internet", "fully offline", "no network access")) {
@@ -111,9 +111,9 @@ class SettingsAndShellContractTest {
 
     @Test
     fun `the offline claim names what works with no connection`() {
-        assertTrue(SettingsPresenter.OFFLINE_BODY.contains("no connection"))
-        assertTrue(SettingsPresenter.OFFLINE_BODY.contains("world"))
-        assertTrue(SettingsPresenter.OFFLINE_BODY.contains("story"))
+        assertTrue(SettingsPresenter.OFFLINE_BODY.contains("bağlantı"))
+        assertTrue(SettingsPresenter.OFFLINE_BODY.contains("dünya"))
+        assertTrue(SettingsPresenter.OFFLINE_BODY.contains("hikâye"))
         assertTrue(SettingsPresenter.OFFLINE_BODY.contains("model"))
     }
 
@@ -145,10 +145,10 @@ class SettingsAndShellContractTest {
 
     @Test
     fun `the storage copy counts correctly and hides a zero size`() {
-        assertEquals("0 models · 0 stories", SettingsPresenter.storageBody(0, 0, 0L))
-        assertEquals("1 model · 1 story", SettingsPresenter.storageBody(1, 1, 0L))
+        assertEquals("0 model · 0 hikâye", SettingsPresenter.storageBody(0, 0, 0L))
+        assertEquals("1 model · 1 hikâye", SettingsPresenter.storageBody(1, 1, 0L))
         val withSize = SettingsPresenter.storageBody(2, 5, 2_600_000_000L)
-        assertTrue(withSize.startsWith("2 models · 5 stories"))
+        assertTrue(withSize.startsWith("2 model · 5 hikâye"))
         assertTrue("a real size must be reported", withSize.contains("GB") || withSize.contains("MB"))
     }
 
@@ -185,7 +185,7 @@ class SettingsAndShellContractTest {
         // The rail is a leading-edge column; the bar is bottom-centred. A screen showing
         // both would have both call sites reached.
         assertTrue(scaffold.contains("CharalyNavigationRail("))
-        assertTrue(scaffold.contains("CharalyFloatingNav("))
+        assertTrue(scaffold.contains("CharalyBottomNav("))
     }
 
     @Test
@@ -236,13 +236,15 @@ class SettingsAndShellContractTest {
         val surfaces = CharalySurface()
         assertEquals(Color(0xFF000000), surfaces.void)
         // Each step above black must be *lighter*, not coloured - and strictly monotonic, so
-        // "raised" cannot accidentally be the same value as "elevated".
+        // "raised" cannot accidentally be the same value as "elevated". V5's greys carry a
+        // whisper of blue (up to four points on the blue channel), which reads as depth on
+        // an OLED rather than as a tint, so the neutrality budget allows exactly that much.
         val steps = listOf(surfaces.base, surfaces.raised, surfaces.elevated, surfaces.overlay)
         steps.forEach {
             val r = (it.red * 255).toInt()
             val g = (it.green * 255).toInt()
             val b = (it.blue * 255).toInt()
-            assertTrue("a surface step is tinted ($r,$g,$b)", maxOf(r, g, b) - minOf(r, g, b) <= 1)
+            assertTrue("a surface step is tinted ($r,$g,$b)", maxOf(r, g, b) - minOf(r, g, b) <= 4)
         }
         steps.zipWithNext { lower, upper ->
             assertTrue(
@@ -250,9 +252,11 @@ class SettingsAndShellContractTest {
                 upper.luma() > lower.luma(),
             )
         }
-        // And every step is close enough to black to be *felt* rather than seen.
+        // And every step is close enough to black to be *felt* rather than seen. V5's
+        // surface2 (#2B2B2F) is the ceiling: a pill sitting on the floor is still a
+        // background element, not a raised card.
         steps.forEach {
-            assertTrue("a surface step is too light for a phone ($it)", it.luma() < 0.12f)
+            assertTrue("a surface step is too light for a phone ($it)", it.luma() < 0.175f)
         }
     }
 

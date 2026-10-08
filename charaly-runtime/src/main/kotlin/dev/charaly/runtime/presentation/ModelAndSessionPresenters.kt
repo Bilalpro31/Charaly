@@ -89,13 +89,13 @@ object SessionsPresenter {
             totalCount = instances.size,
             emptyState = if (cards.isEmpty()) {
                 EmptyState(
-                    title = if (instances.isEmpty()) "No stories yet." else "Nothing matches that.",
+                    title = if (instances.isEmpty()) "Henüz hikâye yok." else "Bununla eşleşen bir şey yok.",
                     body = if (instances.isEmpty()) {
                         "Start a story from a Story Pack and it will appear here, ready to pick up."
                     } else {
                         "Try another search term."
                     },
-                    actionLabel = if (instances.isEmpty()) "Explore Story Packs" else "Clear search",
+                    actionLabel = if (instances.isEmpty()) "Hikâye Paketlerini Keşfet" else "Aramayı temizle",
                     artSeed = "charaly-empty-sessions",
                 )
             } else {
@@ -353,7 +353,7 @@ object ModelLibraryPresenter {
                 EmptyState(
                     title = "No models installed.",
                     body = "Import a GGUF from your device and it becomes available to every story.",
-                    actionLabel = "Import GGUF",
+                    actionLabel = "GGUF İçe Aktar",
                     artSeed = "charaly-empty-models",
                 )
             } else {
@@ -405,23 +405,23 @@ object ModelLibraryPresenter {
             displayName = model.displayName,
             sizeLabel = model.sizeLabel,
             originLabel = if (model.origin == dev.charaly.runtime.model.ModelOrigin.DOWNLOADED) {
-                "Downloaded"
+                "İndirildi"
             } else {
-                "Imported"
+                "İçe aktarıldı"
             },
             stateLabel = when {
-                model.compatibility.loadFailed -> "Could not load"
-                isLoaded -> "Ready"
-                model.compatibility.lastLoadedAtEpochMs > 0 -> "Installed"
-                else -> "Installed"
+                model.compatibility.loadFailed -> "Yüklenemedi"
+                isLoaded -> "Hazır"
+                model.compatibility.lastLoadedAtEpochMs > 0 -> "Yüklü"
+                else -> "Yüklü"
             },
             detailRows = buildList {
-                model.architecture.takeIf { it.isNotBlank() }?.let { add(StatChip("Architecture", it)) }
-                model.quantization.takeIf { it.isNotBlank() }?.let { add(StatChip("Quantization", it)) }
-                add(StatChip("Context", "${model.effectiveContextTokens()} tokens"))
-                add(StatChip("Size", model.sizeLabel))
+                model.architecture.takeIf { it.isNotBlank() }?.let { add(StatChip("Mimari", it)) }
+                model.quantization.takeIf { it.isNotBlank() }?.let { add(StatChip("Kuantizasyon", it)) }
+                add(StatChip("Bağlam", "${model.effectiveContextTokens()} token"))
+                add(StatChip("Boyut", model.sizeLabel))
                 if (model.sha256.isNotBlank()) {
-                    add(StatChip("Verified", if (model.verified) "Yes" else "Not verified"))
+                    add(StatChip("Doğrulandı", if (model.verified) "Evet" else "Doğrulanmadı"))
                 }
             },
             speed = speed,
@@ -562,24 +562,24 @@ object ModelLibraryPresenter {
             displayName = model.displayName,
             sizeLabel = model.sizeLabel,
             originLabel = if (model.origin == dev.charaly.runtime.model.ModelOrigin.DOWNLOADED) {
-                "Downloaded"
+                "İndirildi"
             } else {
-                "Imported"
+                "İçe aktarıldı"
             },
             stateLabel = when {
-                model.compatibility.loadFailed -> "Could not load"
-                model.compatibility.engineSupport == EngineSupport.ENGINE_UPDATE_REQUIRED -> "Engine update required"
-                model.compatibility.engineSupport == EngineSupport.UNKNOWN_ARCHITECTURE -> "Engine support unknown"
-                isLoaded -> "Ready"
-                else -> "Installed"
+                model.compatibility.loadFailed -> "Yüklenemedi"
+                model.compatibility.engineSupport == EngineSupport.ENGINE_UPDATE_REQUIRED -> "Motor güncellemesi gerekli"
+                model.compatibility.engineSupport == EngineSupport.UNKNOWN_ARCHITECTURE -> "Motor desteği bilinmiyor"
+                isLoaded -> "Hazır"
+                else -> "Yüklü"
             },
             detailRows = listOf(
-                StatChip("Architecture", model.architecture.ifBlank { "Unknown" }),
-                StatChip("Quantization", model.quantization.ifBlank { "Unknown" }),
-                StatChip("Size", model.sizeLabel),
-                StatChip("Context", "${model.effectiveContextTokens()} tokens"),
-                StatChip("Origin", if (model.origin == dev.charaly.runtime.model.ModelOrigin.DOWNLOADED) "Downloaded" else "Imported"),
-                StatChip("Licence", "As supplied by the publisher"),
+                StatChip("Mimari", model.architecture.ifBlank { "Bilinmiyor" }),
+                StatChip("Kuantizasyon", model.quantization.ifBlank { "Bilinmiyor" }),
+                StatChip("Boyut", model.sizeLabel),
+                StatChip("Bağlam", "${model.effectiveContextTokens()} token"),
+                StatChip("Kaynak", if (model.origin == dev.charaly.runtime.model.ModelOrigin.DOWNLOADED) "İndirildi" else "İçe aktarıldı"),
+                StatChip("Lisans", "Yayıncı tarafından sağlandığı gibi"),
             ),
             verdictMessage = verdict.message,
             verdictLevel = verdict.level.name,

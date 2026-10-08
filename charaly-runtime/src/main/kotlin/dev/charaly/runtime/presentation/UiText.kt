@@ -15,37 +15,37 @@ import kotlin.math.max
  * plain JVM is worth more than putting the formatting next to the composables.
  */
 
-/** "12 min ago", "Yesterday", "3 Mar" - never "null", never an empty string. */
+/** "12 dk önce", "Dün", "3 Mar" - never "null", never an empty string. */
 object RelativeTime {
 
     fun describe(nowEpochMs: Long, thenEpochMs: Long): String {
-        if (thenEpochMs <= 0L) return "never"
+        if (thenEpochMs <= 0L) return "hiç"
         val delta = nowEpochMs - thenEpochMs
         val days = delta / DAY
         return when {
-            delta < 0L -> "just now"
-            delta < MINUTE -> "Just now"
-            delta < HOUR -> "${delta / MINUTE} min ago"
-            delta < 6 * HOUR -> "${delta / HOUR} h ago"
-            // "Yesterday" covers everything from 6 hours ago until two days back,
+            delta < 0L -> "şimdi"
+            delta < MINUTE -> "Şimdi"
+            delta < HOUR -> "${delta / MINUTE} dk önce"
+            delta < 6 * HOUR -> "${delta / HOUR} sa önce"
+            // "Dün" covers everything from 6 hours ago until two days back,
             // which is what a person means by it.
-            days < 2L -> "Yesterday"
-            days < 7 -> "$days days ago"
-            else -> "Earlier"
+            days < 2L -> "Dün"
+            days < 7 -> "$days gün önce"
+            else -> "Daha önce"
         }
     }
 
-    /** Compact form for dense rows: "12m", "3h", "Yesterday". */
+    /** Compact form for dense rows: "12d", "3s", "Dün". */
     fun compact(nowEpochMs: Long, thenEpochMs: Long): String {
-        if (thenEpochMs <= 0L) return "never"
+        if (thenEpochMs <= 0L) return "hiç"
         val delta = nowEpochMs - thenEpochMs
         val days = delta / DAY
         return when {
-            delta < MINUTE -> "now"
-            delta < HOUR -> "${delta / MINUTE}m"
-            delta < 2 * DAY -> "Yesterday"
-            days < 7 -> "${days}d"
-            else -> "Earlier"
+            delta < MINUTE -> "şimdi"
+            delta < HOUR -> "${delta / MINUTE}dk"
+            delta < 2 * DAY -> "Dün"
+            days < 7 -> "${days}g"
+            else -> "Daha önce"
         }
     }
 
@@ -55,21 +55,21 @@ object RelativeTime {
     private const val DAY = 24 * HOUR
 }
 
-/** "Good evening" for the Home greeting, from the device's wall clock. */
+/** "İyi akşamlar" for the Home greeting, from the device's wall clock. */
 fun greetingFor(epochMs: Long): String {
     val hour = java.util.Calendar.getInstance().apply { timeInMillis = epochMs }.get(java.util.Calendar.HOUR_OF_DAY)
     return when (hour) {
-        in 5..11 -> "Good morning"
-        in 12..17 -> "Good afternoon"
-        in 18..21 -> "Good evening"
-        else -> "Good night"
+        in 5..11 -> "Günaydın"
+        in 12..17 -> "İyi günler"
+        in 18..21 -> "İyi akşamlar"
+        else -> "İyi geceler"
     }
 }
 
 /** Story clock label: "18:42", with the day only when it is not the first. */
 fun StoryTime.clockLabel(): String = "%02d:%02d".format(hour, minute)
 
-fun StoryTime.storyLabel(): String = if (day <= 1) clockLabel() else "Day $day · ${clockLabel()}"
+fun StoryTime.storyLabel(): String = if (day <= 1) clockLabel() else "$day. Gün · ${clockLabel()}"
 
 /** Deterministic 32-bit hash: used for stable generated artwork. */
 fun stableSeed(value: String): Int {
@@ -264,14 +264,14 @@ fun plural(count: Int, singular: String, plural: String = singular + "s"): Strin
 
 /** A short, non-technical label for a character's current activity. */
 fun activityLabel(activity: dev.charaly.runtime.domain.CharacterActivity): String = when (activity) {
-    dev.charaly.runtime.domain.CharacterActivity.IDLE -> "Idle"
-    dev.charaly.runtime.domain.CharacterActivity.WORKING -> "Working"
-    dev.charaly.runtime.domain.CharacterActivity.RESTING -> "Resting"
-    dev.charaly.runtime.domain.CharacterActivity.TRAVELLING -> "On the move"
-    dev.charaly.runtime.domain.CharacterActivity.TALKING -> "Talking"
-    dev.charaly.runtime.domain.CharacterActivity.INVESTIGATING -> "Investigating"
-    dev.charaly.runtime.domain.CharacterActivity.FLEEING -> "In danger"
-    dev.charaly.runtime.domain.CharacterActivity.UNKNOWN -> "Unknown"
+    dev.charaly.runtime.domain.CharacterActivity.IDLE -> "Boşta"
+    dev.charaly.runtime.domain.CharacterActivity.WORKING -> "Çalışıyor"
+    dev.charaly.runtime.domain.CharacterActivity.RESTING -> "Dinleniyor"
+    dev.charaly.runtime.domain.CharacterActivity.TRAVELLING -> "Yolda"
+    dev.charaly.runtime.domain.CharacterActivity.TALKING -> "Konuşuyor"
+    dev.charaly.runtime.domain.CharacterActivity.INVESTIGATING -> "Araştırıyor"
+    dev.charaly.runtime.domain.CharacterActivity.FLEEING -> "Tehlikede"
+    dev.charaly.runtime.domain.CharacterActivity.UNKNOWN -> "Bilinmiyor"
 }
 
 /** Clamp used by layouts that must never divide by zero. */

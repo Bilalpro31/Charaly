@@ -2,6 +2,7 @@ package dev.charaly.app.ui.sheets
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
@@ -99,9 +101,21 @@ fun StageSheetContent(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Charaly.surface.raised)
+            .clip(CharalyShapes.sheet)
+            .background(Charaly.surface.base)
             .navigationBarsPadding(),
     ) {
+        // The V5 drag handle: a small bar that says "this layer can be pulled down",
+        // before any content claims the eye. It is the only decoration on the sheet's
+        // top edge - no title strip, no grabber text.
+        Box(
+            Modifier
+                .padding(top = Charaly.space.sm, bottom = Charaly.space.sm)
+                .align(Alignment.CenterHorizontally)
+                .size(width = 40.dp, height = 4.dp)
+                .clip(CharalyShapes.pill)
+                .background(Charaly.surface.elevated),
+        )
         LazyRow(
             contentPadding = PaddingValues(horizontal = Charaly.space.gutter),
             horizontalArrangement = Arrangement.spacedBy(Charaly.space.xs),
@@ -229,7 +243,7 @@ private fun LazyListScope.worldSheet(
     item(key = "where") {
         Column {
             Text(
-                text = location ?: "Somewhere",
+                text = location ?: "Bir yer",
                 style = MaterialTheme.typography.headlineSmall,
                 color = Charaly.ink.primary,
                 modifier = Modifier.semantics { heading() },
@@ -357,7 +371,7 @@ private fun MemoryRow(card: MemoryCard) {
         ) {
             // Importance as a word, never as a number.
             CharalyPill(label = card.importanceLabel, selected = card.importance >= 4)
-            if (card.isSecret) CharalyPill(label = "A secret")
+            if (card.isSecret) CharalyPill(label = "Bir sır")
             Text(
                 text = listOfNotNull(
                     card.ownerName.takeIf { it.isNotBlank() },

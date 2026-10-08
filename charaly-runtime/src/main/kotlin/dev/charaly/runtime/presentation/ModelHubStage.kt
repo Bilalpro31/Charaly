@@ -100,7 +100,7 @@ data class ModelHero(
      * Present so the hero can show "Not measured" as a deliberate state rather than by
      * rendering an empty string and hoping the reader infers the absence.
      */
-    val speed: SpeedVerdict = SpeedVerdict(state = SpeedState.UNMEASURED, label = "Not measured"),
+    val speed: SpeedVerdict = SpeedVerdict(state = SpeedState.UNMEASURED, label = "Ölçülmedi"),
     val isActive: Boolean,
     val isLoaded: Boolean,
     /** One sentence saying what to do about it, or empty when nothing is wrong. */
@@ -153,7 +153,7 @@ data class ModelCard(
      * value: a screen cannot render "18.7 tok/s" without also rendering where it came
      * from. Unmeasured reads "Not measured", and there is no field here for an estimate.
      */
-    val speed: SpeedVerdict = SpeedVerdict(state = SpeedState.UNMEASURED, label = "Not measured"),
+    val speed: SpeedVerdict = SpeedVerdict(state = SpeedState.UNMEASURED, label = "Ölçülmedi"),
     /** Whether a "Measure" control should be offered. False for an unloadable model. */
     val canBenchmark: Boolean = false,
 )
@@ -404,7 +404,7 @@ object ModelStagePresenter {
          * card beneath it does not also show. [measuredPerformance] stays for a caller that
          * has an engine-level measurement of its own.
          */
-        speed: SpeedVerdict = SpeedVerdict(state = SpeedState.UNMEASURED, label = "Not measured"),
+        speed: SpeedVerdict = SpeedVerdict(state = SpeedState.UNMEASURED, label = "Ölçülmedi"),
     ): ModelHero {
         val active = snapshot.installed.firstOrNull { it.isActive }
             ?: snapshot.installed.firstOrNull()
@@ -464,19 +464,19 @@ object ModelStagePresenter {
         publisher = card.originLabel,
         description = card.verdictMessage,
         sizeLabel = card.sizeLabel,
-        architecture = card.detailRows.firstOrNull { it.label == "Architecture" }?.value.orEmpty(),
-        quantization = card.detailRows.firstOrNull { it.label == "Quantization" }?.value.orEmpty(),
-        contextLabel = card.detailRows.firstOrNull { it.label == "Context" }?.value.orEmpty(),
+        architecture = card.detailRows.firstOrNull { it.label == "Mimari" }?.value.orEmpty(),
+        quantization = card.detailRows.firstOrNull { it.label == "Kuantizasyon" }?.value.orEmpty(),
+        contextLabel = card.detailRows.firstOrNull { it.label == "Bağlam" }?.value.orEmpty(),
         stateLabel = when {
-            card.stateLabel == "Could not load" -> "INCOMPATIBLE"
-            card.isLoaded -> "READY"
-            card.isActive -> "ACTIVE"
-            else -> "INSTALLED"
+            card.stateLabel == "Yüklenemedi" -> "UYUMSUZ"
+            card.isLoaded -> "HAZIR"
+            card.isActive -> "ETKİN"
+            else -> "YÜKLÜ"
         },
         actionLabel = when {
-            !card.actions.canUse -> "Unavailable"
-            card.isActive && card.isLoaded -> "In use"
-            else -> "Use model"
+            !card.actions.canUse -> "Kullanılamaz"
+            card.isActive && card.isLoaded -> "Kullanımda"
+            else -> "Modeli kullan"
         },
         blockedReason = card.actions.disabledReason,
         actionIsDownload = false,
@@ -506,11 +506,11 @@ object ModelStagePresenter {
         quantization = "",
         contextLabel = "",
         stateLabel = when {
-            repo.hasChatTemplate -> "COMPATIBLE"
-            else -> "NOT CHECKED"
+            repo.hasChatTemplate -> "UYUMLU"
+            else -> "KONTROL EDİLMEDİ"
         },
-        actionLabel = "Open",
-        blockedReason = if (repo.hasChatTemplate) "" else "Charaly has not checked this one yet.",
+        actionLabel = "Aç",
+        blockedReason = if (repo.hasChatTemplate) "" else "Charaly bunu henüz kontrol etmedi.",
         actionIsDownload = false,
         isActive = false,
         isInstalled = false,
@@ -537,11 +537,11 @@ object ModelStagePresenter {
             ""
         },
         stateLabel = when {
-            file.isInstalled -> "INSTALLED"
-            file.verdict.isUsableNow -> "COMPATIBLE"
+            file.isInstalled -> "YÜKLÜ"
+            file.verdict.isUsableNow -> "UYUMLU"
             file.verdict.compatibility == dev.charaly.runtime.model.gguf.CharalyCompatibility.UNSUPPORTED ->
-                "INCOMPATIBLE"
-            else -> "NOT CHECKED"
+                "UYUMSUZ"
+            else -> "KONTROL EDİLMEDİ"
         },
         actionLabel = file.actionLabel.uppercase(),
         blockedReason = if (file.verdict.canDownload) "" else file.verdict.reason,
@@ -558,17 +558,17 @@ object ModelStagePresenter {
      * Says what still works, because the whole local-first claim is at stake here: a
      * library that reads as broken in airplane mode tells the user the *app* is broken.
      */
-    const val OFFLINE_TITLE = "You're offline."
-    const val OFFLINE_BODY = "Model discovery needs a connection. Installed models, " +
-        "every world and every story keep working."
-    const val OFFLINE_ACTION = "Installed models still work"
+    const val OFFLINE_TITLE = "Çevrimdışısınız."
+    const val OFFLINE_BODY = "Model keşfi bağlantı gerektirir. Yüklü modeller, " +
+        "her dünya ve her hikâye çalışmaya devam eder."
+    const val OFFLINE_ACTION = "Yüklü modeller yine çalışır"
 
     /** The header's status line, in both directions. */
     fun statusLine(isOnline: Boolean, hasInstalledModel: Boolean): String = when {
-        isOnline && hasInstalledModel -> "Local · Online"
-        isOnline -> "Local · Ready to install"
-        hasInstalledModel -> "Local · Offline ready"
-        else -> "Local · No model yet"
+        isOnline && hasInstalledModel -> "Yerel · Çevrimiçi"
+        isOnline -> "Yerel · Yüklemeye hazır"
+        hasInstalledModel -> "Yerel · Çevrimdışı hazır"
+        else -> "Yerel · Henüz model yok"
     }
 
     /** Total on-device footprint, in the user's units. */

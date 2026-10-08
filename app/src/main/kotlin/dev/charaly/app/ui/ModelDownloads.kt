@@ -114,7 +114,7 @@ class ModelDownloads(
             runCatching { client.searchGguf(query = query) }
                 .onSuccess { page -> _repos.value = page.repos }
                 .onFailure { error ->
-                    _searchError.value = error.message ?: "The Hub could not be reached."
+                    _searchError.value = error.message ?: "Hub'a ulaşılamadı."
                 }
             _searching.value = false
         }

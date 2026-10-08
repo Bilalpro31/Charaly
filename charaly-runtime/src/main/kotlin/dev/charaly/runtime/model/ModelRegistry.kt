@@ -62,22 +62,22 @@ data class InstalledModel(
         if (sizeBytes > 0 && availableRamBytes > 0 && sizeBytes > availableRamBytes) {
             return ModelDeviceVerdict(
                 level = DeviceFitLevel.TOO_LARGE,
-                message = "This model may exceed the available device memory.",
+                message = "Bu model, cihazdaki kullanılabilir belleğin üzerine çıkabilir.",
             )
         }
         if (compatibility.loadFailed) {
             return ModelDeviceVerdict(
                 level = DeviceFitLevel.UNSUPPORTED,
-                message = compatibility.failureReason.ifBlank { "This model file could not be loaded." },
+                message = compatibility.failureReason.ifBlank { "Bu model dosyası yüklenemedi." },
             )
         }
         if (architecture.isNotBlank() && !KnownArchitectures.ALL.contains(architecture)) {
             return ModelDeviceVerdict(
                 level = DeviceFitLevel.UNTESTED,
-                message = "Unrecognised architecture ($architecture). Charaly will still try to load it.",
+                message = "Tanınmayan mimari ($architecture). Charaly yine de yüklemeyi deneyecek.",
             )
         }
-        return ModelDeviceVerdict(level = DeviceFitLevel.READY, message = "Ready on this device.")
+        return ModelDeviceVerdict(level = DeviceFitLevel.READY, message = "Bu cihazda hazır.")
     }
 }
 

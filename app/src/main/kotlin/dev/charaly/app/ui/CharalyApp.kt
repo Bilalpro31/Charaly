@@ -20,22 +20,22 @@ import androidx.activity.result.contract.ActivityResultContracts
 import dev.charaly.app.ui.nav.CharalyNavigator
 import dev.charaly.app.ui.nav.Route
 import dev.charaly.app.ui.nav.RouteHost
-import dev.charaly.app.ui.nav.destinationOrNull
+import dev.charaly.app.ui.nav.tabOrNull
 import dev.charaly.app.ui.nav.rememberNavigator
+import dev.charaly.app.ui.screens.CreateScreen
 import dev.charaly.app.ui.screens.EnterWorldScreen
 import dev.charaly.app.ui.screens.HomeScreen
 import dev.charaly.app.ui.screens.LibraryScreen
 import dev.charaly.app.ui.screens.ModelDetailScreen
 import dev.charaly.app.ui.screens.ModelHubScreen
+import dev.charaly.app.ui.screens.SessionsScreen
 import dev.charaly.app.ui.screens.SettingsScreen
 import dev.charaly.app.ui.screens.ShowcaseScreen
+import dev.charaly.app.ui.screens.StoryRecordScreen
 import dev.charaly.app.ui.screens.StageSheet
 import dev.charaly.app.ui.screens.StageScreen
-import dev.charaly.app.ui.screens.StoryRecordScreen
-import dev.charaly.app.ui.screens.WorldsScreen
 import dev.charaly.app.ui.screens.heroHeightFor
 import dev.charaly.app.ui.shell.CharalyScaffold
-import dev.charaly.runtime.presentation.CharalyDestination
 import dev.charaly.runtime.presentation.LayoutPolicy
 
 /**
@@ -89,12 +89,20 @@ fun CharalyApp(
     val navigator = rememberNavigator()
     val snackbar = remember { SnackbarHostState() }
 
+    // The last crash report, read once per composition root. Blank on a device
+    // where the app has never crashed, which is the common case.
+    val context = LocalContext.current
+    val lastCrash = remember {
+        (context.applicationContext as? dev.charaly.app.CharalyApplication)
+            ?.readCrashReport()
+            .orEmpty()
+    }
+
     // Drop decoded artwork when the system asks for memory. Not on navigation, and not on
     // every scene change: the cache exists so the second visit to a location is free, and
     // evicting it on the way out would defeat that. Under real pressure, keeping 8 MB of
     // background is the wrong trade - and llama.cpp's mmap is the thing actually needing
     // the room.
-    val context = androidx.compose.ui.platform.LocalContext.current
     androidx.compose.runtime.DisposableEffect(context) {
         val component = context as? android.app.Activity
         val callback = object : android.content.ComponentCallbacks2 {
@@ -149,13 +157,13 @@ fun CharalyApp(
     // This matters because CHAT and Stage are two routes to one screen. Tapping Chat with no
     // story open should show a navigable "nothing here yet"; the moment a story is open -
     // whether reached by tapping Chat or by opening one from the lobby - the stage owns the
-    // screen and the navigation pill goes away, because the composer wants the bottom edge.
+    // screen and the navigation goes away, because the composer wants the bottom edge.
     // Reading this from `state.story` rather than from a route is what keeps both routes
     // behaving identically.
     val stageOnScreen = state.story != null
-    val destination = when (val route = navigator.current) {
-        Route.Chat -> if (stageOnScreen) null else CharalyDestination.CHAT
-        else -> route.destinationOrNull()
+    val tab = when (val route = navigator.current) {
+        Route.Chat -> if (stageOnScreen) null else Route.Tab.SESSIONS
+        else -> route.tabOrNull()
     }
 
     // System back pops the stack, leaves the stage for the lobby, or leaves the app.
@@ -169,8 +177,8 @@ fun CharalyApp(
 
     CharalyScaffold(
         policy = policy,
-        destination = destination,
-        onSelect = navigator::select,
+        tab = tab,
+        onSelectTab = navigator::select,
         snackbarHost = {
             SnackbarHost(
                 snackbar,
@@ -192,19 +200,24 @@ fun CharalyApp(
                     onContinue = { storyId -> openStory(viewModel, navigator, storyId) },
                     onOpenWorld = { packId -> navigator.navigateTo(Route.Showcase(packId)) },
                     onOpenStory = { storyId -> openStory(viewModel, navigator, storyId) },
-                    onOpenWorlds = { navigator.selectTab(Route.Tab.WORLDS) },
+                    onOpenLibrary = { navigator.select(Route.Tab.LIBRARY) },
                     onOpenModels = { navigator.navigateTo(Route.Models) },
-                    onOpenSettings = { navigator.navigateTo(Route.Settings) },
+                    onOpenSettings = { navigator.select(Route.Tab.ME) },
                 )
 
-                Route.Worlds -> WorldsScreen(
-                    snapshot = viewModel.worldsSnapshot(),
+                Route.Sessions -> SessionsScreen(
+                    shelf = viewModel.libraryShelf(),
                     loading = state.loading,
                     policy = policy,
-                    onQueryChange = viewModel::setWorldsQuery,
-                    onToggleGenre = viewModel::toggleWorldsGenre,
-                    onClearFilters = viewModel::clearWorldsFilters,
-                    onOpenWorld = { packId -> navigator.navigateTo(Route.Showcase(packId)) },
+                    onContinue = { storyId -> openStory(viewModel, navigator, storyId) },
+                    onOpenStory = { storyId -> openStory(viewModel, navigator, storyId) },
+                    onOpenDetails = { storyId -> navigator.navigateTo(Route.StoryRecord(storyId)) },
+                    onOpenLibrary = { navigator.select(Route.Tab.LIBRARY) },
+                )
+
+                Route.Create -> CreateScreen(
+                    onWriteWorld = { navigator.navigateTo(Route.Authoring) },
+                    onImportCharacter = { navigator.navigateTo(Route.CharacterImport) },
                 )
 
                 // CHAT as a destination: the open story, or the most recent one, or an
@@ -235,13 +248,15 @@ fun CharalyApp(
 
                 Route.Library -> LibraryScreen(
                     shelf = viewModel.libraryShelf(),
+                    worlds = viewModel.worldsSnapshot(),
                     loading = state.loading,
                     policy = policy,
                     onQueryChange = viewModel::setLibraryQuery,
                     onContinue = { storyId -> openStory(viewModel, navigator, storyId) },
                     onOpenStory = { storyId -> openStory(viewModel, navigator, storyId) },
                     onOpenDetails = { storyId -> navigator.navigateTo(Route.StoryRecord(storyId)) },
-                    onOpenWorlds = { navigator.selectTab(Route.Tab.WORLDS) },
+                    onOpenWorld = { packId -> navigator.navigateTo(Route.Showcase(packId)) },
+                    onOpenSessions = { navigator.select(Route.Tab.SESSIONS) },
                 )
 
                 is Route.Showcase -> {
@@ -505,6 +520,7 @@ fun CharalyApp(
                         // The same `advance` a real turn takes, so this exercises the event
                         // engine rather than setting a field behind its back.
                         onAdvanceTime = viewModel::advanceClock,
+                        lastCrash = lastCrash,
                     )
                 } else {
                     dev.charaly.app.ui.screens.DeveloperLockedScreen(
@@ -519,7 +535,7 @@ fun CharalyApp(
                     onBack = { navigator.pop() },
                     onSave = { pack ->
                         viewModel.saveCreatedPack(pack)
-                        navigator.replaceAll(Route.Worlds)
+                        navigator.replaceAll(Route.Library)
                     },
                 )
             }

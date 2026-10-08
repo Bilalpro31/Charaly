@@ -7,6 +7,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,12 +37,15 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.outlined.PriorityHigh
+import androidx.compose.material.icons.outlined.Psychology
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import dev.charaly.app.ui.components.tappable
 import androidx.compose.runtime.Composable
 import dev.charaly.runtime.presentation.Loc
 import androidx.compose.runtime.LaunchedEffect
@@ -55,6 +60,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.input.ImeAction
@@ -198,6 +205,23 @@ fun StageScreen(
                     onOpenSheet = onOpenSheet,
                 )
 
+                // V5's scene note: the pack's name and the one-line honesty note, small
+                // and low-contrast under the header. It says whose fiction this is before
+                // the first line of it is read.
+                if (stage.title.isNotBlank()) {
+                    Text(
+                        text = listOfNotNull(
+                            stage.title.takeIf { it.isNotBlank() },
+                            stringResource(R.string.chat_fiction_note),
+                        ).joinToString(" · "),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Charaly.ink.secondary.copy(alpha = 0.62f),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = Charaly.space.lg),
+                    )
+                }
+
                 if (sheet != null) {
                     // The sheet is a layer *over* the scene, drawn inline rather than in a
                     // dialog: a Material bottom sheet dims and detaches the content behind
@@ -308,11 +332,20 @@ fun StageScreen(
 /**
  * The header.
  *
- * ## Why it is this small
+ * ## V5's shape
  *
- * Because the header is chrome, and chrome competes with the fiction. Everything on it is
- * something the reader would otherwise have to guess: who they are with, where they are,
- * and what time it is in the story rather than on the wall.
+ * Back, the story's title (one line, ellipsised), then four glass controls:
+ *
+ * ```
+ *   [ 22:40 ⌄ ]   the amber clock pill - opens the World sheet
+ *   [ brain ]      the Memory sheet
+ *   [ ! ]          the Story sheet
+ *   [ menu ✦ ]     the story controls: Pace, Scene length, Tone
+ * ```
+ *
+ * The clock is amber because it is the one header fact that *moves* while a story is read,
+ * and amber is the reserved signal for "the world is alive". The rest is chrome, and chrome
+ * competes with the fiction - so each control is a 48dp glass target and nothing more.
  */
 @Composable
 private fun StageHeader(
@@ -324,12 +357,7 @@ private fun StageHeader(
         modifier = Modifier
             .fillMaxWidth()
             .windowInsetsPadding(WindowInsets.statusBars)
-            .padding(
-                start = Charaly.space.xs,
-                end = Charaly.space.xs,
-                top = Charaly.space.xs,
-                bottom = Charaly.space.xs,
-            ),
+            .padding(horizontal = Charaly.space.xxs, vertical = Charaly.space.xs),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         CharalyIconButton(
@@ -337,42 +365,51 @@ private fun StageHeader(
             contentDescription = stringResource(R.string.chat_leave_story),
             onClick = onBack,
         )
-        Column(
+        Text(
+            text = stage.title,
+            style = MaterialTheme.typography.titleMedium,
+            color = Charaly.ink.primary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier
                 .weight(1f)
                 .padding(horizontal = Charaly.space.xxs),
-        ) {
-            Text(
-                text = stage.companionName,
-                style = MaterialTheme.typography.titleMedium,
-                color = Charaly.ink.primary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            // "Paris · Evening", and presence when there is any. Two facts, both of which
-            // a reader would otherwise have to infer.
-            //
-            // The clock is in this line on purpose. It is the one header fact that moves
-            // while a story is read, and it is read from the WorldClock rather than
-            // formatted from anything the UI knows - so if the runtime stopped advancing
-            // time, this would stop changing too, visibly, instead of silently lying.
-            Text(
-                text = listOfNotNull(
-                    stage.clockLabel.takeIf { it.isNotBlank() },
-                    stage.contextLine.takeIf { it.isNotBlank() },
-                    stage.dayLabel.takeIf { it.isNotBlank() },
-                    stage.presenceLabel.takeIf { it.isNotBlank() },
-                ).joinToString(" · "),
-                style = MaterialTheme.typography.bodySmall,
-                color = Charaly.ink.muted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+        )
+        // The clock pill: amber, from the WorldClock, opening the World sheet.
+        if (stage.clockLabel.isNotBlank()) {
+            Row(
+                modifier = Modifier
+                    .clip(CharalyShapes.pill)
+                    .background(Charaly.surface.glass)
+                    .tappable { onOpenSheet(StageSheet.WORLD) }
+                    .padding(horizontal = Charaly.space.xs + 2.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = stage.clockLabel,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = Charaly.signal.amber,
+                    maxLines = 1,
+                )
+                Icon(
+                    imageVector = Icons.Filled.KeyboardArrowDown,
+                    contentDescription = null,
+                    tint = Charaly.signal.amber,
+                    modifier = Modifier.size(14.dp),
+                )
+            }
+            Spacer(Modifier.width(2.dp))
         }
         CharalyIconButton(
-            icon = Icons.Filled.MoreHoriz,
-            contentDescription = stringResource(R.string.chat_scene_details),
-            onClick = { onOpenSheet(StageSheet.WORLD) },
+            icon = Icons.Outlined.Psychology,
+            contentDescription = stringResource(R.string.chat_memory),
+            onClick = { onOpenSheet(StageSheet.MEMORY) },
+        )
+        CharalyIconButton(
+            icon = Icons.Outlined.PriorityHigh,
+            contentDescription = stringResource(R.string.chat_story),
+            onClick = { onOpenSheet(StageSheet.STORY) },
         )
     }
 }
@@ -413,30 +450,53 @@ private fun BeatView(
     }
 }
 
+/**
+ * The player's own line, as an editorial block rather than a chat bubble.
+ *
+ * ## The V5 shape
+ *
+ * V5 renders the player's move as a right-aligned block on glass, with the *mode* —
+ * SÖYLE, YAP, DÜŞÜN — as a small amber word before the text. The mode is the
+ * interesting fact: it says what kind of move this was, and it is the one thing a
+ * re-read of the story benefits from seeing again.
+ *
+ * No tail on the corner, no heavy fill: the player's words are the quietest thing
+ * on the stage, because everything else in the world gets the ink.
+ */
 @Composable
 private fun PlayerBeat(beat: Beat) {
-    val text = beat.dialogue.ifBlank { beat.narration }
+    val text = beat.dialogue.ifBlank { beat.narration }.ifBlank { beat.action }
+    val mode = when {
+        beat.action.isNotBlank() -> "YAP"
+        beat.dialogue.isNotBlank() -> "SÖYLE"
+        else -> ""
+    }
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.End,
     ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodyMedium,
-            color = Charaly.ink.secondary,
+        Row(
+            verticalAlignment = Alignment.Top,
             modifier = Modifier
                 .widthIn(max = 420.dp)
-                .clip(
-                    RoundedCornerShape(
-                        topStart = 18.dp,
-                        topEnd = 18.dp,
-                        bottomStart = 18.dp,
-                        bottomEnd = 4.dp,
-                    ),
-                )
-                .background(Charaly.surface.raised)
+                .clip(RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp, bottomStart = 22.dp, bottomEnd = 6.dp))
+                .background(Charaly.surface.glassStrong)
                 .padding(horizontal = Charaly.space.md, vertical = Charaly.space.sm),
-        )
+        ) {
+            if (mode.isNotBlank()) {
+                Text(
+                    text = mode,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Charaly.signal.amber,
+                    modifier = Modifier.padding(top = 3.dp, end = Charaly.space.xs),
+                )
+            }
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodyMedium,
+                color = Charaly.ink.secondary,
+            )
+        }
         if (beat.timeLabel.isNotBlank()) {
             Text(
                 text = beat.timeLabel,
@@ -470,64 +530,76 @@ private fun CharacterBeat(
     assetLoader: dev.charaly.app.ui.art.StoryAssetLoader? = null,
 ) {
     val accent = beat.speakerAccent.toCompose()
-    Column(Modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            // Seeded from the runtime character id, never the display name. Two characters
-            // can share a name; they cannot share an id, and they cannot end up sharing a
-            // face.
-            CharacterMark(
-                seed = beat.speakerPortraitSeed.ifBlank { beat.speakerName },
-                accent = accent,
-                name = beat.speakerName,
-                modifier = Modifier.size(28.dp),
-                // By id, never by the display name: a portrait resolved through "Adrien"
-                // would break the moment the app is used in Turkish.
-                characterId = beat.speakerCharacterId,
-                packId = packId,
-                loader = assetLoader,
-            )
-            Spacer(Modifier.width(Charaly.space.xs))
+    // The V5 shape: the portrait stands outside the text block, and the block itself is
+    // a dark panel with the speaker's name set in amber above their words - amber is the
+    // reserved "the world is alive" signal, and a person speaking is the world being
+    // alive. That panel is what makes a reply read as a *speech in a scene* rather than
+    // as a message in a thread - the whole point of the stage.
+    Row(Modifier.fillMaxWidth()) {
+        // Seeded from the runtime character id, never the display name. Two characters
+        // can share a name; they cannot share an id, and they cannot end up sharing a
+        // face.
+        CharacterMark(
+            seed = beat.speakerPortraitSeed.ifBlank { beat.speakerName },
+            accent = accent,
+            name = beat.speakerName,
+            modifier = Modifier.size(36.dp),
+            // By id, never by the display name: a portrait resolved through "Adrien"
+            // would break the moment the app is used in Turkish.
+            characterId = beat.speakerCharacterId,
+            packId = packId,
+            loader = assetLoader,
+        )
+        Spacer(Modifier.width(Charaly.space.xs))
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 22.dp, bottomStart = 22.dp, bottomEnd = 22.dp))
+                .background(Charaly.surface.raised.copy(alpha = 0.82f))
+                .padding(horizontal = Charaly.space.md, vertical = Charaly.space.sm),
+        ) {
             Text(
                 text = beat.speakerName,
                 style = MaterialTheme.typography.labelMedium,
-                color = accent,
+                color = Charaly.signal.amber,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-        }
-        Spacer(Modifier.height(Charaly.space.xxs))
 
-        if (beat.dialogue.isNotBlank()) {
-            Text(
-                text = "“${beat.dialogue}”",
-                style = MaterialTheme.typography.bodyLarge,
-                color = Charaly.ink.primary,
-                modifier = Modifier.semantics { contentDescription = saysDescription },
-            )
-        }
-        if (beat.action.isNotBlank()) {
-            Text(
-                text = beat.action,
-                style = MaterialTheme.typography.bodyMedium.copy(fontStyle = FontStyle.Italic),
-                color = Charaly.ink.muted,
-                modifier = Modifier.padding(top = 2.dp),
-            )
-        }
-        if (beat.narration.isNotBlank()) {
-            Text(
-                text = beat.narration,
-                style = MaterialTheme.typography.bodyMedium,
-                color = Charaly.ink.prose,
-                modifier = Modifier.padding(top = 2.dp),
-            )
-        }
-        if (beat.timeLabel.isNotBlank()) {
-            Text(
-                text = beat.timeLabel,
-                style = MaterialTheme.typography.bodySmall,
-                color = Charaly.ink.muted,
-                modifier = Modifier.padding(top = 2.dp),
-            )
+            if (beat.dialogue.isNotBlank()) {
+                Text(
+                    text = "“${beat.dialogue}”",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = Charaly.ink.primary,
+                    modifier = Modifier
+                        .padding(top = Charaly.space.xxs)
+                        .semantics { contentDescription = saysDescription },
+                )
+            }
+            if (beat.action.isNotBlank()) {
+                Text(
+                    text = beat.action,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontStyle = FontStyle.Italic),
+                    color = Charaly.ink.muted,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            if (beat.narration.isNotBlank()) {
+                Text(
+                    text = beat.narration,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Charaly.ink.prose,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            if (beat.timeLabel.isNotBlank()) {
+                Text(
+                    text = beat.timeLabel,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Charaly.ink.muted,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
         }
     }
 }
@@ -536,13 +608,18 @@ private fun CharacterBeat(
 private fun NarrationBeat(beat: Beat) {
     val text = beat.dialogue.ifBlank { beat.narration }
     if (text.isBlank()) return
+    // V5: narration sits inside the same dark translucent bubble as speech, but italic
+    // and avatars-less - present in the scene, but not speaking. The bubble keeps the
+    // transcript one rhythm rather than two competing typographies.
     Text(
         text = text,
-        style = MaterialTheme.typography.bodyLarge,
+        style = MaterialTheme.typography.bodyLarge.copy(fontStyle = FontStyle.Italic),
         color = Charaly.ink.prose,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = Charaly.space.md),
+            .clip(RoundedCornerShape(22.dp))
+            .background(Charaly.surface.raised.copy(alpha = 0.74f))
+            .padding(horizontal = Charaly.space.md, vertical = Charaly.space.sm),
     )
 }
 
@@ -560,12 +637,15 @@ private fun SystemBeat(beat: Beat) {
 /**
  * A world moment.
  *
- * ## Sparse, centred, and quiet
+ * ## The amber pulse
+ *
+ * V5 renders the world's own changes as a small amber pill, inset from the left to
+ * line up under the character who speaks. Amber is the reserved signal for "the world
+ * is alive" — it is the one colour on the stage that belongs to nobody in the scene,
+ * so a reader learns that an amber line is the *place* doing something, not a person.
  *
  * Three of these exist at most, and [StoryMoment] already guarantees they came from the
- * engine rather than from a narrator improvising. They are drawn as centred text with a
- * hairline above and below - something a reader's eye crosses on the way past rather than
- * stopping on.
+ * engine rather than from a narrator improvising.
  *
  * The wording is the whole point: "Someone has entered the room", never
  * `CharacterEnteredScene`.
@@ -575,46 +655,48 @@ private fun MomentLine(moment: StoryMoment) {
     // Hoisted for the same reason as the beat description: `semantics {}` is not a
     // @Composable scope.
     val momentDescription = stringResource(R.string.a11y_story_moment, moment.text)
-    Column(
+    val accent = Charaly.atmosphere.accent
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = Charaly.space.xs),
-        horizontalAlignment = Alignment.CenterHorizontally,
+            .padding(start = Charaly.space.section, top = Charaly.space.xxs, bottom = Charaly.space.xxs),
     ) {
-        Box(
-            Modifier
-                .fillMaxWidth(0.18f)
-                .height(1.dp)
-                .background(Charaly.surface.overlay),
-        )
         Text(
             text = moment.text,
-            style = MaterialTheme.typography.bodyMedium,
-            color = Charaly.ink.secondary,
-            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.labelMedium,
+            color = accent,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier
-                .padding(vertical = Charaly.space.sm)
+                .clip(CharalyShapes.pill)
+                .background(accent.copy(alpha = 0.14f))
+                .border(1.dp, accent.copy(alpha = 0.30f), CharalyShapes.pill)
+                .padding(horizontal = Charaly.space.md, vertical = Charaly.space.xs)
                 .semantics { contentDescription = momentDescription },
-        )
-        Box(
-            Modifier
-                .fillMaxWidth(0.18f)
-                .height(1.dp)
-                .background(Charaly.surface.overlay),
         )
     }
 }
 
-/** "Adrien is thinking…" - a person, not a spinner. */
+/**
+ * "Adrien is thinking…" - a person, not a spinner.
+ *
+ * V5 sets this line in the world's amber rather than in muted ink: it is the same
+ * colour as the world's own moments, because while the model runs, the *world* is the
+ * thing that is moving. The spinner keeps the accessibility contract - progress is
+ * information, and it stays animated even under reduced motion.
+ */
 @Composable
 private fun ThinkingLine(label: String) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(horizontal = Charaly.space.xxs),
+    ) {
         CharalySpinner(color = Charaly.atmosphere.accent)
         Spacer(Modifier.width(Charaly.space.xs))
         Text(
             text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = Charaly.ink.muted,
+            style = MaterialTheme.typography.bodySmall,
+            color = Charaly.atmosphere.accent,
         )
     }
 }
@@ -640,9 +722,28 @@ private fun StageComposer(
 ) {
     var text by remember { mutableStateOf("") }
     var mode by remember { mutableStateOf(ComposerMode.SAY) }
-    var showModes by remember { mutableStateOf(false) }
 
     val sendEnabled = text.isNotBlank() && composer.isEnabled
+
+    /**
+     * The V5 composer: the mode lives *inside* the field, as a small amber word before
+     * the text. Tapping it cycles SÖYLE → YAP → DÜŞÜN → …, which is the whole mode
+     * selector - no tab bar, no expandable row, no second control competing with the
+     * keyboard for the thumb.
+     */
+    fun cycleMode() {
+        val modes = composer.modes
+        if (modes.isEmpty()) return
+        mode = modes[(modes.indexOf(mode) + 1).mod(modes.size)]
+    }
+
+    fun send() {
+        val composed = mode.compose(text)
+        if (composed.isNotBlank()) {
+            onSend(composed)
+            text = ""
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -656,33 +757,6 @@ private fun StageComposer(
                 bottom = Charaly.space.xs,
             ),
     ) {
-        AnimatedVisibility(visible = showModes) {
-            Row(
-                modifier = Modifier.padding(bottom = Charaly.space.xs),
-                horizontalArrangement = Arrangement.spacedBy(Charaly.space.xs),
-            ) {
-                composer.modes.forEach { entry ->
-                    CharalyPill(
-                        label = entry.label,
-                        selected = entry == mode,
-                        onClick = { mode = entry },
-                    )
-                }
-            }
-        }
-
-        if (mode != ComposerMode.SAY) {
-            Text(
-                text = mode.hint,
-                style = MaterialTheme.typography.bodySmall,
-                color = Charaly.ink.muted,
-                modifier = Modifier.padding(
-                    start = Charaly.space.sm,
-                    bottom = Charaly.space.xxs,
-                ),
-            )
-        }
-
         // Why the composer is disabled, said out loud. A greyed-out input with no
         // explanation reads as a broken app.
         val blocked = composer.blockedReason()
@@ -699,27 +773,14 @@ private fun StageComposer(
         }
 
         Row(verticalAlignment = Alignment.Bottom) {
-            CharalyIconButton(
-                icon = if (showModes) Icons.Filled.Close else Icons.Filled.Add,
-                contentDescription = stringResource(
-                    if (showModes) R.string.chat_close_ways_of_acting else R.string.chat_ways_of_acting
-                ),
-                onClick = { showModes = !showModes },
-                enabled = !generating,
-            )
-
             ComposerField(
                 value = text,
                 onValueChange = { text = it },
-                placeholder = composer.hint,
+                placeholder = mode.hint.ifBlank { composer.hint },
                 enabled = composer.isEnabled,
-                onSend = {
-                    val composed = mode.compose(text)
-                    if (composed.isNotBlank()) {
-                        onSend(composed)
-                        text = ""
-                    }
-                },
+                modeLabel = mode.label,
+                onCycleMode = { cycleMode() },
+                onSend = ::send,
                 modifier = Modifier.weight(1f),
             )
 
@@ -736,13 +797,7 @@ private fun StageComposer(
                 CharalyIconButton(
                     icon = Icons.AutoMirrored.Filled.Send,
                     contentDescription = Loc.t("chat.send"),
-                    onClick = {
-                        val composed = mode.compose(text)
-                        if (composed.isNotBlank()) {
-                            onSend(composed)
-                            text = ""
-                        }
-                    },
+                    onClick = ::send,
                     enabled = sendEnabled,
                     container = if (sendEnabled) {
                         Charaly.atmosphere.accent
@@ -763,6 +818,13 @@ private fun StageComposer(
  * It is the most-touched object in the product and it should look like somewhere you type,
  * not like a form field.
  *
+ * ## The mode word, inside the field
+ *
+ * V5 puts the acting mode — SÖYLE, YAP, DÜŞÜN — *inside* the field as a small amber
+ * word before the text. Tapping it cycles to the next mode. That single tappable word
+ * replaces an expandable row of pills, which is the "devasa tab bar" the brief bans:
+ * the selector is present exactly where the thumb already is and nowhere else.
+ *
  * Bounded between 52dp and 160dp: a composer that grows toward the middle of the screen
  * pushes the transcript off, which is what an unbounded text field does on a tablet.
  */
@@ -774,35 +836,56 @@ private fun ComposerField(
     enabled: Boolean,
     onSend: () -> Unit,
     modifier: Modifier = Modifier,
+    modeLabel: String = "",
+    onCycleMode: () -> Unit = {},
 ) {
-    Box(
+    Row(
         modifier = modifier
             .clip(CharalyShapes.pill)
             .background(Charaly.surface.raised)
             .padding(horizontal = Charaly.space.md, vertical = Charaly.space.sm)
             .heightIn(min = 52.dp, max = 160.dp),
-        contentAlignment = Alignment.CenterStart,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Charaly.space.xs),
     ) {
-        if (value.isEmpty()) {
+        if (modeLabel.isNotBlank()) {
             Text(
-                text = placeholder,
-                style = MaterialTheme.typography.bodyMedium,
-                color = Charaly.ink.muted,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.semantics { contentDescription = Loc.t("chat.your_line") },
+                text = modeLabel,
+                style = MaterialTheme.typography.labelMedium,
+                color = Charaly.atmosphere.accent,
+                maxLines = 1,
+                modifier = Modifier
+                    .clip(CharalyShapes.pill)
+                    .clickable(onClick = onCycleMode)
+                    .padding(vertical = Charaly.space.xs)
+                    .semantics {
+                        role = Role.Button
+                        contentDescription = Loc.t("action.ways_of_acting")
+                    },
             )
         }
-        BasicTextField(
-            value = value,
-            onValueChange = onValueChange,
-            enabled = enabled,
-            textStyle = MaterialTheme.typography.bodyMedium.copy(color = Charaly.ink.primary),
-            cursorBrush = SolidColor(Charaly.atmosphere.accent),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
-            maxLines = 5,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+            if (value.isEmpty()) {
+                Text(
+                    text = placeholder,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Charaly.ink.muted,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.semantics { contentDescription = Loc.t("chat.your_line") },
+                )
+            }
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                enabled = enabled,
+                textStyle = MaterialTheme.typography.bodyMedium.copy(color = Charaly.ink.primary),
+                cursorBrush = SolidColor(Charaly.atmosphere.accent),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
+                maxLines = 5,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }
 }
 
@@ -849,7 +932,7 @@ private fun FailureSurface(
             }
             if (failure.detail.isNotBlank()) {
                 CharalyQuietAction(
-                    label = if (showDetail) "Hide details" else "Details",
+                    label = if (showDetail) "Ayrıntıları gizle" else "Ayrıntılar",
                     onClick = { showDetail = !showDetail },
                     contentColor = MaterialTheme.colorScheme.onErrorContainer,
                 )
@@ -896,7 +979,7 @@ private fun StageContextPane(
                     color = Charaly.ink.muted,
                 )
                 Text(
-                    text = stage.contextLine.ifBlank { "Somewhere" },
+                    text = stage.contextLine.ifBlank { "Bir yer" },
                     style = MaterialTheme.typography.titleMedium,
                     color = Charaly.ink.primary,
                     modifier = Modifier.padding(top = 2.dp),
@@ -995,18 +1078,30 @@ private fun StageMissing(loading: Boolean, onBack: () -> Unit) {
     }
 }
 
-/** A stage's context sheets. Four, named after the four questions. */
+/** A stage's context sheets. The four questions, plus the two tools. */
 enum class StageSheet(val title: String, val caption: String) {
-    WORLD("World", "Where you are, and what is around you"),
-    MEMORY("Memory", "What they remember about you"),
-    PEOPLE("People", "Who is here, and how they stand toward you"),
-    STORY("Story", "What is unresolved"),
+    WORLD("Dünya", "Nerede olduğunuz ve etrafınızda ne var"),
+    MEMORY("Hafıza", "Onlar sizi nasıl hatırlıyor"),
+    PEOPLE("İnsanlar", "Burada kimler var ve size nasıl duruyorlar"),
+    STORY("Hikâye", "Ne çözülmemiş olarak duruyor"),
     ;
 
     companion object {
         /** The four, in sheet order. */
         val PLAYER_FACING: List<StageSheet> = listOf(WORLD, MEMORY, PEOPLE, STORY)
     }
+}
+
+/**
+ * The stage's two tool sheets - not among the four questions, but reachable from the
+ * composer's affordances: letting time pass, and tuning the story's controls.
+ */
+enum class StageToolSheet {
+    /** +10 minutes, +1 hour, until morning. The clock moves only through the engine. */
+    SKIP_TIME,
+
+    /** Pace, scene length, tone - segment selectors, persisted per story. */
+    CONTROLS,
 }
 
 /** The sheet host, drawn by the stage. Declared here to keep the stage file self-contained. */

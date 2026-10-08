@@ -288,7 +288,7 @@ fun SettingsScreen(
             SettingsGroup(SettingsSection.ADVANCED) {
                 SettingSwitch(
                     title = Loc.t("settings.developer_mode"),
-                    caption = "Engine state, prompts and event logs. Off by default.",
+                    caption = "Motor durumu, istemler ve olay günlükleri. Varsayılan kapalı.",
                     checked = developerMode,
                     contentDescription = Loc.t("settings.developer_mode"),
                     onCheckedChange = onSetDeveloperMode,

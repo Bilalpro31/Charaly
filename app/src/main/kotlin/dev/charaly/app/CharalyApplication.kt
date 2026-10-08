@@ -116,6 +116,9 @@ class CharalyApplication : Application() {
          * between a cache that holds the working set and one that thrashes.
          */
         private const val MAX_BACKGROUND_WIDTH_PX = 1440
+
+        /** The single crash record, in app-private storage. */
+        const val CRASH_FILE = "last-crash.txt"
     }
 
     /**
@@ -174,6 +177,30 @@ class CharalyApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // The last line of defence for a crash the app did not catch itself.
+        //
+        // ## What this can and cannot see
+        //
+        // This handler observes *uncaught Java/Kotlin throwables* - the ones that
+        // escape a coroutine scope, a thread, or the main looper. It is installed
+        // before anything else starts, so even a crash during the restore below
+        // is recorded.
+        //
+        // It CANNOT see native crashes. A SIGSEGV or SIGABRT inside llama.cpp is
+        // delivered as a signal to the process, not as a Java throwable, and no
+        // Java handler runs for it - the kernel kills the process first. Those
+        // crashes are recorded by the platform as tombstones in logcat, not here.
+        // This file is for the Kotlin half of the app, and it is honest about
+        // that limit rather than pretending to be a crash reporter.
+        //
+        // The previous handler is always invoked after the report is written, so
+        // the system's own crash dialog and process death still happen exactly as
+        // they did before - this only adds a record, it does not swallow anything.
+        val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            runCatching { writeCrashReport(thread, throwable) }
+            previousHandler?.uncaughtException(thread, throwable)
+        }
         // Warm the repositories on a background thread: launching the app must
         // never require the network, and must not block the main thread.
         Thread(
@@ -186,6 +213,50 @@ class CharalyApplication : Application() {
             start()
         }
     }
+
+    /**
+     * Writes the last uncaught exception to app-private storage.
+     *
+     * One file, overwritten each time: the interesting crash is always the most
+     * recent one, and a phone that just lost a multi-gigabyte import to a crash
+     * has no room for a crash archive. The write is synchronous and wrapped -
+     * a crash handler that throws would replace one crash with another.
+     */
+    private fun writeCrashReport(thread: Thread, throwable: Throwable) {
+        val timestamp = java.text.SimpleDateFormat(
+            "yyyy-MM-dd HH:mm:ss",
+            java.util.Locale.US,
+        ).format(java.util.Date())
+        val report = buildString {
+            appendLine("Charaly crash report")
+            appendLine("Time: $timestamp")
+            appendLine("Thread: ${thread.name}")
+            appendLine()
+            appendLine(throwable.stackTraceToString())
+            // The cause chain matters as much as the top frame: an import that
+            // failed inside a registry write surfaces as the write's exception,
+            // and the real story is one level down.
+            var cause = throwable.cause
+            while (cause != null) {
+                appendLine()
+                appendLine("Caused by: ${cause.stackTraceToString()}")
+                cause = cause.cause
+            }
+        }
+        java.io.File(filesDir, CRASH_FILE).writeText(report)
+    }
+
+    /**
+     * The last crash report, or blank when the app has never crashed.
+     *
+     * Read by the developer panel, which is the one place a raw stack trace
+     * belongs: it is behind Developer Mode, and it is the first thing to look at
+     * when a user reports "the app closed".
+     */
+    fun readCrashReport(): String = runCatching {
+        java.io.File(filesDir, CRASH_FILE).takeIf { it.isFile }?.readText().orEmpty()
+    }.getOrDefault("")
+
 }
 
 /**
