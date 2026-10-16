@@ -38,6 +38,38 @@ interface CardFileReader {
     fun read(uri: Uri): ByteArray
 }
 
+/**
+ * Writes a file the user asked for through the system's "save as" sheet.
+ *
+ * The mirror image of [CardFileReader], and a port for the same reason: exporting a story
+ * pack is "produce bytes, hand them to a uri", and only the second half needs a
+ * `ContentResolver`. Keeping the write behind an interface means the export decision - what
+ * to serialize, what to call the file - stays testable on the JVM, and a test can assert
+ * that a failed write is reported rather than swallowed.
+ */
+interface PackFileWriter {
+
+    /**
+     * Writes [bytes] to the picked destination.
+     *
+     * Throws on failure rather than returning a flag the caller can ignore: a silently
+     * failed export is a file the user believes they have and does not.
+     */
+    fun write(uri: Uri, bytes: ByteArray)
+}
+
+/** The real implementation: a `ContentResolver` stream to the SAF-created document. */
+class ContentResolverPackFileWriter(
+    private val context: Context,
+) : PackFileWriter {
+
+    override fun write(uri: Uri, bytes: ByteArray) {
+        val stream = context.contentResolver.openOutputStream(uri, "wt")
+            ?: error("could not open the destination file")
+        stream.use { output -> output.write(bytes) }
+    }
+}
+
 /** The real implementation: the Storage Access Framework, with no storage permission asked for. */
 class ContentResolverCardFileReader(
     private val context: Context,

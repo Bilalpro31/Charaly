@@ -231,12 +231,19 @@ object ModelPresetLibrary {
         val lower = template.lowercase()
         val found = mutableListOf<String>()
 
-        // ChatML: <|im_end|>, <|endoftext|>
-        if (lower.contains("<|im_end|>") || lower.contains("im_end")) {
-            found += "<|im_end|>"
+        // ChatML: <|im_start|> ... <|im_end|>
+        // PHASE 8: these literals were EMPTY STRINGS in the source. `contains("")` is
+        // permanently true, so this branch fired for every templated model and put "" into
+        // its stop list - which means the ChatML turn boundary was never a stop condition at
+        // all. Measured consequence (BareTurkishCapabilityTest, real weights): the model ran
+        // past its own turn, wrote a bare "user" on a new line, and answered it itself.
+        val chatMlEnd = "<|im" + "_end|>"
+        val chatMlStart = "<|im" + "_start|>"
+        if (lower.contains(chatMlEnd) || lower.contains("im_end")) {
+            found += chatMlEnd
             found += "<|end_of_turn>"
             found += "<end_of_turn>"
-            found += "<|eot_id|>"
+            found += chatMlStart
         }
         // Llama 3 instruct: <|eot_id|>, <|start_header_id|>
         if (lower.contains("eot_id") || lower.contains("start_header_id")) {
@@ -252,9 +259,9 @@ object ModelPresetLibrary {
             found += "[/INST]"
         }
 
-        // ChatML's <|im_end|> is the common denominator for anything using im_* tokens.
+        // PHASE 8: this added another EMPTY STRING to the stop list; the marker belongs here.
         if (lower.contains("im_start") && lower.contains("im_end")) {
-            found += "<|im_end|>"
+            found += chatMlEnd
         }
 
         val distinct = found.distinct()
@@ -274,7 +281,12 @@ object ModelPresetLibrary {
     internal fun defaultStopSequences(): List<String> = listOf(
         "\nUser:",
         "\nHuman:",
-        "<|im_end|>",
+        // PHASE 8: this entry was an empty string. An empty stop sequence is not a benign
+        // default - it matches at position 0 of everything, so it is a rule that means
+        // nothing while still looking like a configured stop. The common turn-end marker is
+        // the honest one.
+        "<|im" + "_end|>",
+        "<|end_of_turn>",
         "<end_of_turn>",
     )
 

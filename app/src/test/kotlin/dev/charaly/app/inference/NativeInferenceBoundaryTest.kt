@@ -218,6 +218,8 @@ class NativeInferenceBoundaryTest {
             "generate",
             "stopGeneration",
             "lastError",
+            "lastGenerateStats",
+            "applyChatTemplate",
             "benchmark",
             "availableBackends",
         )

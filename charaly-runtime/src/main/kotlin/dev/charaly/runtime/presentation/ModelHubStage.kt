@@ -264,7 +264,10 @@ object ModelStagePresenter {
 
     /** One word for the state. Never a sentence, never blank. */
     fun stateLabel(model: dev.charaly.runtime.model.ModelSelection): String = when {
+        model.lifecycle == dev.charaly.runtime.model.ModelLifecycle.LOAD_FAILED ->
+            Loc.t("model.could_not_load")
         !model.canGenerate -> Loc.t("model.could_not_load")
+        model.lifecycle == dev.charaly.runtime.model.ModelLifecycle.LOADING -> Loc.t("model.loading")
         model.isResident -> Loc.t("model.loaded")
         else -> Loc.t("model.installed")
     }
@@ -279,11 +282,23 @@ object ModelStagePresenter {
     fun reason(model: dev.charaly.runtime.model.ModelSelection): String = when (model.blocked) {
         dev.charaly.runtime.model.ModelBlockReason.NONE -> ""
         dev.charaly.runtime.model.ModelBlockReason.NOT_INSTALLED -> Loc.t("chat.needs_model")
-        dev.charaly.runtime.model.ModelBlockReason.FILE_MISSING -> Loc.t("model.file_missing")
+        dev.charaly.runtime.model.ModelBlockReason.FILE_MISSING ->
+            // Two genuinely different situations wear this one hat. A file that vanished
+            // is a storage problem; a story pointing at a model the registry no longer has
+            // is a binding problem, and "the model file is missing" sent people into their
+            // file manager looking for a file that was never going to be there.
+            if (model.unresolvedBindingId.isNotBlank()) {
+                Loc.t("model.missing_for_story")
+            } else {
+                Loc.t("model.file_missing")
+            }
         dev.charaly.runtime.model.ModelBlockReason.LOAD_FAILED ->
             model.loadFailure.ifBlank { Loc.t("model.load_failed") }
         dev.charaly.runtime.model.ModelBlockReason.UNSUPPORTED ->
-            Loc.t("model.unsupported_arch") + " (" + model.architecture + ")"
+            // The architecture's raw identifier used to be printed in brackets here. It is
+            // an internal handle, and "Desteklenmeyen mimari (qwen3)" is a sentence that
+            // only helps someone with a debugger open. The name of the file is upstream.
+            Loc.t("model.unsupported_arch")
     }
 
     /**

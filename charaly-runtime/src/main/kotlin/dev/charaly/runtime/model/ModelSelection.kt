@@ -67,15 +67,31 @@ data class ModelSelection(
      * A human-readable reason the last load attempt failed, or empty.
      *
      * Recorded from the engine, never from an exception's `toString()`.
+     *
+     * This is *history*, not a prohibition - see [canGenerate].
      */
     val loadFailure: String = "",
+    /**
+     * The id a story is bound to that no longer resolves to any installed model.
+     *
+     * Set only when a binding names a model the registry does not have. Distinct from
+     * [filePresent] because the two call for different sentences: "your file was deleted"
+     * and "this story is bound to a model that is not on this device any more".
+     */
+    val unresolvedBindingId: String = "",
 ) {
     /** Something is bound. Not the same as "it will run". */
     val isBound: Boolean get() = modelId.isNotBlank()
 
-    /** Why this story cannot generate, or [ModelBlockReason.NONE]. */
+    /**
+     * Why this story cannot generate, or [ModelBlockReason.NONE].
+     *
+     * Ordered so the *newest* fact wins: a file that vanished outranks a stale note about
+     * a load that failed weeks ago.
+     */
     val blocked: ModelBlockReason
         get() = when {
+            !isBound && unresolvedBindingId.isNotBlank() -> ModelBlockReason.FILE_MISSING
             !isBound -> ModelBlockReason.NOT_INSTALLED
             !filePresent -> ModelBlockReason.FILE_MISSING
             loadFailure.isNotBlank() -> ModelBlockReason.LOAD_FAILED
@@ -86,20 +102,67 @@ data class ModelSelection(
     /**
      * Whether a turn can be requested at all.
      *
-     * True the moment a usable model is bound - including while it is still loading. The
-     * runtime loads it lazily; asking the user to connect a model that is already
-     * selected is the bug this replaces.
+     * True the moment a usable model is bound - including while it is still loading, and
+     * including after a load attempt failed.
+     *
+     * ## Why LOAD_FAILED is not a lock
+     *
+     * It used to be, and that was the "the chat says connect a local model while the model
+     * is sitting right there in the library" bug. [loadFailure] is a *record of a past
+     * attempt*: it survives a restart (it is written to the registry), and a load can fail
+     * for reasons that are gone by the next attempt - a low-memory moment, another app in
+     * the foreground, a process that was still starting up. Treating that record as a
+     * permission made one bad attempt permanent: the composer greyed out with "this story
+     * needs a local model", `ensureModelResident` refused to even try again, and the model
+     * could not be recovered without knowing to re-select it by hand.
+     *
+     * So a failed load is *diagnosed* ([blocked], [loadFailure], the model detail screen)
+     * and then *retried*. The runtime's `ensureModelResident` is the retry, and if the load
+     * fails again the user gets that attempt's real reason rather than a locked box.
      */
-    val canGenerate: Boolean get() = blocked == ModelBlockReason.NONE
+    val canGenerate: Boolean
+        get() = when (blocked) {
+            ModelBlockReason.NONE, ModelBlockReason.LOAD_FAILED -> true
+            else -> false
+        }
 
     /** Usable, but the weights are not in RAM yet. The runtime resolves this on first use. */
-    val needsEngineLoad: Boolean get() = canGenerate && !isResident
+    val needsEngineLoad: Boolean get() = blocked == ModelBlockReason.NONE && !isResident
 
-    /** True only when the model is bound *and* the engine already holds it. */
-    val isReady: Boolean get() = canGenerate && isResident
+    /**
+     * True only when the model is bound, usable *and* the engine already holds it.
+     *
+     * `LOADED`, in the vocabulary of [ModelLifecycle]. [canGenerate] is `READY`. They are
+     * deliberately different answers, and neither is the gate on entering a chat.
+     */
+    val isReady: Boolean get() = blocked == ModelBlockReason.NONE && isResident
+
+    /**
+     * The one lifecycle state for this model, derived from the facts above.
+     *
+     * A screen that wants to say "LOADING" or "LOAD_FAILED" reads this rather than
+     * assembling its own verdict from booleans - which is how one screen ended up saying
+     * "Ready" for the same model another called "Could not load".
+     */
+    val lifecycle: ModelLifecycle
+        get() = modelLifecycle(
+            installed = isBound,
+            filePresent = filePresent,
+            verified = filePresent,
+            unsupported = isBound && !engineSupports,
+            loadFailed = isBound && loadFailure.isNotBlank(),
+            resident = isResident,
+        )
 
     companion object {
         val NONE = ModelSelection()
+
+        /**
+         * The one place that turns a binding's identity into a lifecycle-compatible
+         * request. Kept here so `ModelSelection` is the only type that has to know both
+         * vocabularies.
+         */
+        fun lifecycleOf(selection: ModelSelection): ModelLifecycle = selection.lifecycle
 
         /**
          * The legacy-shaped answer, for call sites that only have a boolean.
@@ -187,9 +250,15 @@ object ModelSelectionResolver {
                 null
             }
         if (target == null) {
+            // A binding that names a model the registry does not have is a *different*
+            // problem from "nothing was ever bound", and it is the one that produced a
+            // misleading "connect a local model" on a story that had a perfectly good
+            // model bound to it. Record which id failed to resolve so the UI can say
+            // "this story's model is no longer on this device" instead.
             return ModelSelection.NONE.copy(
                 profileId = binding.profileId,
                 profileName = binding.profileName,
+                unresolvedBindingId = binding.installedModelId,
             )
         }
         return ModelSelection(

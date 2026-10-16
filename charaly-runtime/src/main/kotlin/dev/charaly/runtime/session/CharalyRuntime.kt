@@ -24,8 +24,10 @@ import dev.charaly.runtime.domain.events.EventOrigin
 import dev.charaly.runtime.domain.events.EventPayload
 import dev.charaly.runtime.engine.ChapterPlanner
 import dev.charaly.runtime.engine.EventApplication
+import dev.charaly.runtime.engine.BranchEngine
 import dev.charaly.runtime.engine.EventEngine
 import dev.charaly.runtime.engine.EventProgram
+import dev.charaly.runtime.engine.ObjectiveEngine
 import dev.charaly.runtime.engine.ImportedCastMerger
 import dev.charaly.runtime.engine.PresenceEngine
 import dev.charaly.runtime.engine.ScheduleResult
@@ -50,6 +52,7 @@ import dev.charaly.runtime.persistence.RestoredWorld
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 
 /** Everything a UI needs for one turn, emitted as it happens. */
 sealed interface GenerationUpdate {
@@ -74,6 +77,13 @@ sealed interface GenerationUpdate {
          * nothing outside the runtime can change it.
          */
         val elapsedStoryMinutes: Long = 0L,
+        /**
+         * Where this turn's time actually went, or null when the engine cannot measure.
+         *
+         * Present so a developer-mode readout can be built from real clocks rather than
+         * from a stopwatch around the whole screen. Never rendered to a normal player.
+         */
+        val perf: TurnPerf? = null,
     ) : GenerationUpdate
 
     data class Failed(val error: CharalyError) : GenerationUpdate
@@ -88,7 +98,114 @@ sealed class CharalyError(message: String) : Exception(message) {
     class Cancelled : CharalyError("Generation cancelled.")
     class Persistence(detail: String) : CharalyError("Could not save the story: $detail")
 
+    /**
+     * The story's pinned pack edition is not on this device.
+     *
+     * Distinct from a model problem on purpose: the generation machinery is fine, the
+     * *content* this story is written against is missing. Generating anyway would run the
+     * turn against a different edition's canon - a silent rewrite of somebody's story.
+     */
+    class PackUnavailable(detail: String) : CharalyError("Story pack edition unavailable: $detail")
+
     override fun toString(): String = this::class.simpleName ?: "CharalyError"
+}
+
+/**
+ * Where one story turn's wall-clock time went.
+ *
+ * Built from real clocks on the runtime's own path plus the engine's native timings, so a
+ * developer can see the difference between "the model is slow" and "the client spent two
+ * seconds rebuilding context". [ttftMillis] is the one a reader feels: send to first word.
+ *
+ * The engine-side figures are nullable because a scripted engine cannot measure them; a
+ * missing number is shown as absent, never as zero.
+ */
+data class TurnPerf(
+    /** Send -> [GenerationUpdate.Finished]. */
+    val totalMillis: Long,
+    /** Send -> the first streamed token. */
+    val ttftMillis: Long,
+    /** Resolving the model into native memory (0 when already resident). */
+    val residencyMillis: Long,
+    /** SceneDirector + ContextBuilder + prompt assembly. */
+    val contextBuildMillis: Long,
+    /** Engine's own prompt tokenize + evaluation, when measurable. */
+    val promptEvalMillis: Long?,
+    /**
+     * PHASE 10: of [promptEvalMillis], the part that was tokenizing the prompt.
+     *
+     * Separate because they have separate fixes - tokenizing is a tokenizer/template
+     * cost, evaluating is a KV-cache cost - and one combined number hides which of the
+     * two a slow turn is actually paying for. Absent, never zero, when unmeasured.
+     */
+    val tokenizeMillis: Long? = null,
+    /**
+     * PHASE 10: of [promptEvalMillis], the part that evaluated the prompt into the KV
+     * cache. This is the half prefix reuse removes, so it is the half worth watching.
+     */
+    val evalMillis: Long? = null,
+    /**
+     * PHASE 10: the runtime's own hop from the start of the turn to the moment the engine
+     * was called - dispatch, residency and prompt assembly together.
+     *
+     * This is phase 1 of the five the brief asks for, measured on the runtime's clock.
+     * The turn does not begin at `respond()` - it begins at the Send button - so a client
+     * that has its own clock should prefer its own number; this one is never missing.
+     */
+    val dispatchMillis: Long = 0L,
+    /** Engine's own decode window, when measurable. */
+    val generationMillis: Long?,
+    /** ProposedActionParser + ActionValidator + EventEngine application. */
+    val parserMillis: Long,
+    /** Conditional events, clock advance and chapter derivation. */
+    val eventsMillis: Long,
+    /** Atomic save(s) at the end of the turn. */
+    val persistenceMillis: Long,
+    val contextChars: Int,
+    val promptTokens: Int?,
+    val generatedTokens: Int?,
+    /** Leading prompt tokens served from the previous turn's cache. */
+    val reusedTokens: Int?,
+    val tokensPerSecond: Double?,
+    val promptTokensPerSecond: Double?,
+    val modelLoadMillis: Long?,
+    /**
+     * PHASE 10: the engine's two thread pools, when measurable.
+     *
+     * [threadsDecode] decodes one token; [threadsPrompt] evaluates the prompt. They are
+     * different pools inside llama.cpp and they are the difference between a first token
+     * in a second and a first token in three minutes, so both are named rather than the
+     * one that happens to be the bottleneck on a workstation.
+     */
+    val threadsDecode: Int? = null,
+    val threadsPrompt: Int? = null,
+) {
+    /** One multiline summary, in the format the developer-mode log expects. */
+    fun summary(): String = buildString {
+        appendLine("STORY TURN PERF")
+        appendLine("total=${totalMillis}ms")
+        appendLine("ttft=${ttftMillis}ms")
+        appendLine("context_chars=$contextChars")
+        appendLine("prompt_tokens=${promptTokens ?: "?"}")
+        appendLine("generated_tokens=${generatedTokens ?: "?"}")
+        appendLine("reused_tokens=${reusedTokens ?: "?"}")
+        appendLine("model_load=${modelLoadMillis ?: 0}ms")
+        appendLine("dispatch_to_inference_call=${dispatchMillis}ms")
+        appendLine("context_build=${contextBuildMillis}ms")
+        appendLine("residency=${residencyMillis}ms")
+        appendLine("prompt_eval=${promptEvalMillis ?: "?"}ms")
+        appendLine("  tokenize=${tokenizeMillis ?: "?"}ms")
+        appendLine("  eval=${evalMillis ?: "?"}ms")
+        appendLine("threads_decode=${threadsDecode ?: "?"} threads_prompt=${threadsPrompt ?: "?"}")
+        appendLine("generation=${generationMillis ?: "?"}ms")
+        appendLine("parser=${parserMillis}ms")
+        appendLine("events=${eventsMillis}ms")
+        appendLine("persistence=${persistenceMillis}ms")
+        appendLine("tokens_per_sec=${tokensPerSecond?.let { format1(it) } ?: "?"}")
+        append("prompt_tokens_per_sec=${promptTokensPerSecond?.let { format1(it) } ?: "?"}")
+    }
+
+    private fun format1(value: Double): String = String.format(java.util.Locale.US, "%.2f", value)
 }
 
 /**
@@ -122,6 +239,67 @@ class CharalyRuntime(
      */
     private val library: dev.charaly.runtime.persistence.CharacterLibraryRepository =
         dev.charaly.runtime.persistence.InMemoryCharacterLibraryRepository(),
+    /**
+     * Brings the story's bound model into native memory before a turn is generated.
+     *
+     * ## Why `respond` resolves residency itself
+     *
+     * Requirement "READY != LOADED" makes the load *lazy*, and laziness has to live at the
+     * point of use or it is not lazy - it is a convention somebody has to remember. When
+     * this check was `if (!engine.isLoaded()) fail`, a story turn raced every other way the
+     * engine could be cold (a restart, a model switch that had just unloaded, a load the UI
+     * had not got round to) and lost as "This story needs a local model before it can
+     * continue." - for a model that was installed, bound and READY.
+     *
+     * So the runtime asks for the model by its [dev.charaly.runtime.model.ModelBinding] id
+     * and lets the app-side loader do the file resolution. A cold engine is now an ordinary
+     * moment that this resolves, not an error the user is blamed for.
+     *
+     * The default answers from the engine's own state and loads nothing, which is exactly
+     * the old behaviour for a runtime built without a loader (tests, host tooling).
+     */
+    private val residency: dev.charaly.runtime.model.ModelResidency =
+        dev.charaly.runtime.model.ModelResidency.immediate(engine),
+    /**
+     * Where the pack *edition* a story is pinned to comes from.
+     *
+     * Without it a story follows whatever edition the repository holds (the old behaviour,
+     * and the right one for saves that predate pinning). With it, a story that began in
+     * 1.1.0 keeps reading 1.1.0 - its events, its definitions, its openings - however many
+     * newer editions are installed beside it.
+     */
+    private val editions: dev.charaly.runtime.storypack.PackEditionSource? = null,
+    /**
+     * PHASE 10: where a turn's own work runs.
+     *
+     * ## Why a turn needs one at all
+     *
+     * `respond` is a cold `flow`, so before this it executed in **the collector's**
+     * context - which in the app is `viewModelScope`, i.e. the Android main thread. Only
+     * the native decode was off it (the engine's own `flowOn(Dispatchers.IO)`). Everything
+     * else a turn does ran on the thread that draws the screen:
+     *
+     * ```
+     *   resolver.forInstance      reads the pack from storage
+     *   SceneDirector + ContextBuilder   assembles the prompt
+     *   rememberTurn              writes and consolidates memories
+     *   repository.saveInstance   encodes the story and writes it to disk  (twice a turn)
+     *   advance + ChapterPlanner   runs the event engine
+     * ```
+     *
+     * None of that is "the model is slow". All of it is main-thread disk I/O and
+     * allocation landing between the player pressing Send and the first word appearing,
+     * and it is charged to the frame budget of the screen the player is looking at.
+     *
+     * `flowOn` shifts the *producer* only: `emit` still reaches the collector on the
+     * collector's dispatcher, so a ViewModel's `_state.update {}` stays on main exactly
+     * where it belongs, and ordering is preserved.
+     *
+     * Defaults to [Dispatchers.Default] (the CPU pool) rather than IO: the work is
+     * CPU-bound JSON and rule evaluation, and the blocking decode keeps its own IO
+     * thread. Injectable so a test can pin it.
+     */
+    private val turnDispatcher: kotlinx.coroutines.CoroutineDispatcher = kotlinx.coroutines.Dispatchers.Default,
 ) {
 
     val generationParams: GenerationParams get() = params
@@ -257,13 +435,26 @@ class CharalyRuntime(
         return save(branch)
     }
 
-    /** Removes the last character reply so it can be generated again. */
+    /**
+     * Removes the last exchange - the player's line and the reply it drew - so the turn
+     * can be generated again.
+     *
+     * The player's line goes too, even though `respond` appends it again on the way back
+     * in: a regeneration RE-SENDS that line, and dropping only the reply left the transcript
+     * carrying the same message twice (`…user, user, character`), which is a duplicated
+     * message rendered to the player. Dropping from the earliest of the pair puts the
+     * transcript back exactly as it stood before the turn, so the retry is indistinguishable
+     * from a first attempt.
+     *
+     * This is a *transcript* operation, not a world operation: nothing in world state is
+     * undone, because what the world did already happened.
+     */
     suspend fun prepareRegeneration(instance: StoryInstance): Pair<StoryInstance, String?> {
         val lastCharacter = instance.conversation.lastCharacterEntry()
         val lastUser = instance.conversation.lastUserEntry()
         if (lastCharacter == null || lastUser == null) return instance to null
         val trimmed = instance.copy(
-            conversation = instance.conversation.dropFrom(lastCharacter.turn),
+            conversation = instance.conversation.dropFrom(minOf(lastUser.turn, lastCharacter.turn)),
         )
         return save(trimmed) to lastUser.text
     }
@@ -409,7 +600,7 @@ class CharalyRuntime(
      * one-shot triggers and cooldowns behave.
      */
     suspend fun pollConditionalEvents(instance: StoryInstance): StoryInstance {
-        val pack = repository.getPack(instance.storyPackId) ?: return instance
+        val pack = packFor(instance) ?: return instance
         val definition = resolver.forInstance(instance)
         val engine = EventEngine(definition)
         var current = instance
@@ -433,7 +624,124 @@ class CharalyRuntime(
                 }
             }
         }
-        return if (current === instance) current else save(current)
+        return evaluateObjectives(if (current === instance) instance else save(current))
+    }
+
+    /**
+     * The pack edition a story reads.
+     *
+     * Prefers the pinned edition when the story has one and it is still installed; falls
+     * back to the repository's active edition otherwise, which is exactly the documented
+     * `UNPINNED_LEGACY` behaviour rather than a silent migration.
+     */
+    suspend fun packFor(instance: StoryInstance): StoryPack? {
+        val pinned = instance.packVersion
+        if (pinned.isNotBlank()) {
+            editions?.editionFor(instance.storyPackId.value, pinned)?.let { return it }
+        }
+        return repository.getPack(instance.storyPackId)
+    }
+
+    // ------------------------------------------------------------------
+    // Branches and objectives
+    // ------------------------------------------------------------------
+
+    /**
+     * The branches the player may take right now.
+     *
+     * Only branches whose conditions hold - the unavailable ones are invisible rather than
+     * greyed out, because their existence is itself a spoiler.
+     */
+    suspend fun offeredChoices(instance: StoryInstance): List<dev.charaly.runtime.domain.OfferedChoice> {
+        val pack = packFor(instance) ?: return emptyList()
+        return BranchEngine.offered(instance, pack)
+    }
+
+    /** What became of an attempt to take a branch. */
+    sealed interface ChoiceOutcome {
+        data class Taken(val instance: StoryInstance, val note: String) : ChoiceOutcome
+        data class Refused(val reason: String) : ChoiceOutcome
+    }
+
+    /**
+     * Takes a branch: conditions checked, effects applied through the event engine, the
+     * decision recorded, objectives re-evaluated, everything persisted.
+     *
+     * The same branch in the same state produces the same world change every time, which
+     * is the property that makes conditional storytelling a mechanic instead of a rumour.
+     */
+    suspend fun takeChoice(
+        instance: StoryInstance,
+        sceneId: String,
+        choiceId: String,
+    ): ChoiceOutcome {
+        val pack = packFor(instance) ?: return ChoiceOutcome.Refused("hikâye paketi bulunamadı")
+        val choice = BranchEngine.choiceFor(instance, pack, sceneId, choiceId)
+            ?: return ChoiceOutcome.Refused("bu seçenek artık yok")
+        val at = instance.worldClock.now
+        val payloads = BranchEngine.compile(instance, sceneId, choice, at)
+        if (payloads.isEmpty()) {
+            return ChoiceOutcome.Refused("bu seçenek şu anda açık değil")
+        }
+        val engine = EventEngine(resolver.forInstance(instance))
+        var current = instance
+        var landed = 0
+        payloads.forEach { payload ->
+            when (val applied = engine.applyImmediately(current, payload, EventOrigin.USER)) {
+                is EventApplication.Applied -> {
+                    current = applied.instance
+                    landed++
+                }
+                // A refused effect changes nothing and is not recorded; the choice below
+                // is only counted as taken when at least one effect actually landed.
+                is EventApplication.Rejected -> Unit
+            }
+        }
+        // A choice is recorded as taken only when at least one of its effects actually
+        // landed. Recording a choice whose every effect the engine refused would consume
+        // a `once` branch while leaving the world exactly as it was: the branch would be
+        // gone, nothing would have happened, and there would be no way to take it again.
+        if (landed == 0) {
+            return ChoiceOutcome.Refused("bu seçenek şu anda açık değil")
+        }
+        current = current.copy(
+            choiceLedger = current.choiceLedger + BranchEngine.record(current, sceneId, choice, at),
+        )
+        current = evaluateObjectives(current)
+        return ChoiceOutcome.Taken(save(current), choice.outcomeNote)
+    }
+
+    /**
+     * Resolves objectives against the world as it now stands.
+     *
+     * Completion and failure pay out through the event engine - a reward is a world change
+     * like any other and is validated like any other - and the result is persisted with the
+     * story, so an objective never re-resolves after a restart.
+     */
+    suspend fun evaluateObjectives(instance: StoryInstance): StoryInstance {
+        val pack = packFor(instance) ?: return instance
+        val evaluation = ObjectiveEngine.evaluate(instance, pack)
+        if (!evaluation.changed) return instance
+        val engine = EventEngine(resolver.forInstance(instance))
+        // The payout is applied first, against the world as it stands. Only when every
+        // payload has landed is the objective marked resolved. An objective whose reward
+        // the engine refused has not actually completed: marking it resolved would both
+        // lose the reward and stop it ever being retried, because a terminal objective is
+        // never re-evaluated. Keeping it active lets the next turn try the payout again.
+        var current = instance
+        var allPaid = true
+        evaluation.payloads.forEach { payload ->
+            when (val applied = engine.applyImmediately(current, payload, EventOrigin.ENGINE)) {
+                is EventApplication.Applied -> current = applied.instance
+                is EventApplication.Rejected -> allPaid = false
+            }
+        }
+        if (!allPaid) {
+            // Whatever did land is a real world change and is persisted; the objective
+            // itself stays active so a later turn can still complete it.
+            return if (current === instance) instance else save(current)
+        }
+        return save(current.copy(objectives = evaluation.objectives))
     }
 
     /**
@@ -578,9 +886,18 @@ class CharalyRuntime(
         val engineForWorld = EventEngine(resolver.forInstance(instance))
         return when (val result = engineForWorld.scheduleAfter(instance, payload, StoryDuration.ZERO)) {
             is ScheduleResult.Scheduled -> {
-                val applied = engineForWorld.applyEvent(result.instance, result.events.first())
-                val updated = (applied as? EventApplication.Applied)?.instance ?: result.instance
-                save(updated)
+                when (val applied = engineForWorld.applyEvent(result.instance, result.events.first())) {
+                    is EventApplication.Applied -> save(applied.instance)
+                    // A refused event is dropped from the queue, exactly as
+                    // `processEventsUntil` drops a refused due event. Leaving it queued
+                    // would mean the next clock advance finds it due and rejects it again:
+                    // a stale invalid event that never goes away on its own.
+                    is EventApplication.Rejected -> save(
+                        result.instance.evolved(
+                            eventQueue = result.instance.eventQueue.remove(result.events.first().id),
+                        ),
+                    )
+                }
             }
             is ScheduleResult.Rejected -> instance
         }
@@ -606,15 +923,55 @@ class CharalyRuntime(
         characterId: CharacterId? = null,
         onPersist: (StoryInstance) -> Unit = {},
     ): Flow<GenerationUpdate> = flow {
+        // Where a turn's time went, measured from the moment collection begins (which is
+        // the same moment the composer's Send starts the request).
+        val perfStart = System.nanoTime()
+
         val speaker = characterId ?: instance.focusOrFirst()
         if (speaker == null) {
             emit(GenerationUpdate.Failed(CharalyError.NoCharacter()))
             return@flow
         }
-        if (!engine.isLoaded()) {
+
+        // PINNED EDITION GUARD.
+        //
+        // A story that began on pack edition 1.1.0 must never generate against 1.2.0's
+        // canon: its events, its references and its world-state semantics may differ, and
+        // substituting them silently would rewrite the story mid-sentence. When an edition
+        // store is wired (the app always wires one) and the pinned edition is gone - a
+        // forced pack delete, a partial restore - the turn is refused with a reason the UI
+        // can act on. Without an edition store (tests, host tooling) the repository's copy
+        // is the only edition in existence and the old behaviour stands.
+        val editionSource = editions
+        val pinnedEdition = instance.packVersion
+        if (editionSource != null && pinnedEdition.isNotBlank() &&
+            editionSource.editionFor(instance.storyPackId.value, pinnedEdition) == null
+        ) {
+            emit(
+                GenerationUpdate.Failed(
+                    CharalyError.PackUnavailable("${instance.storyPackId.value}@$pinnedEdition"),
+                ),
+            )
+            return@flow
+        }
+        // LAZY LOAD, at the point of use.
+        //
+        // The engine may legitimately hold nothing: the import finished but the weights did
+        // not, the process restarted (native residency is deliberately never persisted), or
+        // another model was selected a moment ago. That is a normal state, so it is resolved
+        // here rather than refused - the model is READY the moment it is registered and its
+        // file parses, and "not in RAM yet" is not a reason to tell a user to go and find a
+        // model they already chose.
+        val residencyStart = System.nanoTime()
+        val wasResident = engine.isLoaded()
+        if (!residency.ensureResident(instance.modelBinding)) {
             emit(GenerationUpdate.Failed(CharalyError.ModelNotLoaded()))
             return@flow
         }
+        val residencyMillis = (System.nanoTime() - residencyStart) / 1_000_000L
+        val modelLoadMillis = if (wasResident) 0L else residencyMillis
+
+        val contextStart = System.nanoTime()
 
         val definition = resolver.forInstance(instance)
         val director = SceneDirector(definition)
@@ -653,16 +1010,30 @@ class CharalyRuntime(
             userInput = userInput,
             params = turnParams,
         )
+        val contextBuildMillis = (System.nanoTime() - contextStart) / 1_000_000L
+        // Everything actually handed to the model, system prompt included.
+        val contextChars = request.systemPrompt.length +
+            request.messages.sumOf { it.content.length }
 
         val accumulated = StringBuilder()
         var tokens = 0
         var stopReason = StopReason.COMPLETED
+        var firstChunkNanos = 0L
+        var inferenceCallNanos = 0L
 
         try {
+            // PHASE 10: the moment the turn handed work to the engine. Everything the
+            // reader waited for before this line - dispatch, residency, prompt assembly -
+            // is phase 1 of the latency breakdown, and it was previously unattributed:
+            // `ttftMillis` folded it together with the engine's own first token, so a
+            // prompt that took four seconds to build and an engine that took four seconds
+            // to answer produced the same number.
+            inferenceCallNanos = System.nanoTime()
             engine.stream(request).collect { chunk ->
                 if (chunk.done) {
                     stopReason = StopReason.COMPLETED
                 } else {
+                    if (firstChunkNanos == 0L) firstChunkNanos = System.nanoTime()
                     accumulated.append(chunk.text)
                     tokens++
                     emit(GenerationUpdate.Chunk(chunk.text, accumulated.toString()))
@@ -709,6 +1080,7 @@ class CharalyRuntime(
         val eventEngine = EventEngine(definition)
         val validator = ActionValidator(definition)
         var appliedActionCount = 0
+        val parserStart = System.nanoTime()
         ProposedActionParser.parse(reply).forEach { action ->
             val review = validator.toPayload(action)
             if (review is ActionReview.Rejected) {
@@ -716,7 +1088,18 @@ class CharalyRuntime(
                 return@forEach
             }
             val accepted = review as ActionReview.Accepted
-            when (val applied = eventEngine.applyImmediately(current, accepted.payload)) {
+            when (
+                val applied = eventEngine.applyImmediately(
+                    current,
+                    accepted.payload,
+                    // Attributed to the model, because it was the model's idea. The event
+                    // engine records this on the change log, which is how "what did the
+                    // model actually change?" becomes an answerable question instead of an
+                    // impression.
+                    origin = dev.charaly.runtime.domain.events.EventOrigin.MODEL_PROPOSAL,
+                    note = accepted.action.reason,
+                )
+            ) {
                 is EventApplication.Rejected -> {
                     // The proposal parsed, but the event engine refused it. The
                     // model gets no say: a rejected action leaves no trace.
@@ -738,15 +1121,45 @@ class CharalyRuntime(
         // so what is remembered is the world as it actually ended up, not the world as
         // the transcript reads. Everything the gates reject is simply not written.
         current = rememberTurn(current, definition, speaker, turn)
+        val parserMillis = (System.nanoTime() - parserStart) / 1_000_000L
 
-        runCatching { repository.saveInstance(current) }
-            .onSuccess { onPersist(current) }
-            .onFailure { emit(GenerationUpdate.Failed(CharalyError.Persistence(it.message ?: "unknown error"))) }
+        val persistenceStart = System.nanoTime()
+        val persisted = runCatching { repository.saveInstance(current) }
+        val persistenceMillis = (System.nanoTime() - persistenceStart) / 1_000_000L
+        if (persisted.isFailure) {
+            // A turn that could not be saved is a failed turn, FULL STOP.
+            //
+            // Deriving conditional events, clock time and chapters from here would build on
+            // a save that does not exist and then report the turn as finished: the response
+            // on screen and the story on disk would tell different stories, and the next
+            // turn would run against either one of them depending on which write happened
+            // to land. The last persisted state is the only safe one - the transcript and
+            // actions of this turn stay out of it, so a retry re-runs the whole turn and
+            // applies its actions exactly once.
+            emit(
+                GenerationUpdate.Failed(
+                    CharalyError.Persistence(persisted.exceptionOrNull()?.message ?: "unknown error"),
+                ),
+            )
+            return@flow
+        }
+        onPersist(current)
 
         // Chapters and conditional events are derived from authoritative state
         // *after* the turn, so a screen can never show a chapter or an event the
         // engine did not actually apply.
-        val conditioned = pollConditionalEvents(current)
+        //
+        // ONE conditional-event poll per turn, and it lives inside [advance] below - the
+        // same path a debug "advance 30 minutes" takes. Polling here as well would give
+        // every pack event a second chance to fire within the same player turn: a
+        // `repeatable` event with `cooldownMinutes = 0` (whose condition never flips back)
+        // then lands its effects twice - two world changes, two memories and a doubled
+        // relationship delta. That double landing is measured in
+        // `ConditionalEventExactlyOnceTest` (expected one trust step, observed two).
+        // Determinism and event order are unchanged; the single poll simply runs after the
+        // clock step instead of before it. If `advance` fails as a whole the turn keeps the
+        // written response and skips polling entirely rather than polling twice.
+        val eventsStart = System.nanoTime()
 
         // ---- the clock ---------------------------------------------------
         //
@@ -764,10 +1177,44 @@ class CharalyRuntime(
             userInputChars = userInput.length,
             appliedActions = appliedActionCount,
         )
-        val advanced = runCatching { advance(conditioned, elapsed) }.getOrDefault(conditioned)
+        val advanced = runCatching { advance(current, elapsed) }.getOrDefault(current)
         val finished = runCatching {
             save(ChapterPlanner.derive(advanced, definition))
         }.getOrDefault(advanced)
+        val eventsMillis = (System.nanoTime() - eventsStart) / 1_000_000L
+
+        // Engine-side clocks, when the engine can measure. A scripted engine returns null
+        // and every timing stays absent rather than zero.
+        val nativeTimings = (engine as? dev.charaly.runtime.model.LocalInferenceEngine)?.lastTimings()
+        val nowNanos = System.nanoTime()
+        val ttftMillis = if (firstChunkNanos == 0L) 0L else (firstChunkNanos - perfStart) / 1_000_000L
+        val perf = TurnPerf(
+            totalMillis = (nowNanos - perfStart) / 1_000_000L,
+            ttftMillis = ttftMillis,
+            residencyMillis = residencyMillis,
+            contextBuildMillis = contextBuildMillis,
+            promptEvalMillis = nativeTimings?.promptMillis,
+            tokenizeMillis = nativeTimings?.tokenizeMicros?.let { it / 1000L },
+            evalMillis = nativeTimings?.evalMicros?.let { it / 1000L },
+            dispatchMillis = if (inferenceCallNanos > 0L) {
+                (inferenceCallNanos - perfStart) / 1_000_000L
+            } else {
+                0L
+            },
+            generationMillis = nativeTimings?.generationMillis,
+            parserMillis = parserMillis,
+            eventsMillis = eventsMillis,
+            persistenceMillis = persistenceMillis,
+            contextChars = contextChars,
+            promptTokens = nativeTimings?.promptTokens,
+            generatedTokens = nativeTimings?.generatedTokens ?: tokens.takeIf { it > 0 },
+            reusedTokens = nativeTimings?.reusedTokens,
+            tokensPerSecond = nativeTimings?.tokensPerSecond,
+            promptTokensPerSecond = nativeTimings?.promptTokensPerSecond,
+            modelLoadMillis = modelLoadMillis,
+            threadsDecode = nativeTimings?.threads?.takeIf { it > 0 },
+            threadsPrompt = nativeTimings?.threadsBatch?.takeIf { it > 0 },
+        )
 
         emit(
             GenerationUpdate.Finished(
@@ -776,9 +1223,13 @@ class CharalyRuntime(
                 completionTokens = tokens,
                 instance = finished,
                 elapsedStoryMinutes = elapsed.minutes,
+                perf = perf,
             ),
         )
-    }
+        // PHASE 10: the whole turn body runs off the collector's thread. See
+        // [turnDispatcher] for what that moves and why it was the main thread before.
+        // Placed last so it reads as the turn's outermost statement.
+    }.flowOn(turnDispatcher)
 
     /** Stops an in-flight generation (UI "stop" button). */
     fun stop() = engine.stop()
@@ -1034,6 +1485,17 @@ class CharalyRuntime(
             appendLine("quant: ${it.quantLevel}")
             appendLine("ctx: ${it.contextSize}")
         }
+        // The engine's own last failure, in the one place a technical detail belongs.
+        //
+        // A normal player never sees this: it is behind Developer Mode. But when a load or
+        // a decode fails and the product sentence is necessarily vague ("this model could
+        // not be loaded"), the specific reason has to exist SOMEWHERE or the report is
+        // useless. `lastDiagnostic` is written for a person, not a `Throwable.toString()` -
+        // no native handle, no pointer, no stack.
+        val diagnostic = (engine as? dev.charaly.runtime.model.LocalInferenceEngine)
+            ?.lastDiagnostic()
+            .orEmpty()
+        appendLine("last diagnostic: ${diagnostic.ifBlank { "(none)" }}")
         appendLine("params: $params")
     }
 

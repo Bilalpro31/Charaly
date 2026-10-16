@@ -84,15 +84,19 @@ class WorldFlowWiringTest {
         )
         // And it goes through `advance`, not through the clock object directly: `advance` is
         // what drains scheduled events and runs the NPC routines, so writing the clock by hand
-        // would move the *display* without moving the world.
+        // would move the *display* without moving the world. (Phase 6 renames the argument -
+        // the turn's own instance is now passed straight in - and moves the pack-conditional
+        // poll INSIDE `advance`, see below.)
         assertTrue(
-            "the turn pipeline moves the clock without running the event engine",
-            respondBody.contains("advance(conditioned, elapsed)"),
+            "the turn pipeline must advance the clock through `advance`",
+            respondBody.contains("advance(current, elapsed)"),
         )
-        // Which means the world genuinely changes, rather than showing a later time.
-        assertTrue(
-            "the clock advance does not poll pack-conditional events",
-            respondBody.contains("advance(conditioned, elapsed)"),
+        // Phase 6, task 5: exactly ONE conditional-event poll per turn. `advance` is the
+        // poller, so `respond` must not poll on its own as well - that double poll is what
+        // let a `repeatable`, zero-cooldown pack event land its effects twice in one turn.
+        assertFalse(
+            "the turn must leave conditional-event polling to `advance` (one poll per turn)",
+            respondBody.contains("pollConditionalEvents("),
         )
     }
 

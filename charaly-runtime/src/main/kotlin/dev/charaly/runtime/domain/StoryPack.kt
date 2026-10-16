@@ -16,7 +16,17 @@ data class StoryPack(
     val title: String,
     val description: String = "",
     val author: String = "",
+    /** Legacy numeric revision. Superseded by [packVersion]; kept so old saves decode. */
     val version: Int = 1,
+    /**
+     * The semantic version of this pack's *content* ("1.2.0").
+     *
+     * [id] answers "which story is this"; [packVersion] answers "which edition of it".
+     * They are separate because a StoryInstance is pinned to a pair of them: a story that
+     * started in 1.1.0 must not silently acquire 1.2.0's plot. See
+     * `dev.charaly.runtime.storypack.PackCompatibility`.
+     */
+    val packVersion: String = "1.0.0",
     val characters: List<CharacterDefinition> = emptyList(),
     val locations: List<Location> = emptyList(),
     val initialWorldState: InitialWorldState = InitialWorldState(),
@@ -68,6 +78,39 @@ data class StoryPack(
      * with no assets is entirely valid and renders as generated artwork.
      */
     val visualAssets: List<VisualAsset> = emptyList(),
+    /**
+     * Distribution metadata: who publishes this pack, under what terms, in what language.
+     *
+     * Travels with the content rather than the manifest alone, so a pack decoded straight
+     * from its content files still knows its own licence - which is the question that has
+     * to be answerable before a pack is *shared*, not only before it is installed.
+     */
+    val publisher: String = "",
+    val license: String = "",
+    /** The language the content is authored in. Localization may override any string. */
+    val language: String = "tr",
+    val createdAtEpochMs: Long = 0L,
+    val updatedAtEpochMs: Long = 0L,
+    /**
+     * Engine compatibility window.
+     *
+     * Empty means "no claim". A pack that declares a floor refuses to install on an older
+     * engine rather than failing halfway through a story.
+     */
+    val minimumEngineVersion: String = "",
+    val maximumEngineVersion: String = "",
+    /** Where a story from this pack opens, when the player does not choose. */
+    val entryPoint: String = "",
+    /** Setting framing: universe, era, geography, rules. */
+    val world: PackWorld = PackWorld(),
+    /** Authored scenes: situations a story can arrive in. */
+    val scenes: List<SceneTemplate> = emptyList(),
+    /** Authored objectives: what the player is being asked to do. */
+    val objectives: List<PackObjective> = emptyList(),
+    /** Packaged ambience and cues. Inventory only; playback is the app's business. */
+    val audioAssets: List<PackAudioAsset> = emptyList(),
+    /** Model hints and the offline guarantee. Metadata only. */
+    val settings: PackSettings = PackSettings(),
 ) {
     init {
         require(title.isNotBlank()) { "StoryPack $id needs a title" }
@@ -79,6 +122,12 @@ data class StoryPack(
         require(scenarioDupes.isEmpty()) { "Duplicate scenario ids in pack $id: ${scenarioDupes.keys}" }
         val assetDupes = visualAssets.groupBy { it.assetId }.filterValues { it.size > 1 }
         require(assetDupes.isEmpty()) { "Duplicate visual asset ids in pack $id: ${assetDupes.keys}" }
+        val sceneDupes = scenes.groupBy { it.id }.filterValues { it.size > 1 }
+        require(sceneDupes.isEmpty()) { "Duplicate scene ids in pack $id: ${sceneDupes.keys}" }
+        val objectiveDupes = objectives.groupBy { it.id }.filterValues { it.size > 1 }
+        require(objectiveDupes.isEmpty()) { "Duplicate objective ids in pack $id: ${objectiveDupes.keys}" }
+        val audioDupes = audioAssets.groupBy { it.id }.filterValues { it.size > 1 }
+        require(audioDupes.isEmpty()) { "Duplicate audio asset ids in pack $id: ${audioDupes.keys}" }
     }
 
     fun character(id: CharacterId): CharacterDefinition? = characters.firstOrNull { it.id == id }
@@ -104,10 +153,24 @@ data class StoryPack(
 
     fun faction(id: String): Faction? = factions.firstOrNull { it.id == id }
 
+    fun scene(id: String): SceneTemplate? = scenes.firstOrNull { it.id == id }
+
+    fun objective(id: String): PackObjective? = objectives.firstOrNull { it.id == id }
+
+    /**
+     * The content version as a comparable triple.
+     *
+     * Falls back to the legacy integer, so a pack written before [packVersion] existed
+     * still orders correctly against one written after.
+     */
+    val semanticVersion: String
+        get() = packVersion.ifBlank { "$version.0.0" }
+
     fun loreEntry(id: String): WorldLoreEntry? = lore.firstOrNull { it.id == id }
 
     /** The opening to use when the user does not pick one. */
-    fun defaultScenario(): StartingScenario? = scenarios.firstOrNull()
+    fun defaultScenario(): StartingScenario? =
+        scenarios.firstOrNull { it.id == entryPoint } ?: scenarios.firstOrNull()
 
     fun defaultPersona(): PersonaTemplate? = personas.firstOrNull()
 

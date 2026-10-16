@@ -18,6 +18,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -96,6 +97,8 @@ fun HomeScreen(
     onOpenLibrary: () -> Unit,
     onOpenModels: () -> Unit,
     onOpenSettings: () -> Unit,
+    /** The bell: what is waiting for you. Real destination - Sessions. */
+    onOpenNotifications: () -> Unit = {},
 ) {
     val gutter = if (policy.cardColumns > 1) Charaly.space.gutterWide else Charaly.space.gutter
 
@@ -109,6 +112,11 @@ fun HomeScreen(
     // flicker or lose the Continue card.
     var query by rememberSaveable { mutableStateOf("") }
     var filter by rememberSaveable { mutableStateOf(HomeFilter.FOR_YOU) }
+
+    // Whether the bell's dot is lit: a world on the shelf the player has never entered.
+    // "New for you" is the one thing blue is allowed to mean, so it is asserted against a
+    // count of stories rather than inferred from a label.
+    val hasNews = snapshot.worlds.any { world -> world.sessionCount == 0 }
 
     val visibleWorlds = remember(snapshot, query, filter) {
         snapshot.worlds
@@ -146,6 +154,29 @@ fun HomeScreen(
                         .weight(1f)
                         .semantics { heading() },
                 )
+                // V5's one "new for you" affordance, and the only place blue is earned.
+                //
+                // The dot is a fact rather than decoration: it lights when there is a world
+                // on the shelf the player has never entered. The bell leads to Sessions,
+                // where what is waiting actually lives - an icon with nothing behind it
+                // would be a promise the app never keeps.
+                Box {
+                    CharalyIconButton(
+                        icon = Icons.Outlined.Notifications,
+                        contentDescription = stringResource(R.string.nav_sessions),
+                        onClick = onOpenNotifications,
+                    )
+                    if (hasNews) {
+                        Box(
+                            Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(top = 11.dp, end = 11.dp)
+                                .size(8.dp)
+                                .clip(CharalyShapes.pill)
+                                .background(Charaly.signal.blue),
+                        )
+                    }
+                }
                 CharalyIconButton(
                     icon = Icons.Outlined.Tune,
                     contentDescription = stringResource(R.string.nav_settings),

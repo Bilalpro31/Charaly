@@ -449,12 +449,19 @@ class RegistryModelStatus(
 
     override fun stateLabel(): String = when {
         loading -> Loc.t("model.loading")
+        selection.lifecycle == dev.charaly.runtime.model.ModelLifecycle.LOAD_FAILED ->
+            Loc.t("model.could_not_load")
         selection.canGenerate && selection.isResident -> Loc.t("model.ready")
         selection.canGenerate -> Loc.t("model.installed")
         else -> Loc.t("model.not_installed")
     }
 
     override fun detailLabel(): String = when {
+        // A recorded failure is shown, but it is not the whole answer: the model is still
+        // there and the next turn retries the load. Saying only "could not load" here is
+        // what read as "connect a model" on Home.
+        selection.blocked == dev.charaly.runtime.model.ModelBlockReason.LOAD_FAILED ->
+            selection.loadFailure.ifBlank { Loc.t("model.load_failed") }
         !selection.canGenerate -> ModelStagePresenter.reason(selection)
         selection.needsEngineLoad -> Loc.t("model.ready_first_use")
         installed != null -> Loc.t("model.local_meta", installed.sizeLabel)

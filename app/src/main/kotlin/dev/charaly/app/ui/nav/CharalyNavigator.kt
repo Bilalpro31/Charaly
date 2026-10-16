@@ -103,6 +103,24 @@ sealed interface Route {
     data object Authoring : Route
 
     /**
+     * The story pack store: what is installed on this device, and what the catalog offers.
+     *
+     * Its own full-screen destination because pack management is a *maintenance* surface -
+     * export, update, delete, install - and those actions want the whole display rather than
+     * a drawer over a poster. Reached from Create's "Hikâye Kataloğu" door.
+     */
+    data object PackStore : Route
+
+    /**
+     * The review step of a pack import: what the archive holds, what is wrong with it, and
+     * the one decision.
+     *
+     * Mirrors [CharacterImport]: nothing is written before this screen's "Yükle" is tapped,
+     * so backing out of it leaves the device exactly as it was.
+     */
+    data object PackImport : Route
+
+    /**
      * The character card import flow: pick, read, preview, confirm.
      *
      * Its own route because the preview needs a full screen, not a dialog. A card can carry
@@ -126,6 +144,8 @@ sealed interface Route {
         Developer -> "developer"
         Authoring -> "authoring"
         CharacterImport -> "characters/import"
+        PackStore -> "packs/store"
+        PackImport -> "packs/import"
         is Showcase -> "showcase/$packId"
         is EnterWorld -> "enter/$packId"
         is Stage -> "stage/$instanceId"
@@ -155,6 +175,8 @@ fun decodeRoute(value: String?): Route? {
         value == "developer" -> Route.Developer
         value == "authoring" -> Route.Authoring
         value == "characters/import" -> Route.CharacterImport
+        value == "packs/store" -> Route.PackStore
+        value == "packs/import" -> Route.PackImport
         value.startsWith("showcase/") -> value.id("showcase/")?.let { Route.Showcase(it) }
         value.startsWith("enter/") -> value.id("enter/")?.let { Route.EnterWorld(it) }
         value.startsWith("stage/") -> value.id("stage/")?.let { Route.Stage(it) }
@@ -194,6 +216,10 @@ fun Route.tabOrNull(): Route.Tab? = when (this) {
     Route.Chat, is Route.Stage -> null
     is Route.Showcase, is Route.EnterWorld -> null
     Route.Authoring, Route.CharacterImport -> null
+    // Pack management owns the whole display for the same reason the import flow does:
+    // it is a sequence of deliberate decisions (export, update, delete) rather than a place
+    // to wander off from mid-task.
+    Route.PackStore, Route.PackImport -> null
     is Route.ModelDetail -> null
     Route.Developer -> null
 }

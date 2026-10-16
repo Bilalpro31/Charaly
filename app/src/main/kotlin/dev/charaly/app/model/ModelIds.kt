@@ -5,10 +5,21 @@ import kotlin.math.abs
 /**
  * The deterministic id scheme for local models.
  *
- * Contents, not location, decide identity: the same weights hash to the same
- * id no matter where the file sits, so a story binding survives a rename, a
- * re-import, or a app data-dir migration. The legacy scheme embedded the
- * absolute path, so every rename orphaned every binding.
+ * The rule this encodes: **the id never depends on where the file sits.** It is the
+ * content hash plus the name the user sees, so a story binding survives a storage
+ * migration, an app data-dir move and a re-import - the cases that used to orphan every
+ * binding, because the legacy scheme embedded the absolute path and the path changed.
+ *
+ * ## What it deliberately does and does not promise
+ *
+ * It does promise: same bytes + same file name = same id, wherever the file is; different
+ * bytes = different id; no path, no directory and no package name is ever baked into it.
+ *
+ * It does NOT promise that renaming the file keeps the id - the readable name is part of
+ * the identity on purpose, so two different models cannot collide in the library just
+ * because they hash to the same first twelve hex digits of a truncated digest. Identity is
+ * then carried unchanged through every layer as `ModelId`; nothing downstream re-derives it
+ * from a name or a path.
  */
 internal object ModelIds {
 

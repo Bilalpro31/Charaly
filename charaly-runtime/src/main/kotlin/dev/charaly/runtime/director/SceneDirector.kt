@@ -40,6 +40,25 @@ import dev.charaly.runtime.domain.WorldDefinition
 class SceneDirector(private val definition: WorldDefinition) {
 
     /**
+     * Cache for arrivals/departures. Keyed by (locationId, clock hour, participants).
+     * Invalidated when the hour changes or the participant set changes.
+     * Bounded to the last 64 entries to avoid unbounded growth.
+     */
+    private val arrivalsDeparturesCache = mutableMapOf<String, Pair<List<CharacterId>, List<CharacterId>>>()
+
+    private fun arrivalsDeparturesKey(
+        locationId: LocationId,
+        now: StoryTime,
+        participants: Set<CharacterId>,
+    ): String = buildString {
+        append(locationId.value)
+        append('|')
+        append(now.hour)
+        append('|')
+        participants.sortedBy { it.value }.forEach { append(it.value).append(',') }
+    }
+
+    /**
      * Returns the current scene, or a freshly derived one when there is none.
      * A brand new scene is returned with [dev.charaly.runtime.domain.SceneState.PENDING]
      * so the caller can decide to commit it as an event.
@@ -137,13 +156,24 @@ class SceneDirector(private val definition: WorldDefinition) {
             memory.characterId in participants &&
                 memory.tier == dev.charaly.runtime.domain.memory.MemoryTier.SCENE
         }
+        // Cache arrivals/departures: they depend only on (locationId, clock hour, participants).
+        // The clock is bucketed to the hour so a cache entry survives within the same hour.
+        // Invalidated when the hour changes or the participant set changes.
+        val cacheKey = arrivalsDeparturesKey(scene.locationId, instance.worldClock.now, participants.toSet())
+        val cached = arrivalsDeparturesCache[cacheKey]
+        val (arr, dep) = cached ?: arrivals(instance, scene.locationId, participants.toSet()).let { a ->
+            departures(instance, scene.locationId, participants.toSet()).let { d ->
+                a to d
+            }
+        }.also { (a, d) -> arrivalsDeparturesCache[cacheKey] = a to d }
+
         return scene.copy(
             participants = participants,
             activeThreadIds = activeThreads.map { it.id },
             objective = scene.objective.ifBlank { objectiveOf(activeThreads, scene.locationId, instance) },
             mood = moodOf(instance, scene.locationId, participants.toSet(), activeThreads),
-            possibleArrivals = arrivals(instance, scene.locationId, participants.toSet()),
-            possibleDepartures = departures(instance, scene.locationId, participants.toSet()),
+            possibleArrivals = arr,
+            possibleDepartures = dep,
             incidents = incidents,
             tempo = tempoFor(incidents, activeThreads),
             focusCharacterId = scene.focusCharacterId ?: focus,

@@ -9,6 +9,7 @@ import dev.charaly.runtime.domain.Location
 import dev.charaly.runtime.domain.LocationId
 import dev.charaly.runtime.domain.PersonaBinding
 import dev.charaly.runtime.domain.Relationship
+import dev.charaly.runtime.domain.SceneId
 import dev.charaly.runtime.domain.SeedEvent
 import dev.charaly.runtime.domain.StoryInstance
 import dev.charaly.runtime.domain.StoryInstanceId
@@ -110,6 +111,9 @@ object StoryInstanceFactory {
             id = options.instanceId,
             storyPackId = pack.id,
             packTitle = pack.title,
+            // Pinned here and never revised: this story plays the edition it was opened
+            // from, even if a newer edition of the same pack is installed tomorrow.
+            packVersion = pack.semanticVersion,
             title = options.title.ifBlank { defaultStoryTitle(pack, scenario) },
             scenarioId = scenario?.id.orEmpty(),
             persona = options.persona,
@@ -211,6 +215,14 @@ object StoryInstanceFactory {
             }
         }
 
+        // What this story is being asked to do. Seeded as state belonging to the instance
+        // (never to the pack), so two playthroughs of one pack have their own quests.
+        instance = instance.copy(objectives = ObjectiveEngine.seed(pack, scenario, startTime))
+
+        // The opening scene, when the scenario names one. Opened through the engine like
+        // any other scene, which is why its participants must genuinely be there.
+        instance = openAuthoredScene(instance, engine, pack, scenario?.initialSceneId, startTime)
+
         (pack.initialWorldState.startActivities + scenario?.startActivities.orEmpty())
             .forEach { (characterId, activity) ->
                 instance = engine.applyImmediately(
@@ -295,6 +307,45 @@ object StoryInstanceFactory {
     }
 
     // ------------------------------------------------------------------
+
+    /**
+     * Opens an authored scene as part of story start.
+     *
+     * Silent when the scene cannot legitimately open (someone is elsewhere, the scene is
+     * already running): story start must never fail because an opening scene was
+     * over-specified. The engine's refusal is honoured rather than forced.
+     */
+    private fun openAuthoredScene(
+        instance: StoryInstance,
+        engine: EventEngine,
+        pack: StoryPack,
+        sceneId: String?,
+        at: StoryTime,
+    ): StoryInstance {
+        if (sceneId.isNullOrBlank()) return instance
+        val template = pack.scene(sceneId) ?: return instance
+        val here = instance.characters
+            .filterValues { it.locationId == template.locationId }
+            .keys
+        val participants = template.participantCharacterIds.filter { it in here }
+            .ifEmpty { here.toList() }
+        val payload = EventEffect.StartScene(
+            locationId = template.locationId,
+            participants = participants,
+            objective = template.objective,
+            threadIds = template.threadIds,
+        ).toPayload(
+            EffectContext(
+                instance = instance,
+                at = at,
+                eventKey = "scene:${template.id}",
+                sceneId = SceneId("scene-${template.id}"),
+                memoryIdSeed = "mem-${template.id}",
+            ),
+        ) ?: return instance
+        val applied = engine.applyImmediately(instance, payload, EventOrigin.STORY_PACK)
+        return (applied as? EventApplication.Applied)?.instance ?: instance
+    }
 
     private fun defaultStoryTitle(pack: StoryPack, scenario: StartingScenario?): String =
         scenario?.title?.let { "${pack.title} · $it" } ?: pack.title

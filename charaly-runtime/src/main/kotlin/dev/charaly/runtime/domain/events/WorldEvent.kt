@@ -86,6 +86,42 @@ sealed interface EventPayload {
     val summary: String
 }
 
+/**
+ * Whether an event is about somebody's INNER state - what they noticed, believe, suspect,
+ * remember, owe or are owed.
+ *
+ * Those belong to their owner and to their owner's prompt section. Placing one in a shared
+ * "what just happened" feed leaks it to every character present - which is how one
+ * character's theory about a stranger turns up in another's mouth. `CharacterMindTest` and
+ * `CommitmentContextTest` exist to catch exactly that.
+ *
+ * The default is "public": an event nobody classified is a world event, and a world event is
+ * what a bystander sees. Classifying is therefore additive and safe to forget; forgetting
+ * exposes rather than hides, which is the failure direction worth having.
+ */
+val EventPayload.isPersonal: Boolean
+    get() = when (this) {
+        is CharacterObserved,
+        is BeliefFormed,
+        is SuspicionRaised,
+        is MisconceptionFormed,
+        is MisconceptionCorrected,
+        is PromiseMade,
+        is PromiseResolved,
+        is PromiseForgotten,
+        is GoalUpdated,
+        is ConsequenceArmed,
+        is ConsequenceFired,
+        is SecretRevealed,
+        is KnowledgeDiscovered,
+        is KnowledgeRevoked,
+        is MemoryCreated,
+        is MemoryUpdated,
+        -> true
+        else -> false
+    }
+
+
 @Serializable
 @SerialName("CharacterMoved")
 data class CharacterMoved(
@@ -525,6 +561,11 @@ data class ConsequenceFired(
  * Modelling that as "the fact exists" is how a reveal quietly becomes omnipotent, so
  * the payload carries who was told and the engine grants knowledge one recipient at a
  * time like anything else.
+ *
+ * The payload's claim about [revealedBy] is a *proposal*, not evidence: the engine
+ * refuses the reveal unless the revealer actually knows [factId]
+ * (`EventRejection.REVEALER_DOES_NOT_KNOW`), so a model or an authored effect cannot
+ * hand a stranger the story's secrets by asserting they already had them.
  */
 @Serializable
 @SerialName("SecretRevealed")

@@ -608,7 +608,14 @@ class PresentationTest {
             availableRamBytes = 0L,
         )
         assertEquals("Yüklenemedi", snapshot.stateLabel)
-        assertFalse(snapshot.actions.canUse)
+        // "Use" STAYS AVAILABLE on purpose.
+        //
+        // `loadFailed` is a record of one past attempt, and a load can fail for reasons that
+        // are gone by the next try - a low-memory moment, a process still starting up. Grey
+        // out here and one bad attempt became permanent: the model sat in the library saying
+        // "could not load" with every control dead and no way back but a reinstall. The
+        // failure is still shown (stateLabel + verdictMessage); it is just not a lock.
+        assertTrue(snapshot.actions.canUse)
         assertEquals("This model file could not be loaded.", snapshot.verdictMessage)
     }
 

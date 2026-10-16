@@ -10,9 +10,22 @@ import dev.charaly.runtime.model.BuiltInModelCatalog
 import dev.charaly.runtime.model.JsonModelRegistry
 import dev.charaly.runtime.model.ModelCatalog
 import dev.charaly.runtime.model.ModelDownloadManager
+import dev.charaly.runtime.net.HttpTransport
+import dev.charaly.runtime.pack.DemoStoryPacks
 import dev.charaly.runtime.persistence.FileCharalyStorage
 import dev.charaly.runtime.persistence.JsonCharalyRepository
 import dev.charaly.runtime.session.CharalyRuntime
+import dev.charaly.runtime.session.WorldDefinitionResolver
+import dev.charaly.runtime.storypack.BuiltInStoryCatalog
+import dev.charaly.runtime.storypack.JsonStoryPackRegistry
+import dev.charaly.runtime.storypack.PackInstallStore
+import dev.charaly.runtime.storypack.RemoteStoryCatalog
+import dev.charaly.runtime.storypack.StoryCatalog
+import dev.charaly.runtime.storypack.StoryCatalogItem
+import dev.charaly.runtime.storypack.StoryPackDownloadManager
+import dev.charaly.runtime.storypack.StoryPackDownloadMetadata
+import dev.charaly.runtime.storypack.StoryPackDownloadSource
+import dev.charaly.runtime.storypack.StoryPackInstaller
 
 /**
  * Charaly's composition root.
@@ -119,6 +132,14 @@ class CharalyApplication : Application() {
 
         /** The single crash record, in app-private storage. */
         const val CRASH_FILE = "last-crash.txt"
+
+        /**
+         * Where the story catalog is published.
+         *
+         * Discovery only: nothing in a story can reach it, and a fetch that fails leaves the
+         * built-in listings on screen with a footnote.
+         */
+        const val STORY_CATALOG_URL = "https://catalog.charaly.dev/story-packs.json"
     }
 
     /**
@@ -159,10 +180,119 @@ class CharalyApplication : Application() {
         }
     }
 
+    /**
+     * What is installed on this device, and which editions of it.
+     *
+     * Its own document from the pack *content* store on purpose: "installed" is a claim -
+     * validated, checksummed, landed whole - and it is only made true here, after an import
+     * has committed. See `dev.charaly.runtime.storypack.JsonStoryPackRegistry`.
+     */
+    val packRegistry: dev.charaly.runtime.storypack.StoryPackRegistry by lazy {
+        JsonStoryPackRegistry(FileCharalyStorage(dev.charaly.app.model.CharalyPaths.documents(this)))
+    }
+
+    /**
+     * Where installed pack editions physically live.
+     *
+     * Under `documents()` rather than `cacheDir`: a pack is user-visible content with saves
+     * pinned to its editions, and the system may reclaim cache without asking. Staging
+     * happens inside this tree and is swept on cold start.
+     */
+    val packStore: PackInstallStore by lazy {
+        PackInstallStore(java.io.File(dev.charaly.app.model.CharalyPaths.documents(this), "installed-packs"))
+    }
+
+    /**
+     * The one door content comes through: inspect, import, export, delete.
+     *
+     * Export counts stories per pack through the repository so the delete guard reads from
+     * the same source the Library lists from - a second tally would eventually disagree and
+     * either block a harmless delete or allow a harmful one.
+     */
+    val packInstaller: StoryPackInstaller by lazy {
+        StoryPackInstaller(
+            packs = repository,
+            registry = packRegistry,
+            store = packStore,
+            engineVersion = BuildConfig.VERSION_NAME,
+            storyCountFor = { packId ->
+                repository.listInstances().count { it.storyPackId.value == packId }
+            },
+        )
+    }
+
+    /**
+     * The single socket in the app.
+     *
+     * One transport for the model Hub and for the story catalog, because "the app needs the
+     * network for X" should be answerable by listing one field - and because two transports
+     * would eventually disagree about timeouts and user agents on the same connection.
+     */
+    private val httpTransport: HttpTransport by lazy {
+        dev.charaly.app.net.AndroidHttpTransport()
+    }
+
+    /**
+     * What the catalog *offers*, as opposed to what is installed.
+     *
+     * The built-in listings are the three demo packs expressed as ordinary catalog entries
+     * - same ids-are-not-filenames rules, same download pipeline. Wrapped in the remote
+     * catalog so a server can publish more, with the built-ins as the offline floor: a
+     * catalog that cannot be fetched degrades to these, with a footnote, and never blanks
+     * the screen.
+     */
+    val storyCatalog: StoryCatalog by lazy {
+        val builtIn = BuiltInStoryCatalog(
+            items = DemoStoryPacks.all.map { pack ->
+                StoryCatalogItem(
+                    id = "builtin.${pack.id.value}",
+                    packId = pack.id.value,
+                    packVersion = pack.semanticVersion,
+                    title = pack.title,
+                    description = pack.description,
+                    author = pack.author,
+                    premise = pack.identity.premise,
+                    tags = pack.genreChips(),
+                    sizeBytes = 0,
+                    download = StoryPackDownloadMetadata(source = StoryPackDownloadSource.BUILTIN),
+                )
+            },
+        )
+        RemoteStoryCatalog(
+            transport = httpTransport,
+            manifestUrl = STORY_CATALOG_URL,
+            fallback = builtIn,
+        )
+    }
+
+    /**
+     * Download -> verify -> install -> register, for catalog packs.
+     *
+     * Built-in packs take the *same* pipeline: `builtinSource` simply hands the exporter the
+     * demo's own `StoryPack`, so the bytes are produced, checksummed, decoded, validated and
+     * installed exactly like a downloaded one. A seeding shortcut here is how the pipeline
+     * stops being the pipeline.
+     */
+    val packDownloads: StoryPackDownloadManager by lazy {
+        StoryPackDownloadManager(
+            transport = httpTransport,
+            installer = packInstaller,
+            temporaryDirectory = java.io.File(cacheDir, "story-downloads"),
+            builtinSource = { item ->
+                DemoStoryPacks.byId(item.packId)?.let { packInstaller.exportPack(it) }
+            },
+        )
+    }
+
     val charaly: CharalyRuntime by lazy {
         CharalyRuntime(
             repository = repository,
             engine = inferenceEngine,
+            // The world's static half, resolved through the pack *editions* a story pinned:
+            // a playthrough begun in 1.1.0 reads 1.1.0's characters and places even after
+            // 1.2.0 is installed beside it, which is the anti-corruption rule of the whole
+            // pack system - and needs both halves wired to the installer to hold.
+            resolver = WorldDefinitionResolver(repository, packInstaller),
             params = GenerationParams(
                 maxTokens = 320,
                 temperature = 0.85f,
@@ -172,6 +302,24 @@ class CharalyApplication : Application() {
                 repeatPenalty = 1.1f,
             ),
             library = characterLibrary,
+            // The one lazy loader. Every story turn goes through it, and so does the
+            // ViewModel's own pre-flight, so "which model is resident" cannot have two
+            // answers.
+            residency = modelResidency,
+            editions = packInstaller,
+        )
+    }
+
+    /**
+     * The single lazy loader for "this binding -> its weights in memory".
+     *
+     * Owns the load lock for the whole process, so a story turn and a model switch cannot
+     * interleave into two half-loaded models. See [dev.charaly.app.model.LocalModelResidency].
+     */
+    val modelResidency: dev.charaly.app.model.LocalModelResidency by lazy {
+        dev.charaly.app.model.LocalModelResidency(
+            registry = modelRegistry,
+            engine = inferenceEngine,
         )
     }
 
@@ -202,10 +350,15 @@ class CharalyApplication : Application() {
             previousHandler?.uncaughtException(thread, throwable)
         }
         // Warm the repositories on a background thread: launching the app must
-        // never require the network, and must not block the main thread.
+        // never require the network, and must not block the main thread. The pack
+        // installer's sweep rides along: an import interrupted by a crash leaves a
+        // staging directory behind, and cold start is the moment that is cleaned up.
         Thread(
             {
-                kotlinx.coroutines.runBlocking { runCatching { charaly.restore() } }
+                kotlinx.coroutines.runBlocking {
+                    runCatching { charaly.restore() }
+                    runCatching { packInstaller.sweep() }
+                }
             },
             "charaly-restore",
         ).apply {

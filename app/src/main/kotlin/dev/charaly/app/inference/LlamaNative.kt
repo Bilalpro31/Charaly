@@ -51,7 +51,20 @@ internal object LlamaNative {
      * gets one consistent, catchable answer.
      */
     private val loaded: Boolean = try {
-        System.loadLibrary("charaly_llama")
+        // A host-side verification build supplies the shared object by absolute path
+        // (-Dcharaly.native.lib=...), because it is not on any `java.library.path` and is
+        // not an Android ABI artifact at all. Production never sets the property and takes
+        // `loadLibrary` exactly as before, so this cannot change what ships.
+        //
+        // It exists so "the model really generated these tokens" can be asserted against
+        // the SAME JNI entry points and the SAME llama.cpp that the APK uses, on a machine
+        // with no device attached - rather than being taken on faith from a mock.
+        val explicit = System.getProperty(EXPLICIT_LIBRARY_PROPERTY).orEmpty()
+        if (explicit.isNotBlank()) {
+            System.load(explicit)
+        } else {
+            System.loadLibrary("charaly_llama")
+        }
         true
     } catch (error: UnsatisfiedLinkError) {
         false
@@ -93,6 +106,22 @@ internal object LlamaNative {
         path: String,
         contextSize: Int,
         threads: Int,
+        /**
+         * Threads for evaluating a PROMPT, as opposed to [threads] for decoding one token.
+         *
+         * PHASE 10. They are separate pools inside llama.cpp
+         * (`llama_context::graph_compute`: `batched ? n_threads_batch : n_threads`) and
+         * they want separate numbers: decoding one token is memory-bandwidth bound and
+         * flattens past about four threads, while evaluating a prompt is compute bound and
+         * scales nearly linearly. Time to first token is dominated by the prompt, so this
+         * is the number that actually decides how long a player waits.
+         *
+         * 0 means "use the device's core count, capped". It was not reachable at all
+         * before: the value defaulted to llama.cpp's `GGML_DEFAULT_N_THREADS`, a flat 4,
+         * which pinned every turn's prompt evaluation to four threads regardless of the
+         * device.
+         */
+        threadsBatch: Int,
         gpuLayers: Int,
         progressCallback: (Int, String) -> Unit,
     ): Long
@@ -125,6 +154,7 @@ internal object LlamaNative {
         temperature: Float,
         topP: Float,
         topK: Int,
+        minP: Float,
         repeatPenalty: Float,
         seed: Long,
         /**
@@ -144,6 +174,31 @@ internal object LlamaNative {
 
     /** Last native error message, if any. */
     external fun lastError(): String
+
+    /**
+     * The real generation path's timings for the most recent turn, as flat
+     * `[key, value, ...]` pairs.
+     *
+     * Distinct from [benchmark]: this is taken around the actual story prompt the app
+     * sent, not a fixed benchmark prompt, so it is what a per-turn performance readout
+     * needs. An empty array means no turn has been timed, which is "not measured" and
+     * never zero.
+     */
+    external fun lastGenerateStats(): Array<String>
+
+    /**
+     * Renders chat messages with the loaded model's own chat template.
+     *
+     * `messages` is a flat `[role, content, role, content, ...]` array, matching the flat
+     * contract the rest of this boundary speaks. The prompt ends with the opening of the
+     * assistant's turn (`add_assistant = true`), ready for the model to continue.
+     *
+     * Returns an empty string when the model has no template or it could not be applied;
+     * the caller must fall back to the plain turn format rather than send a malformed
+     * prompt. This is the difference between an instruct model ending its turn at its own
+     * end-of-turn token and rambling to the token cap in a format it was never trained on.
+     */
+    external fun applyChatTemplate(handle: Long, messages: Array<String>): String
 
     // ---- benchmarking ----------------------------------------------------
     //
@@ -175,4 +230,11 @@ internal object LlamaNative {
      * reported no devices, which the UI must show as unknown rather than as CPU.
      */
     external fun availableBackends(): Array<String>
+
+    /**
+     * System property naming a `libcharaly_llama.so` to load by absolute path.
+     *
+     * Empty (and therefore inert) in production. See the initialiser for why it exists.
+     */
+    const val EXPLICIT_LIBRARY_PROPERTY: String = "charaly.native.lib"
 }

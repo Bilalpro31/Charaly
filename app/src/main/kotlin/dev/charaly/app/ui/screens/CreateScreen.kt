@@ -16,7 +16,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.PersonAddAlt1
+import androidx.compose.material.icons.outlined.CollectionsBookmark
 import androidx.compose.material.icons.outlined.EditNote
+import androidx.compose.material.icons.outlined.Inventory2
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -41,25 +43,30 @@ import dev.charaly.app.ui.design.CharalyShapes
  *
  * ## The V5 shape
  *
- * Two doors, each a whole-surface target with a name and one honest sentence:
+ * Four doors, each a whole-surface target with a name and one honest sentence:
  *
  * ```
- *   Write your own world    the authoring flow, three steps
- *   Import a character      a SillyTavern card, previewed in full first
+ *   Write your own world        the authoring flow, three steps
+ *   Import a character          a SillyTavern card, previewed in full first
+ *   Import a story pack         a .charaly-pack, reviewed in full before anything installs
+ *   Story catalog               what is installed, and what can be downloaded
  * ```
- *
- * What is deliberately absent: an "Import a story pack" door. There is no pack import in
- * this build, and a door that opens onto nothing is worse than no door - the handoff's
- * rule is that a row without a real action shows no button, and that applies to a whole
- * card more than to a row.
  *
  * Each card is 48dp+ tall, described for screen readers, and the whole surface is the
- * target rather than a small arrow in the corner.
+ * target rather than a small arrow in the corner. Every door opens onto something real:
+ * the rule is that a row without a real action shows no button, and that applies to a whole
+ * card more than to a row.
+ *
+ * The two pack doors take their labels as plain Turkish rather than through a resource,
+ * matching the neighbouring screens' hard-coded copy and keeping this pass's strings out of
+ * the resource pipeline entirely.
  */
 @Composable
 fun CreateScreen(
     onWriteWorld: () -> Unit,
     onImportCharacter: () -> Unit,
+    onImportPack: () -> Unit,
+    onOpenPackStore: () -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier
@@ -97,6 +104,24 @@ fun CreateScreen(
                 body = stringResource(R.string.create_import_character_desc),
                 icon = Icons.Filled.PersonAddAlt1,
                 onClick = onImportCharacter,
+            )
+        }
+
+        item(key = "import-pack") {
+            CreateCard(
+                title = "Hikâye Paketi İçe Aktar",
+                body = "Bir .charaly-pack dosyası seçin. Kurulmadan önce içeriği incelenir.",
+                icon = Icons.Outlined.Inventory2,
+                onClick = onImportPack,
+            )
+        }
+
+        item(key = "pack-catalog") {
+            CreateCard(
+                title = "Hikâye Kataloğu",
+                body = "Yüklü paketleri yönetin, yeni dünyalar indirin.",
+                icon = Icons.Outlined.CollectionsBookmark,
+                onClick = onOpenPackStore,
             )
         }
     }

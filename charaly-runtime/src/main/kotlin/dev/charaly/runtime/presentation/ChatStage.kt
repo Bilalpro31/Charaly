@@ -68,6 +68,17 @@ data class ChatStage(
     val dayLabel: String = "",
     /** "3 people here", or empty when you are alone. */
     val presenceLabel: String,
+
+    /**
+     * How tense the room is, 0..1 - a meter, never a number.
+     *
+     * The axis the engine keeps is a 0..100 score, and a score is the one thing a player
+     * cannot act on: there is no reference frame for 62. A filled bar answers the same
+     * question viscerally, which is what the scene's tension meter draws. Lives here rather
+     * than being re-derived in the composable so the meter and the words about the
+     * relationship cannot disagree.
+     */
+    val tension: Float = 0f,
     val theme: ResolvedTheme,
     val artwork: PackArtwork,
 
@@ -322,6 +333,20 @@ object ChatStagePresenter {
             }
         }
 
+        // The room's tension, read from the relationship with the person the scene is with
+        // and clamped to a meter's range. Max across whoever is here rather than an average,
+        // because what a player feels is the tensest person in the room.
+        val tension = instance.relationships.values
+            .filter { relationship ->
+                focusId != null && (
+                    relationship.sourceId == focusId ||
+                        relationship.targetId == focusId
+                    )
+            }
+            .maxOfOrNull { it.tension }
+            ?.let { (it / 100f).coerceIn(0f, 1f) }
+            ?: 0f
+
         val failure = failureOf(phase, failureMessage, selection)
         val modelLine = ModelStagePresenter.modelLine(selection)
         // Built here rather than in a composable, so the backdrop, the header's location and
@@ -344,6 +369,7 @@ object ChatStagePresenter {
             clockLabel = instance.worldClock.now.formatClock(),
             dayLabel = "${instance.worldClock.now.day}. Gün",
             presenceLabel = presenceLabel(instance, definition, playerId),
+            tension = tension,
             theme = theme,
             artwork = PackArtwork.generated("banner-${instance.storyPackId.value}"),
             people = presences(instance, definition, playerId),
@@ -651,7 +677,11 @@ object ChatStagePresenter {
             // problems and the user can only act on one of them.
             model.loadFailure.isNotBlank() -> model.loadFailure
             model.blocked == dev.charaly.runtime.model.ModelBlockReason.FILE_MISSING ->
-                Loc.t("model.file_missing")
+                if (model.unresolvedBindingId.isNotBlank()) {
+                    Loc.t("model.missing_for_story")
+                } else {
+                    Loc.t("model.file_missing")
+                }
             else -> raw
         }
 

@@ -71,6 +71,16 @@ fun ModelTestReport(
      */
     onOpenModels: () -> Unit = {},
     onClear: () -> Unit,
+    /**
+     * Whether the engine's own internals are printed below the verdict.
+     *
+     * Off by default and driven by Settings' Developer Mode. The verdict itself - does
+     * this model actually produce text on this device - is a *product* answer and belongs
+     * to everybody; the ggml backend name, the engine build, and token accounting are the
+     * machinery that produced it, and a story reader is not debugging anything. The rows
+     * exist, they are simply not dressed as product.
+     */
+    showInternals: Boolean = false,
 ) {
     val running = phase.state.isRunning
     // "Can we test anything?" is the question the empty state answers. Decided from the
@@ -154,23 +164,37 @@ fun ModelTestReport(
                     headline = Loc.t("model-test.passed"),
                     tone = VerdictTone.GOOD,
                 )
-                // The identity rows. Present on a pass, because "it works" is only useful
-                // alongside "and this is the file it was".
+                // THE REPORT, as the specification lists it: model, architecture, file size,
+                // status, load time, first token, tokens/sec, backend.
+                //
+                // Every one of these eight is on the product surface, not behind Developer
+                // Mode. A user whose model is slow or unstable needs "Load time" and "First
+                // token" exactly as much as a developer does - they are the difference
+                // between "this model is broken" and "this model is big".
+                //
+                // A figure that was not measurable says "Not measured". It is never
+                // synthesised, and never quietly replaced with a zero: "0 tok/s" reads as a
+                // measurement of a broken model where "-" is the honest "we did not measure".
+                val measured = phase.tokens > 0 && phase.decodeMillis > 0L
                 phase.info?.let { info ->
                     ReportRow(Loc.t("model-test.model"), info.displayName.ifBlank { subjectName })
-                    ReportRow(Loc.t("model-test.architecture"), info.metadata["general.architecture"] ?: "-")
-                    ReportRow(Loc.t("model-test.size"), info.parameterSizeBytes.asSizeLabel())
-                    ReportRow(Loc.t("models.context"), info.contextSize.toString())
-                    ReportRow(Loc.t("model-test.backend"), phase.backend.ifBlank { "-" })
-                    ReportRow(Loc.t("model-test.engine"), phase.version.ifBlank { "-" })
+                    ReportRow(Loc.t("model-test.architecture"), measuredOrNot(info.metadata["general.architecture"]))
+                    ReportRow(Loc.t("model-test.size"), measuredOrNot(info.parameterSizeBytes.takeIf { it > 0 }?.asSizeLabel()))
                 }
-                ReportRow(Loc.t("model-test.load_time"), phase.loadMillis.asMillisLabel())
-                ReportRow(Loc.t("model-test.first_token"), phase.firstTokenMillis.asMillisLabel())
-                ReportRow(
-                    label = Loc.t("model-test.speed"),
-                    value = phase.tokensPerSecondLabel.ifBlank { "-" },
-                )
-                ReportRow(Loc.t("model-test.tokens"), phase.tokens.toString())
+                ReportRow(Loc.t("model-test.status"), Loc.t("model-test.passed"))
+                ReportRow(Loc.t("model-test.load_time"), measuredOrNot(phase.loadMillis.takeIf { it > 0L }?.asMillisLabel()))
+                ReportRow(Loc.t("model-test.first_token"), measuredOrNot(phase.firstTokenMillis.takeIf { it > 0L }?.asMillisLabel()))
+                ReportRow(Loc.t("model-test.speed"), measuredOrNot(phase.tokensPerSecondLabel.takeIf { it.isNotBlank() }))
+                // Backend comes from ggml's own device registry. "unknown" means ggml did
+                // not answer, and that is reported as not measured rather than as CPU.
+                ReportRow(Loc.t("model-test.backend"), measuredOrNot(phase.backend.takeIf { it.isNotBlank() && it != "unknown" }))
+                if (showInternals) {
+                    phase.info?.let { info ->
+                        ReportRow(Loc.t("models.context"), info.contextSize.toString())
+                    }
+                    ReportRow(Loc.t("model-test.engine"), phase.version.ifBlank { Loc.t("models.not_measured") })
+                    ReportRow(Loc.t("model-test.tokens"), phase.tokens.toString())
+                }
                 Text(
                     text = Loc.t("model-test.duration_only"),
                     style = MaterialTheme.typography.bodySmall,
@@ -212,13 +236,20 @@ fun ModelTestReport(
                 )
                 // The identity of what was tested still matters on a failure: "the file is
                 // unsupported" and "the file is missing" are different problems.
+                // The full report on a failure too - and this is where "Not measured" earns
+                // its place. A model that never loaded has no first token and no tokens/sec,
+                // and printing dashes there used to read like "zero", which is a claim about
+                // the model rather than about the test.
                 phase.info?.let { info ->
                     ReportRow(Loc.t("model-test.model"), info.displayName.ifBlank { subjectName })
-                    ReportRow(Loc.t("model-test.size"), info.parameterSizeBytes.asSizeLabel())
+                    ReportRow(Loc.t("model-test.architecture"), measuredOrNot(info.metadata["general.architecture"]))
+                    ReportRow(Loc.t("model-test.size"), measuredOrNot(info.parameterSizeBytes.takeIf { it > 0 }?.asSizeLabel()))
                 }
-                if (phase.loadMillis > 0L) {
-                    ReportRow(Loc.t("model-test.load_time"), phase.loadMillis.asMillisLabel())
-                }
+                ReportRow(Loc.t("model-test.status"), Loc.t("model-test.failed"))
+                ReportRow(Loc.t("model-test.load_time"), measuredOrNot(phase.loadMillis.takeIf { it > 0L }?.asMillisLabel()))
+                ReportRow(Loc.t("model-test.first_token"), Loc.t("models.not_measured"))
+                ReportRow(Loc.t("model-test.speed"), Loc.t("models.not_measured"))
+                ReportRow(Loc.t("model-test.backend"), measuredOrNot(phase.backend.takeIf { it.isNotBlank() && it != "unknown" }))
             }
         }
 
@@ -262,6 +293,16 @@ private fun failureSentence(failure: TestFailure?): String = when (failure) {
     is TestFailure.Of -> ErrorMessages.of(failure.error)
     is TestFailure.Other -> Loc.t("error.generation_failed")
 }
+
+/**
+ * The one spelling of "we did not measure this".
+ *
+ * A bare "-" is ambiguous - it reads as "none", which for "tokens/sec" is a claim the model
+ * is broken. "Not measured" says what is actually true: the figure does not exist.
+ */
+@Composable
+private fun measuredOrNot(value: String?): String =
+    value?.takeIf { it.isNotBlank() && it != "-" } ?: Loc.t("models.not_measured")
 
 private enum class VerdictTone { GOOD, BAD }
 

@@ -452,13 +452,37 @@ object CharalyProfileFactory {
      * `<charaly:` stops the generation right after a proposal, so the action tag never
      * gets continued by the model elaborating on its own protocol. `</charaly:` matters
      * for the same reason on the closing side.
+     *
+     * PHASE 8 - the turn-end markers. Measured with the real model and no Charaly prompt
+     * around it (`BareTurkishCapabilityTest`): the model finishes its reply and then keeps
+     * going, writing a bare `user` on a new line and then answering it itself, or writing
+     * `Assistant:`. That is the model turning over and answering on the player's behalf,
+     * and it is the single largest source of "unrelated sentences" in a reply.
+     *
+     * It happens because llama.cpp only stops on a real EOG token, and a quantised 1.5B
+     * model does not reliably emit `<|im_end|>` / `</s>` - every Phase 7 turn ended on
+     * `stop_reason=length`, never on `eog`. The turns below are the marker spellings those
+     * templates use, so the decoder is stopped at the turn boundary even when the model
+     * fails to emit its own end token. These are the model's OWN template conventions, read
+     * from the template that is already applied - no new template is invented.
      */
     private fun stopSequences(): List<String> = listOf(
         "<charaly:",
         "</charaly:",
+        // Turn-end / turn-begin markers used by the chat templates this app already applies.
+        "<|im_end|>",
+        "<|im_start|>",
+        "<|end_of_text|>",
+        "<|endoftext|>",
+        "<|eot_id|>",
+        "</s>",
+        // Plain-text role headers, for base models and the plain-prompt fallback.
         "\nUSER:",
         "\nSYSTEM:",
         "\nHUMAN:",
+        "\nuser:",
+        "\nassistant:",
+        "\nAssistant:",
     )
 
     const val MIN_CONTEXT = 2_048

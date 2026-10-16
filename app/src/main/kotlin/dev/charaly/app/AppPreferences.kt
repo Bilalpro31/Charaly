@@ -41,6 +41,17 @@ class AppPreferences(context: Context) {
         get() = prefs.getBoolean(KEY_REDUCE_MOTION, false)
         set(value) = prefs.edit().putBoolean(KEY_REDUCE_MOTION, value).apply()
 
+    /**
+     * The stage's HUD: the tension meter and the four scene tools.
+     *
+     * On by default and switchable off, because overlaying chrome on a scene is a
+     * preference about how to read rather than a feature. Turning it off gives the
+     * transcript the width back.
+     */
+    var hudEnabled: Boolean
+        get() = prefs.getBoolean(KEY_HUD, true)
+        set(value) = prefs.edit().putBoolean(KEY_HUD, value).apply()
+
     /** Threads used by the local inference engine. 0 means "let llama.cpp decide". */
     var threads: Int
         get() = prefs.getInt(KEY_THREADS, 0)
@@ -82,6 +93,7 @@ class AppPreferences(context: Context) {
         const val KEY_DEVELOPER = "developer_mode"
         const val KEY_DARK = "dark_theme"
         const val KEY_REDUCE_MOTION = "reduce_motion"
+        const val KEY_HUD = "stage_hud"
         const val KEY_THREADS = "inference_threads"
         const val KEY_LANGUAGE = "app_language"
         const val KEY_DRAFT = "new_story_draft"

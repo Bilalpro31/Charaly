@@ -82,7 +82,7 @@ fun CharacterImportScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .background(Charaly.surface.void),
+            .background(Charaly.surface.base),
         contentPadding = PaddingValues(
             start = Charaly.space.gutter,
             end = Charaly.space.gutter,

@@ -230,7 +230,12 @@ class ContextBuilderTest {
     fun `the request carries the speaker and the user input`() {
         val request = builder.buildRequest(instance, sceneAt(library, listOf(alice)), alice, "Where is the key?")
         assertEquals(alice, request.speakerId)
-        assertEquals("Where is the key?", request.messages.last().content)
+        // The player's words lead the message verbatim (the volatile state reminder is
+        // appended AFTER them, see `PrefixBreakpointDiagnosticTest`), and the turn is theirs.
+        assertTrue(
+            "the player's words must lead the message verbatim",
+            request.messages.last().content.startsWith("Where is the key?"),
+        )
         assertEquals(ChatRole.USER, request.messages.last().role)
     }
 
@@ -246,7 +251,11 @@ class ContextBuilderTest {
         )
         val context = builder.buildContext(saved, saved.currentScene()!!, alice, "hello")
         val request = builder.buildRequest(context)
-        assertEquals("input must appear exactly once", 1, request.messages.count { it.content == "hello" })
+        assertEquals(
+            "input must appear exactly once (it may lead a message the state reminder tails)",
+            1,
+            request.messages.count { it.content == "hello" || it.content.startsWith("hello\n") },
+        )
     }
 
     @Test
@@ -254,6 +263,68 @@ class ContextBuilderTest {
         val request = builder.buildRequest(instance, sceneAt(library, listOf(alice)), alice, "hi")
         assertTrue(request.systemPrompt.isNotBlank())
         assertFalse("system text lives in systemPrompt", request.messages.any { it.role == ChatRole.SYSTEM })
+    }
+
+    @Test
+    fun `the stable and volatile blocks together are the whole system prompt`() {
+        // The split exists to document the cache boundary, not to lose text: concatenating
+        // the two halves must reproduce the single system string the inspector and the size
+        // estimate use, so no rule, memory or clock line can fall through it. (Phase 6
+        // re-cut the boundary along churn rate - memory and mind now travel in the volatile
+        // half, because they change on ordinary turns and belong behind the transcript.)
+        val context = builder.buildContext(instance, sceneAt(library, listOf(alice)), alice, "hi")
+        assertEquals(context.systemPrompt(), context.systemPromptStable() + context.systemPromptVolatile())
+        assertTrue("rules and identity are stable", context.systemPromptStable().contains("WORLD RULES"))
+        assertTrue("knowledge is stable", context.systemPromptStable().contains("WHAT YOU KNOW"))
+        assertTrue(
+            "the clock and pace are in the trailing half",
+            context.systemPromptVolatile().contains("RIGHT NOW") &&
+                context.systemPromptVolatile().contains("story time:") &&
+                context.systemPromptVolatile().contains("PACE"),
+        )
+    }
+
+    @Test
+    fun `the request carries the action protocol in the system block`() {
+        // Without the protocol the model is never told it may propose a world change, so it
+        // only ever narrates. The parser and validator are unchanged; this is the one place
+        // the model learns the schema.
+        val request = builder.buildRequest(instance, sceneAt(library, listOf(alice)), alice, "hi")
+        assertTrue(
+            "the system block must carry the action protocol",
+            request.systemPrompt.contains("<charaly:action") && request.systemPrompt.contains("move, discover, relate, advance_thread, end_scene"),
+        )
+    }
+
+    @Test
+    fun `the request carries one system block and keeps it out of the transcript`() {
+        // The shipped contract: system text lives in `systemPrompt`, the transcript is
+        // messages, and the user input appears once. Phase 6 moved the *volatile* half -
+        // memories, mind, what just happened, clock and pace - behind the transcript so the
+        // KV cache keeps the conversation across turns (`PrefixBreakpointDiagnosticTest`);
+        // its CONTENT is unchanged and every line still reaches the model. What is pinned
+        // here is therefore stronger than before: all of it reaches the model, none of it
+        // enters the transcript, and the state reminder trails the dialogue instead of
+        // interrupting it.
+        val request = builder.buildRequest(instance, sceneAt(library, listOf(alice)), alice, "hi")
+        val rendered = request.systemPrompt + "\n\n" + request.messages.joinToString("\n") { it.content }
+
+        assertTrue("the system block leads with the stable text", request.systemPrompt.contains("WORLD RULES"))
+        assertTrue("the constant action protocol rides in the stable system block", request.systemPrompt.contains("<charaly:action"))
+        assertTrue("the clock must reach the model somewhere in the request", rendered.contains("story time:"))
+        assertTrue("and so must the pace instruction", rendered.contains("PACE"))
+
+        val last = request.messages.last()
+        assertTrue(
+            "the player's words must still lead the last message verbatim",
+            last.content.startsWith("hi"),
+        )
+        assertTrue(
+            "the volatile state reminder must trail the dialogue, not interrupt it",
+            last.content.indexOf("story time:") > last.content.indexOf("hi"),
+        )
+        assertEquals("the user input is still there exactly once", 1, request.messages.count { it.content.startsWith("hi") })
+        assertFalse("system text still lives outside messages", request.messages.any { it.role == ChatRole.SYSTEM })
     }
 
     @Test

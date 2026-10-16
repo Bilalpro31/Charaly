@@ -8,6 +8,8 @@ import dev.charaly.runtime.model.gguf.GgufCompatibility
 import dev.charaly.runtime.model.gguf.GgufReadResult
 import dev.charaly.runtime.model.gguf.GgufReader
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.security.MessageDigest
@@ -226,8 +228,19 @@ class ModelManager(
      * death leaves nothing a later launch could mistake for an installed model - and
      * [cleanupPartialCopies] reclaims the disk it occupied.
      */
-    suspend fun importFrom(uri: Uri): Result<ModelEntry> = withContext(Dispatchers.IO) {
-        runCatching { importInto(uri) }
+    suspend fun importFrom(
+        uri: Uri,
+        /**
+         * Progress for a copy that can take minutes.
+         *
+         * Reported from the copy loop itself rather than estimated from the file size, so
+         * the bar is a fact. Blank [ImportProgress.declaredBytes] means the provider would
+         * not say how big the file is, and the caller must then show activity rather than a
+         * percentage - a percentage invented from nothing is worse than none.
+         */
+        onProgress: (ImportProgress) -> Unit = {},
+    ): Result<ModelEntry> = withContext(Dispatchers.IO) {
+        runCatching { importInto(uri, onProgress) }
     }
 
     /**
@@ -238,7 +251,7 @@ class ModelManager(
      * can simply *return* an entry, rather than having to rebuild a `Result` to satisfy the
      * enclosing `withContext`.
      */
-    private fun importInto(uri: Uri): ModelEntry {
+    private suspend fun importInto(uri: Uri, onProgress: (ImportProgress) -> Unit = {}): ModelEntry {
         managedDir.mkdirs()
         val displayName = queryDisplayName(uri) ?: "model.gguf"
         val safeName = displayName.replace(Regex("[^A-Za-z0-9._-]"), "_")
@@ -291,21 +304,11 @@ class ModelManager(
         val copied = try {
             context.contentResolver.openInputStream(uri)?.use { input ->
                 partial.outputStream().use { output ->
-                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                    var total = 0L
-                    while (true) {
-                        val read = input.read(buffer)
-                        if (read < 0) break
-                        output.write(buffer, 0, read)
-                        digest.update(buffer, 0, read)
-                        total += read
-                    }
-                    output.flush()
+                    copyWithProgress(input, output, digest, declaredBytes, onProgress)
                     // fsync before the rename. Without it a crash in the window between
                     // rename and flush can leave a correctly-named file full of zeroes,
                     // which is a far more confusing failure than a missing one.
-                    runCatching { output.fd.sync() }
-                    total
+                    .also { runCatching { output.fd.sync() } }
                 }
             } ?: error(REASON_UNREADABLE)
         } catch (error: Throwable) {
@@ -564,6 +567,58 @@ class ModelManager(
          * localised sentences - but matching on a literal typed in a throw site is how a
          * wording tweak silently turns an import failure into "something went wrong".
          */
+        /** How much is copied between progress reports. Small enough to move, big enough to be cheap. */
+        const val PROGRESS_STEP_BYTES: Long = 8L * 1024L * 1024L
+
+        /**
+         * The copy half of an import, with real progress and real cancellation.
+         *
+         * Split out so it can be driven on a JVM with no [android.content.Context] and no
+         * document provider: this is where a 4 GB import can hang, lie about its progress or
+         * survive its own cancellation, and those are exactly the properties worth pinning
+         * down in a test rather than on a phone.
+         *
+         * ## Cancellation
+         *
+         * `ensureActive()` throws as soon as the caller's job is cancelled. Without it a
+         * Cancel that only closes the screen leaves the copy running for minutes, and the
+         * `.part` file is reclaimed only on the next launch. With it, the throw unwinds into
+         * the caller's `catch`, which deletes the partial immediately and frees the disk.
+         *
+         * ## Honesty of the progress
+         *
+         * Every report is counted bytes, and [ImportProgress.fraction] is null when the
+         * provider declared no size. Nothing here estimates.
+         */
+        internal suspend fun copyWithProgress(
+            input: java.io.InputStream,
+            output: java.io.OutputStream,
+            digest: MessageDigest,
+            declaredBytes: Long,
+            onProgress: (ImportProgress) -> Unit = {},
+        ): Long {
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            var total = 0L
+            var sinceLastReport = 0L
+            onProgress(ImportProgress(0L, declaredBytes))
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                val read = input.read(buffer)
+                if (read < 0) break
+                output.write(buffer, 0, read)
+                digest.update(buffer, 0, read)
+                total += read
+                sinceLastReport += read
+                if (sinceLastReport >= PROGRESS_STEP_BYTES) {
+                    sinceLastReport = 0L
+                    onProgress(ImportProgress(total, declaredBytes))
+                }
+            }
+            output.flush()
+            onProgress(ImportProgress(total, declaredBytes))
+            return total
+        }
+
         const val REASON_NOT_GGUF = "not-a-gguf"
         const val REASON_INVALID_GGUF = "invalid-gguf"
         const val REASON_UNSUPPORTED = "unsupported-architecture"
@@ -571,6 +626,25 @@ class ModelManager(
         const val REASON_PARTIAL = "partial-copy"
         const val REASON_NO_SPACE = "insufficient-storage"
     }
+}
+
+/**
+ * How far an import has got, as measured rather than guessed.
+ *
+ * [declaredBytes] is what the document provider claimed, or -1 when it declined to say -
+ * in which case there is no percentage to draw and the caller must not invent one.
+ */
+data class ImportProgress(
+    val bytesCopied: Long,
+    val declaredBytes: Long,
+) {
+    /** 0..1, or null when the total is unknown. Never a fabricated fraction. */
+    val fraction: Float?
+        get() = if (declaredBytes > 0L) {
+            (bytesCopied.toFloat() / declaredBytes.toFloat()).coerceIn(0f, 1f)
+        } else {
+            null
+        }
 }
 
 data class ModelEntry(

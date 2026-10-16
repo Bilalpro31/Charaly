@@ -25,6 +25,14 @@ data class StoryInstance(
     val id: StoryInstanceId,
     val storyPackId: StoryPackId,
     val packTitle: String,
+    /**
+     * The pack *edition* this story was opened from, pinned at creation.
+     *
+     * A story remembers which version of the content it started with on purpose: when the
+     * pack is updated underneath it, this value is what tells us the two no longer match.
+     * There is no silent migration - see `dev.charaly.runtime.storypack.PackCompatibility`.
+     */
+    val packVersion: String = "",
     val worldState: WorldState,
     val knowledge: KnowledgeStore = KnowledgeStore.EMPTY,
     val memories: MemoryStore = MemoryStore.EMPTY,
@@ -68,6 +76,22 @@ data class StoryInstance(
     val branchedFrom: BranchOriginInfo? = null,
     /** packEventId -> story time it last fired. Drives "already fired" and cooldowns. */
     val firedEvents: Map<String, StoryTime> = emptyMap(),
+    /**
+     * What this playthrough is being asked to do.
+     *
+     * The runtime shadow of the pack's objectives: seeded at creation, resolved by the
+     * engine, and owned entirely by this story. Two playthroughs of one pack share the
+     * objectives and nothing about their progress in them.
+     */
+    val objectives: List<ObjectiveState> = emptyList(),
+    /**
+     * Every branch this playthrough has taken, in order.
+     *
+     * A record of decisions rather than of consequences - the consequences are already in
+     * world state. This exists so "have I taken this branch?" has an answer that survives
+     * a pack being edited afterwards.
+     */
+    val choiceLedger: List<ChoiceRecord> = emptyList(),
     /** Wall-clock bookkeeping for "last played 12 min ago". Never world state. */
     val sessionMeta: SessionMeta = SessionMeta(),
 ) {
@@ -111,6 +135,8 @@ data class StoryInstance(
         chapters: List<StoryChapter> = this.chapters,
         chapterCounter: Int = this.chapterCounter,
         firedEvents: Map<String, StoryTime> = this.firedEvents,
+        objectives: List<ObjectiveState> = this.objectives,
+        choiceLedger: List<ChoiceRecord> = this.choiceLedger,
     ): StoryInstance = copy(
         worldState = worldState,
         knowledge = knowledge,
@@ -121,8 +147,22 @@ data class StoryInstance(
         chapters = chapters,
         chapterCounter = chapterCounter,
         firedEvents = firedEvents,
+        objectives = objectives,
+        choiceLedger = choiceLedger,
         updatedAt = worldState.worldClock.now,
     )
+
+    // ---- objectives and branches -----------------------------------------
+
+    fun objective(id: String): ObjectiveState? = objectives.firstOrNull { it.objectiveId == id }
+
+    /** Objectives the player is being asked for right now, strongest first. */
+    fun activeObjectives(): List<ObjectiveState> =
+        objectives.filter { it.isActive }.sortedByDescending { it.priority }
+
+    /** Whether this playthrough already took this branch. */
+    fun tookChoice(sceneId: String, choiceId: String): Boolean =
+        choiceLedger.any { it.sceneId == sceneId && it.choiceId == choiceId }
 
     fun summarize(): String = buildString {
         appendLine("StoryInstance ${id.value} (pack ${storyPackId.value})")
@@ -142,8 +182,27 @@ data class PersonaBinding(
     val tagline: String = "",
     val rolePrompt: String = "",
     val userDisplayName: String = "",
+    /** What this role can do that an ordinary person cannot. */
+    val abilities: List<String> = emptyList(),
+    /** What this role may not do. */
+    val restrictions: List<String> = emptyList(),
+    /** World truth this role walked in already knowing. */
+    val startingKnowledgeFactIds: List<String> = emptyList(),
+    /**
+     * Where this role stands with the cast, before anything happens.
+     *
+     * Deliberately *not* world state: these are `player -> character` stances, and the
+     * relationship ledger is strictly character -> character. Keeping them apart means the
+     * engine keeps validating who may change what while the player still arrives with a
+     * reputation - and it survives in the save, so a resumed story resumes with it.
+     */
+    val startingRelationships: List<Relationship> = emptyList(),
 ) {
     val isSet: Boolean get() = name.isNotBlank() || rolePrompt.isNotBlank()
+
+    /** The role's standing with one character, when it declared one. */
+    fun standingWith(characterId: CharacterId): Relationship? =
+        startingRelationships.firstOrNull { it.targetId == characterId }
 
     companion object {
         val EMPTY = PersonaBinding()
@@ -155,6 +214,10 @@ data class PersonaBinding(
                 tagline = template.tagline,
                 rolePrompt = template.rolePrompt,
                 userDisplayName = userName.ifBlank { template.name },
+                abilities = template.abilities,
+                restrictions = template.restrictions,
+                startingKnowledgeFactIds = template.startingKnowledgeFactIds.map { it.value },
+                startingRelationships = template.startingRelationships,
             )
     }
 }

@@ -39,10 +39,10 @@ data class ConversationHistory(
     /**
      * Drops every line from [turn] onwards.
      *
-     * Used by "regenerate": the previous attempt at a reply is removed from the
-     * transcript so the model can take another run at it. This is a *transcript*
-     * operation, not a world operation: nothing in world state is undone, because
-     * what the world did already happened.
+     * Used by "regenerate": the previous attempt at a reply - and the player's line that
+     * prompted it - are removed from the transcript so the model can take another run at
+     * the exchange. This is a *transcript* operation, not a world operation: nothing in
+     * world state is undone, because what the world did already happened.
      */
     fun dropFrom(turn: Int): ConversationHistory =
         copy(entries = entries.filter { it.turn < turn })

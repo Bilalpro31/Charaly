@@ -141,11 +141,19 @@ class ModelSelectionRegressionTest {
             "a missing bound model must not adopt the active model",
             selection.isBound,
         )
+        // The reason is FILE_MISSING and NOT the generic "not installed".
+        //
+        // This story is not in the market for a model - it HAS one, named, and that model is
+        // gone. Rendering it as NOT_INSTALLED put "This story needs a local model before it
+        // can continue" on the composer, which sent people to import a second model for a
+        // story that would never accept it. `unresolvedBindingId` is what lets the UI say
+        // "Bu hikaye icin secili model bulunamadi" instead.
         assertEquals(
-            "a missing bound model must block generation",
-            ModelBlockReason.NOT_INSTALLED,
+            "a missing bound model must block generation, and say WHICH model",
+            ModelBlockReason.FILE_MISSING,
             selection.blocked,
         )
+        assertEquals("local-test-1", selection.unresolvedBindingId)
         assertFalse("and must not be reported as generatable", selection.canGenerate)
     }
 

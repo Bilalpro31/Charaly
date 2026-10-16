@@ -6,6 +6,7 @@ import dev.charaly.runtime.domain.StoryInstance
 import dev.charaly.runtime.domain.TranscriptEntry
 import dev.charaly.runtime.domain.WorldDefinition
 import dev.charaly.runtime.inference.ChatMessage
+import dev.charaly.runtime.inference.ChatRole
 import dev.charaly.runtime.inference.InferenceRequest
 import dev.charaly.runtime.inference.GenerationParams
 
@@ -86,6 +87,17 @@ class ContextBuilder(
             facts = facts,
             recentTranscript = transcript,
             userInput = userInput,
+            // PHASE 10: decided here, from the turn's own line and the player's earlier
+            // lines, so the rule is a value the prompt is rendered from rather than a
+            // sentence buried in it. Read-only, and it adds nothing to the prompt beyond
+            // the two lines it replaces - the transcript is already in context, so no
+            // history is repeated to decide this.
+            replyLanguage = ReplyLanguage.forTurn(
+                line = userInput,
+                previousPlayerLines = transcript
+                    .filter { it.role == dev.charaly.runtime.domain.TranscriptRole.USER }
+                    .map { it.text },
+            ),
             /**
              * Pre-rendered so a cache hit does real work.
              *
@@ -100,6 +112,14 @@ class ContextBuilder(
             // that returns everyone's minds, so getting this wrong requires going out
             // of the store's way on purpose.
             mind = instance.knowledge.mind(characterId).takeIf { !it.isEmpty() },
+            // The world's own clock reading, read here and never reconstructed. A turn
+            // that advanced the world from 22:40 to 22:52 therefore produces a genuinely
+            // different prompt on the next turn - which is the property "WorldClock ->
+            // ContextBuilder -> Model" has to have.
+            worldTime = instance.worldClock.now,
+            // What the event engine says changed, oldest first. Causal links are the one
+            // retained account of a world change; the events themselves leave the queue.
+            recentEvents = instance.worldState.recentChanges(budget.recentEvents),
             commitments = instance.worldState.commitments.commitmentsOf(characterId),
             owedToThem = instance.worldState.commitments.promisesOwedTo(characterId)
                 .map { promise ->
@@ -114,7 +134,7 @@ class ContextBuilder(
         context: InferenceContext,
         params: GenerationParams = GenerationParams(),
     ): InferenceRequest {
-        val messages = buildList {
+        val allMessages = buildList {
             context.recentTranscript.forEach { entry -> add(entry.toMessage()) }
             // The user line is frequently already persisted as the last transcript
             // entry. Emitting it twice makes small models answer twice, so dedupe.
@@ -125,9 +145,47 @@ class ContextBuilder(
                 add(ChatMessage.user(context.userInput))
             }
         }
+        // ContextBudget.maxChars: trim the transcript from the oldest end when the assembled
+        // prompt would exceed the character ceiling. The user's current line and the volatile
+        // tail are never trimmed — they are the most important content. Trimming is
+        // deterministic: oldest entries first, never splitting a single entry.
+        val messages = trimToBudget(allMessages, context)
+        // LAYOUT: the constant text first, the transcript next, everything that moves on an
+        // ordinary turn LAST. The KV prefix cache reuses the longest identical leading token
+        // run, so this ordering is worth real milliseconds: with the state block sitting
+        // ahead of the transcript, "story time:" and "WHAT JUST HAPPENED" - which change on
+        // EVERY turn - ended the shared prefix and the whole conversation behind them was
+        // re-evaluated each time (measured warm reuse 0.34). Folding the volatile tail onto
+        // the turn's own user line keeps it after the transcript for every chat template and
+        // every plain-format fallback alike, so no template's system-message handling can
+        // hoist it back to the front. It is rendered only; the transcript still stores the
+        // player's words alone.
+        val tail = context.systemPromptVolatile().trim()
+        val tailFoldedIntoUserLine = tail.isNotEmpty() && messages.lastOrNull()?.role == ChatRole.USER
+        val framed = if (tailFoldedIntoUserLine) {
+            val last = messages.last()
+            messages.dropLast(1) + last.copy(content = last.content + "\n\n" + tail)
+        } else {
+            // Degenerate shape (no user line at all): keep the state in the system block
+            // rather than dropping it - losing it would change what the model knows.
+            messages
+        }
+        val systemPrompt = buildString {
+            // The action protocol is part of the system block: without it the model is never
+            // told that it may propose a world change, so it only ever narrates. This is the
+            // one place the model learns the schema; the parser and validator are unchanged.
+            // It is constant text, so it belongs ahead of the transcript where the cache keeps it.
+            append(context.systemPromptStable().trimEnd())
+            append("\n\n")
+            append(dev.charaly.runtime.director.ProposedActionParser.INSTRUCTIONS)
+            if (tail.isNotEmpty() && !tailFoldedIntoUserLine) {
+                append("\n\n")
+                append(tail)
+            }
+        }
         return InferenceRequest(
-            systemPrompt = context.systemPrompt(),
-            messages = messages,
+            systemPrompt = systemPrompt,
+            messages = framed,
             params = params,
             speakerId = context.character.id,
         )
@@ -140,6 +198,38 @@ class ContextBuilder(
         userInput: String = "",
         params: GenerationParams = GenerationParams(),
     ): InferenceRequest = buildRequest(buildContext(instance, scene, characterId, userInput), params)
+
+    /**
+     * Trims the transcript from the oldest end when the assembled prompt would exceed
+     * [ContextBudget.maxChars]. The user's current line and the volatile tail are never
+     * trimmed. Trimming is deterministic: oldest entries first, never splitting a single
+     * entry. The ceiling is approximate (character count, not token count) by design —
+     * mobile tokenizers differ and an estimate is enough to enforce a budget.
+     */
+    private fun trimToBudget(
+        messages: List<ChatMessage>,
+        context: InferenceContext,
+    ): List<ChatMessage> {
+        val tail = context.systemPromptVolatile().trim()
+        // The assembled prompt is: stable block + action protocol + (transcript, with the
+        // volatile tail folded into the last user line) + the tail itself when there is no
+        // user line to fold it into. Both shapes cost systemLen + tailLen + every message.
+        // `messages` is counted once; the tail is counted once, whether it ends up in the
+        // system block or inside the final user message.
+        val systemLen = context.systemPromptStable().trimEnd().length +
+            dev.charaly.runtime.director.ProposedActionParser.INSTRUCTIONS.length + 2
+        val tailLen = if (tail.isNotEmpty()) tail.length + 2 else 0
+        val ceiling = budget.maxChars
+        var total = systemLen + tailLen + messages.sumOf { it.content.length }
+        if (total <= ceiling || messages.size <= 1) return messages
+        // Oldest entry first, whole entries only. The last message is never dropped: it is
+        // the turn's own user line, and trimming it would answer a question nobody asked.
+        val trimmed = messages.toMutableList()
+        while (trimmed.size > 1 && total > ceiling) {
+            total -= trimmed.removeAt(0).content.length
+        }
+        return trimmed
+    }
 
     /**
      * Runs [render] through the cache when one is configured.
@@ -227,7 +317,10 @@ class ContextBuilder(
     private fun TranscriptEntry.toMessage(): ChatMessage = when (role) {
         dev.charaly.runtime.domain.TranscriptRole.USER -> ChatMessage.user(text)
         dev.charaly.runtime.domain.TranscriptRole.CHARACTER -> ChatMessage.assistant(text, speakerId?.value)
-        dev.charaly.runtime.domain.TranscriptRole.NARRATION -> ChatMessage.assistant(text, "Narration")
+        // NARRATION and SYSTEM are not character speech. Rendering them as assistant turns
+        // would make the model treat narration as something a character said, which is
+        // semantically wrong and pollutes the conversation history.
+        dev.charaly.runtime.domain.TranscriptRole.NARRATION -> ChatMessage.system(text)
         dev.charaly.runtime.domain.TranscriptRole.SYSTEM -> ChatMessage.system(text)
     }
 }
@@ -238,6 +331,13 @@ data class ContextBudget(
     val transcriptTurns: Int = 6,
     /** How many memories to include. */
     val memories: Int = 6,
+    /**
+     * How many recent world changes (causal links) to include.
+     *
+     * Count-bounded like every other knob here, because "recent events" grows without
+     * limit over a long session and this is the one line that has to say where it stops.
+     */
+    val recentEvents: Int = 4,
     /** Rough character ceiling for the assembled prompt. */
     val maxChars: Int = 6000,
 ) {

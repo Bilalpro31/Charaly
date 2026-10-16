@@ -113,6 +113,17 @@ data class CharacterDefinition(
         if (knowledgeBoundaries.isNotEmpty()) {
             appendLine("Knows nothing about: ${knowledgeBoundaries.joinToString("; ")}")
         }
+        // PHASE 8: the author's per-character instructions were written, stored and
+        // documented as "layered under the world rules in the system prompt", but no render
+        // path ever read the field - so every pack's character-consistency rules (Marinette's
+        // "never act out of character to the user's advantage", and the equivalent in every
+        // other character) were dropped before the model could see them. Rendered last, inside
+        // the persona block, so it stays in the cache-stable leading region with the rest of
+        // the identity rather than in the volatile tail.
+        if (systemInstructions.isNotBlank()) {
+            appendLine("HOW TO STAY IN CHARACTER")
+            appendLine(systemInstructions.trim())
+        }
     }
 
     /** Voice rules as prompt text. Only the author decides what these are. */

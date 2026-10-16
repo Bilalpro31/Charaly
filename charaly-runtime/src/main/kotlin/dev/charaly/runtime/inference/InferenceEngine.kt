@@ -138,6 +138,64 @@ data class InferenceResult(
     val engineId: String = "unknown",
 )
 
+/**
+ * The engine's own clocks for one real turn, taken around the actual prompt the app sent.
+ *
+ * Distinct from [dev.charaly.runtime.model.BenchmarkObservation], which measures a fixed
+ * prompt for the speed label. These are per-turn and exist for the developer-mode
+ * "STORY TURN PERF" readout: `promptTokens` counts what was evaluated this call, while
+ * `reusedTokens` counts the leading tokens whose key/value state came from the previous
+ * turn - so the two together show whether prefix caching paid off.
+ *
+ * Every field came from a clock inside the engine. An engine that cannot measure returns
+ * null (the default on the interface), never zeros pretending to be a measurement.
+ */
+data class InferenceTimings(
+    val promptMicros: Long,
+    /** Time to tokenize the prompt. */
+    val tokenizeMicros: Long = 0L,
+    /** Time to evaluate the prompt into the KV cache (prompt time minus tokenize time). */
+    val evalMicros: Long = 0L,
+    val generationMicros: Long,
+    val firstTokenMicros: Long,
+    val promptTokens: Int,
+    val generatedTokens: Int,
+    val reusedTokens: Int,
+    val contextSize: Int,
+    /** Tokens the previous turn left in the cache (0 on a cold call). */
+    val cachedTokens: Int = 0,
+    /** True when the engine had to clear the cache instead of reusing a prefix. */
+    val reuseFallback: Boolean = false,
+    /** Why the decode stopped: `eog`, `length`, `stop_sequence`, `cancelled`, `none`. */
+    val stopReason: String = "none",
+    /** The generation budget the engine was allowed (`maxTokens` clipped to the window). */
+    val budget: Int = 0,
+    /** The `maxTokens` the caller asked for. */
+    val requestedMaxTokens: Int = 0,
+    /** Worker threads the loaded context decodes one token with. */
+    val threads: Int = 0,
+    /**
+     * PHASE 10: worker threads the loaded context evaluates a PROMPT with.
+     *
+     * A separate number on purpose. llama.cpp runs two pools and picks between them with
+     * `batched ? n_threads_batch : n_threads`, and time to first token is dominated by the
+     * batch one - so a readout that names only [threads] describes the half of the work
+     * that is not the bottleneck.
+     */
+    val threadsBatch: Int = 0,
+) {
+    /** Tokens/second through the prompt-evaluation pool. The TTFT driver. */
+    val promptTokensPerSecondActual: Double
+        get() = if (evalMicros <= 0L) 0.0 else promptTokens * 1_000_000.0 / evalMicros
+    val promptMillis: Long get() = promptMicros / 1000L
+    val generationMillis: Long get() = generationMicros / 1000L
+    val firstTokenMillis: Long get() = firstTokenMicros / 1000L
+    val tokensPerSecond: Double
+        get() = if (generationMicros <= 0L) 0.0 else generatedTokens * 1_000_000.0 / generationMicros
+    val promptTokensPerSecond: Double
+        get() = if (promptMicros <= 0L) 0.0 else promptTokens * 1_000_000.0 / promptMicros
+}
+
 enum class StopReason {
     COMPLETED,
     /** Hit maxTokens. */

@@ -47,7 +47,7 @@ sealed interface ActionReview {
  */
 object ProposedActionParser {
 
-    private val TAG = Regex("""<charaly:action\s+([^>]*?)/?>""", RegexOption.IGNORE_CASE)
+    private val TAG = Regex("""<charaly:action\b\s*([^>]*?)/?>""", RegexOption.IGNORE_CASE)
     private val ATTR = Regex("""(\w+)\s*=\s*"([^"]*)\"""")
 
     /**
@@ -58,6 +58,9 @@ object ProposedActionParser {
             "<charaly:action type=\"move\" character=\"bob\" target=\"square\" reason=\"follows Alice\"/>\n" +
             "Allowed types: move, discover, relate, advance_thread, end_scene.\n" +
             "Never assume narration is accepted as fact: only tagged actions are considered."
+
+    /** A trailing action tag the model never closed - truncated protocol, never prose. */
+    private val OPEN_TAG = Regex("""<charaly:action\b[^>]*$""", RegexOption.IGNORE_CASE)
 
     /**
      * The reply with every action tag removed, for the transcript.
@@ -74,10 +77,13 @@ object ProposedActionParser {
      *
      * Stripping is whitespace-aware so that removing a tag does not leave a paragraph
      * break where there was none, and never produces an empty string - an empty reply
-     * reads as a bug, whereas "(no reply)" reads as the model saying nothing.
+     * reads as a bug, whereas "(no reply)" reads as the model saying nothing. A tag the
+     * model never closed is cut as well: an unterminated `<charaly:action ...` is protocol
+     * debris mid-stream or in a truncated reply, not narration.
      */
     fun stripActions(text: String): String = text
         .replace(TAG, "")
+        .replace(OPEN_TAG, "")
         .replace(Regex("""[ \t]+\n"""), "\n")
         .replace(Regex("""\n{3,}"""), "\n\n")
         .trim()

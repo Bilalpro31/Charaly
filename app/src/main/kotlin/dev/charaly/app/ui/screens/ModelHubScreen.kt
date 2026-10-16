@@ -35,6 +35,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import dev.charaly.app.model.asSizeLabel
 import dev.charaly.app.ui.components.CharalyAction
 import dev.charaly.app.ui.components.CharalyEmptyState
 import dev.charaly.app.ui.components.CharalyIconButton
@@ -109,6 +110,14 @@ fun ModelHubScreen(
      * [ModelImportState.isRunning] - never a permanent row.
      */
     importState: dev.charaly.app.ui.ModelImportState = dev.charaly.app.ui.ModelImportState.NONE,
+    /**
+     * MEASURED copy progress, straight from the import stream.
+     *
+     * Null [dev.charaly.app.model.ImportProgress.fraction] is a real case: a document
+     * provider that declines to declare a size. The row then shows activity and the bytes
+     * counted so far - never a bar drawn from elapsed time.
+     */
+    importProgress: dev.charaly.app.model.ImportProgress? = null,
     hasInstalledModels: Boolean,
     onFilterChange: (ModelFilter) -> Unit,
     onQueryChange: (String) -> Unit,
@@ -271,7 +280,7 @@ fun ModelHubScreen(
         // surfaces rather than one bar that has to lie about one of them.
         if (importState.isRunning) {
             item(key = "import-progress") {
-                ImportSurface(state = importState)
+                ImportSurface(state = importState, progress = importProgress)
             }
         }
 
@@ -599,6 +608,20 @@ private fun ModelCardRow(
             }
         }
 
+        // An unmeasured model says so, in words.
+        //
+        // Leaving this blank was the defect: silence reads as "this model has no speed",
+        // which is a claim about the model. The truth is that it has never been timed here,
+        // and that is a different sentence - so the card states it rather than implying it.
+        if (card.speed.evidence.isBlank() && card.speed.label.isNotBlank()) {
+            Text(
+                text = card.speed.label,
+                style = MaterialTheme.typography.bodySmall,
+                color = Charaly.ink.muted,
+                modifier = Modifier.padding(top = Charaly.space.xs),
+            )
+        }
+
         // Why an action is unavailable, stated on the card.
         if (card.blockedReason.isNotBlank()) {
             Text(
@@ -755,13 +778,17 @@ private fun SpeedSummaryRow(
  *
  * A SAF copy reports no total until the copy finishes, and by then a percentage is
  * meaningless. The download surface above can show a real fraction because the server
- * declares a content length; this one cannot, so it shows an indeterminate bar and says
- * which of the two steps is happening. A bar invented from elapsed time would be the
- * single most-looked-at lie in the app, because it sits exactly where the user is
- * already anxious about whether their import worked.
+ * declares a content length. When the provider DOES declare one, the row is determinate and
+ * shows the measured fraction; when it does not, it says which step is happening and how
+ * many bytes have actually crossed. A bar invented from elapsed time would be the single
+ * most-looked-at lie in the app, because it sits exactly where the user is already anxious
+ * about whether their import worked - so there is none here.
  */
 @Composable
-private fun ImportSurface(state: dev.charaly.app.ui.ModelImportState) {
+private fun ImportSurface(
+    state: dev.charaly.app.ui.ModelImportState,
+    progress: dev.charaly.app.model.ImportProgress? = null,
+) {
     val title = Loc.t(
         if (state == dev.charaly.app.ui.ModelImportState.IMPORTING) "model.importing" else "model.verifying",
     )
@@ -791,11 +818,35 @@ private fun ImportSurface(state: dev.charaly.app.ui.ModelImportState) {
             CharalySpinner(color = Charaly.atmosphere.accent)
         }
         Spacer(Modifier.height(Charaly.space.xxs))
+        val fraction = progress?.fraction
         Text(
-            text = detail,
+            // The measured suffix. A percentage when one exists, the bytes counted so far
+            // when it does not - both are facts from the copy loop, neither is projected.
+            text = detail + (progress?.let {
+                "  " + (fraction?.let { f -> "${(f * 100).toInt()}%" }
+                    ?: it.bytesCopied.asSizeLabel())
+            }.orEmpty()),
             style = MaterialTheme.typography.bodySmall,
             color = Charaly.ink.muted,
         )
+        if (fraction != null) {
+            Spacer(Modifier.height(Charaly.space.xs))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(4.dp)
+                    .clip(CharalyShapes.soft)
+                    .background(Charaly.surface.base),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(fraction)
+                        .height(4.dp)
+                        .clip(CharalyShapes.soft)
+                        .background(Charaly.atmosphere.accent),
+                )
+            }
+        }
     }
 }
 

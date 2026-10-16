@@ -86,6 +86,10 @@ android {
 
     buildFeatures {
         compose = true
+        // The pack installer records which *engine* validated a pack, so a manifest's
+        // minimum-engine claim can be answered with the truth rather than a constant. The
+        // version is otherwise only reachable through the package manager at runtime.
+        buildConfig = true
     }
 
     packaging {
@@ -96,6 +100,26 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+        // REAL native inference in unit tests, when one is offered.
+        //
+        // `-PcharalyNativeLib=/abs/libcharaly_llama.so` points the tests at a host build of
+        // the very JNI entry points the APK exports (see scripts/verify-story-loop-host.sh).
+        // The tests that need it skip themselves when the property is absent, and nothing
+        // about the property changes the shipped artifact - it only widens what a test can
+        // prove on a machine with no Android device attached.
+        unitTests.all { test ->
+            fun relay(gradleProperty: String, jvmProperty: String) {
+                (findProperty(gradleProperty) as String?)
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { value -> test.systemProperty(jvmProperty, value) }
+            }
+            relay("charalyNativeLib", "charaly.native.lib")
+            relay("charalyModelFile", "charalyModelFile")
+            relay("charalyModelBFile", "charalyModelBFile")
+            relay("charalyThreads", "charalyThreads")
+            relay("charalyContextSize", "charalyContextSize")
+            relay("charalyTurns", "charalyTurns")
+        }
     }
 }
 
