@@ -237,8 +237,8 @@ class PeopleSurfaceTest {
 
         assertTrue(
             "high trust should read as trust or as confidence: ${trusted.relationshipLabel}",
-            trusted.relationshipLabel.contains("trust", ignoreCase = true) ||
-                trusted.relationshipLabel.contains("corner", ignoreCase = true),
+            trusted.relationshipLabel.contains("güven", ignoreCase = true) ||
+                trusted.relationshipLabel.contains("yanınızda", ignoreCase = true),
         )
 
         // Trust on its own, without the warmth to go with it, is a different sentence -
@@ -261,7 +261,7 @@ class PeopleSurfaceTest {
 
         assertEquals(
             "high trust without warmth is its own state, and needs its own words",
-            "Trusts you",
+            "Size güveniyor",
             trustedButDistant.relationshipLabel,
         )
 

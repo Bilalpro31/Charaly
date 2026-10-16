@@ -393,6 +393,25 @@ data class StartingScenario(
     val artwork: PackArtwork = PackArtwork(),
     /** Optional hook artwork. Falls back to a generated composition. */
     val visualAsset: VisualAsset? = null,
+    /**
+     * Objectives this opening puts on the board.
+     *
+     * Named explicitly rather than inheriting every objective in the pack, because a
+     * scenario is a curated opening: "Night Patrol" and "First Day" ask for different
+     * things, and an objective that is merely *declared* in the pack is not automatically
+     * part of every story told with it.
+     */
+    val objectiveIds: List<String> = emptyList(),
+    /** The authored scene the story opens into, when it opens into one. */
+    val initialSceneId: String = "",
+    /**
+     * Branches offered before the first scene, in the player's own voice.
+     *
+     * "Take the rooftop" / "Knock on the door". Each is a real [SceneChoice]: gated by
+     * conditions, applied through the event engine. An opening is the story's first fork,
+     * and there is no reason for the first fork to be less real than the tenth.
+     */
+    val openingChoices: List<SceneChoice> = emptyList(),
 ) {
     init {
         require(id.isNotBlank()) { "Scenario needs an id" }
@@ -418,6 +437,21 @@ data class PersonaTemplate(
     val rolePrompt: String = "",
     val startingLocationId: LocationId? = null,
     val suggestedCharacterIds: List<CharacterId> = emptyList(),
+    /** What this role can do that an ordinary person cannot. */
+    val abilities: List<String> = emptyList(),
+    /** What this role may not do. Honest limits beat unstated ones. */
+    val restrictions: List<String> = emptyList(),
+    val tags: List<String> = emptyList(),
+    /** World truth this role walks in already knowing. */
+    val startingKnowledgeFactIds: List<FactId> = emptyList(),
+    /**
+     * Where this role stands with people, before anything happens.
+     *
+     * Relationships out of the player node (`player`), which is why they are authored per
+     * persona rather than per character: the detective is trusted by nobody, the visiting
+     * cousin is trusted by everyone, and the same cast behaves differently for each.
+     */
+    val startingRelationships: List<Relationship> = emptyList(),
 ) {
     init {
         require(id.isNotBlank()) { "Persona needs an id" }

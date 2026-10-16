@@ -140,7 +140,13 @@ class StreamCancellationTest {
             started.complete(Unit)
         }
 
-        withTimeout(5_000) { started.await() }
+        // The stream runs on a real dispatcher, so the wait for it must be in real time
+        // too: the virtual clock only advances on scheduler events, and a busy machine
+        // trips a virtual `withTimeout` before the real work has had a chance to post its
+        // completion event. Same timeout budget, honest clock.
+        withContext(Dispatchers.Default) {
+            withTimeout(30_000) { started.await() }
+        }
         job.cancel()
 
         assertTrue(

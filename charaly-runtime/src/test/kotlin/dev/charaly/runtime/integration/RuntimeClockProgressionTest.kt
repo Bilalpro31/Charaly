@@ -473,7 +473,7 @@ class RuntimeClockProgressionTest {
             modelReady = true,
         )
         assertEquals(instance.worldClock.now.formatClock(), before.clockLabel)
-        assertEquals("Day ${instance.worldClock.now.day}", before.dayLabel)
+        assertEquals("${instance.worldClock.now.day}. Gün", before.dayLabel)
 
         val (after, _) = rt.talk(instance, "Good evening.")
         instance = after
@@ -503,7 +503,7 @@ class RuntimeClockProgressionTest {
             .worldSheet(definition, instance, instance.worldClock.now)
 
         assertEquals(instance.worldClock.now.formatClock(), world.clockLabel)
-        assertEquals("Day ${instance.worldClock.now.day}", world.dayLabel)
+        assertEquals("${instance.worldClock.now.day}. Gün", world.dayLabel)
         assertTrue("the sheet says nothing about the scene", world.activeScene.isNotBlank())
     }
 }

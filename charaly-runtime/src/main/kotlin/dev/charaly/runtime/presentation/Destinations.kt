@@ -149,7 +149,7 @@ object LibraryShelfPresenter {
             worldName = instance.packTitle,
             contextLine = listOfNotNull(
                 StoryContextPresenter.timeOfDayLabel(now.hour).takeIf { it.isNotBlank() },
-                "Day ${now.day}".takeIf { now.day > 1 },
+                "${now.day}. Gün".takeIf { now.day > 1 },
             ).joinToString(" · "),
             // The same sentence Home shows, from the same presenter. A shelf that
             // described a story differently from the lobby would be two truths about one
@@ -178,8 +178,8 @@ object LibraryShelfPresenter {
         )
 
         else -> EmptyState(
-            title = "Nothing matched that search.",
-            body = "No story is called \"$query\", and none of them are set in a world with that name.",
+            title = "Bu aramayla eşleşen bir şey yok.",
+            body = "\"$query\" adında bir hikâye yok ve bu adda bir dünyada geçen bir hikâye de yok.",
             actionLabel = Loc.t("worlds.clear_filters"),
             artSeed = "charaly-empty-library-search",
         )
@@ -205,12 +205,12 @@ object LibraryShelfPresenter {
  */
 enum class SettingsSection(val title: String, val blurb: String) {
     APP(
-        "App",
-        "How Charaly looks and moves.",
+        "Uygulama",
+        "Charaly'nin görünümü ve hareketi.",
     ),
     AI(
-        "AI",
-        "The local model that speaks for your worlds.",
+        "Yapay Zekâ",
+        "Dünyalarınızın sesi olan yerel model.",
     ),
 
     /**
@@ -222,31 +222,31 @@ enum class SettingsSection(val title: String, val blurb: String) {
      * working should not have to turn on Developer Mode to find out.
      */
     DIAGNOSTICS(
-        "Diagnostics",
-        "Run a real model on this device.",
+        "Tanılama",
+        "Bu cihazda gerçek bir model çalıştırın.",
     ),
     OFFLINE(
-        "Offline",
-        "What works with no connection at all.",
+        "Çevrimdışı",
+        "Hiç bağlantı olmadan ne çalışır.",
     ),
     STORAGE(
-        "Storage",
-        "What is on this device and how much of it there is.",
+        "Depolama",
+        "Bu cihazda ne var ve ne kadar yer kaplıyor.",
     ),
     PRIVACY(
-        "Privacy",
-        "What Charaly sends anywhere, which is almost nothing.",
+        "Gizlilik",
+        "Charaly neyi nereye gönderir: neredeyse hiçbir şey.",
     ),
     ADVANCED(
-        "Advanced",
-        "The engine's own view of a running story.",
+        "Gelişmiş",
+        "Motorun, çalışan bir hikâyeye kendi bakışı.",
     ),
 }
 
 object SettingsPresenter {
 
     /** The headline privacy claim, in one sentence. Asserted in the test suite. */
-    const val PRIVACY_HEADLINE = "Charaly works on this device."
+    const val PRIVACY_HEADLINE = "Charaly bu cihazda çalışır."
 
     /**
      * The privacy body.
@@ -255,14 +255,14 @@ object SettingsPresenter {
      * manifest and finds INTERNET deserves to find the app already told them so.
      */
     const val PRIVACY_BODY =
-        "Network access is optional and is used only for model discovery and download, " +
-            "when you ask for one. Conversations, memories, world state and inference " +
-            "never leave this device."
+        "Ağ erişimi isteğe bağlıdır ve yalnızca siz bir model istediğinizde model keşfi " +
+            "ve indirme için kullanılır. Sohbetler, anılar, dünya durumu ve çıkarım " +
+            "asla bu cihazdan çıkmaz."
 
     /** The single-sentence offline claim. */
     const val OFFLINE_BODY =
-        "Every world, every story and every installed model works with no connection. " +
-            "Only browsing for new models needs one."
+        "Her dünya, her hikâye ve yüklü her model bağlantı olmadan çalışır. " +
+            "Sadece yeni modellere göz atmak için bağlantı gerekir."
 
     /** What "local" means, stated concretely rather than as a slogan. */
     /**
@@ -281,8 +281,8 @@ object SettingsPresenter {
     /** Storage, in the user's terms. */
     fun storageBody(modelCount: Int, storyCount: Int, bytes: Long): String {
         val parts = buildList {
-            add(if (modelCount == 1) "1 model" else "$modelCount models")
-            add(if (storyCount == 1) "1 story" else "$storyCount stories")
+            add(if (modelCount == 1) "1 model" else "$modelCount model")
+            add(if (storyCount == 1) "1 hikâye" else "$storyCount hikâye")
         }
         val size = ModelStagePresenter.storageLabel(bytes)
         return if (size.isBlank()) parts.joinToString(" · ") else "${parts.joinToString(" · ")} · $size"

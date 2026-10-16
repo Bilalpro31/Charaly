@@ -32,6 +32,7 @@ class ModelIdentityChainTest {
     private val viewModel = appSource("ui/CharalyViewModel.kt").readText()
     private val engine = appSource("inference/LocalLlamaInferenceEngine.kt").readText()
     private val manager = appSource("model/ModelManager.kt").readText()
+    private val residency = appSource("model/LocalModelResidency.kt").readText()
     private val services = appSource("model/HuggingFaceServices.kt").readText()
 
     /**
@@ -49,11 +50,23 @@ class ModelIdentityChainTest {
 
     @Test
     fun `a load request carries the registry id, not the file name`() {
+        // The load now goes through the ONE lazy loader, so that is where the id has to be
+        // attached. `installedModelId = model.id` in `LocalModelResidency` is what stops the
+        // engine falling back to the file name - a fallback that made every residency
+        // comparison compare two unrelated namespaces and report a loaded model as absent.
         assertTrue(
-            "loadModelLocked must pass installedModelId = model.id. Without it the engine " +
-                "falls back to the file name and every residency comparison compares two " +
-                "different namespaces.",
-            viewModel.contains("installedModelId = model.id"),
+            "LocalModelResidency must pass installedModelId = model.id",
+            residency.contains("installedModelId = model.id"),
+        )
+        assertTrue(
+            "and the story turn must resolve through that same loader",
+            runtimeSource("session/CharalyRuntime.kt").readText()
+                .contains("residency.ensureResident(instance.modelBinding)"),
+        )
+        assertTrue(
+            "and the ViewModel must not grow a second, competing loader",
+            viewModel.contains("residency.switchTo(model)") &&
+                viewModel.contains("residency.ensureResident("),
         )
     }
 

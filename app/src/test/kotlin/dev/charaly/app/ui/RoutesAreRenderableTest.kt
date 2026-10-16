@@ -66,12 +66,13 @@ class RoutesAreRenderableTest {
     fun `every primary destination has a route that round-trips`() {
         val routes = listOf(
             Route.Home,
-            Route.Worlds,
+            Route.Sessions,
+            Route.Create,
+            Route.Library,
             Route.Showcase("pack-miraculous-shadows-of-paris"),
             Route.EnterWorld("pack-miraculous-shadows-of-paris"),
             Route.Chat,
             Route.Stage("story-1"),
-            Route.Library,
             Route.StoryRecord("story-1"),
             Route.Models,
             Route.ModelDetail("local-1"),
@@ -86,7 +87,7 @@ class RoutesAreRenderableTest {
     fun `a route naming a pack that no longer exists is inert, not fatal`() {
         // What happens when a pack is deleted while its showcase screen is on the stack.
         val navigator = CharalyNavigator()
-        navigator.navigateTo(Route.Worlds)
+        navigator.navigateTo(Route.Library)
         navigator.navigateTo(Route.Showcase("pack-that-was-deleted"))
 
         // The showcase projection is null for a missing pack, and the screen's null branch
@@ -96,7 +97,7 @@ class RoutesAreRenderableTest {
 
         // Back navigation still works from the broken state.
         assertTrue(navigator.pop())
-        assertEquals(Route.Worlds, navigator.current)
+        assertEquals(Route.Library, navigator.current)
     }
 
     @Test
@@ -132,8 +133,8 @@ class RoutesAreRenderableTest {
     @Test
     fun `tapping the same destination twice does not stack it`() {
         val navigator = CharalyNavigator()
-        navigator.selectTab(Route.Tab.WORLDS)
-        navigator.selectTab(Route.Tab.WORLDS)
+        navigator.selectTab(Route.Tab.LIBRARY)
+        navigator.selectTab(Route.Tab.LIBRARY)
         assertEquals(1, navigator.backStack.size)
     }
 
@@ -168,7 +169,7 @@ class RoutesAreRenderableTest {
         assertNull(snapshot.emptyWorlds)
         assertEquals(packs.size, snapshot.worlds.size)
         assertEquals(dev.charaly.runtime.presentation.LeadIdea.DISCOVER, snapshot.leadIdea)
-        assertEquals("${packs.size} worlds to step into.", snapshot.subline)
+        assertEquals("${packs.size} dünyaya adım atabilirsiniz.", snapshot.subline)
     }
 
     @Test
@@ -182,13 +183,13 @@ class RoutesAreRenderableTest {
         assertEquals("story-lobby", surface!!.storyId)
         assertEquals(pack.title, surface.worldName)
         assertEquals(dev.charaly.runtime.presentation.LeadIdea.CONTINUE, snapshot.leadIdea)
-        assertEquals("Something is waiting for you.", snapshot.subline)
+        assertEquals("Sizi bekleyen bir şey var.", snapshot.subline)
         // And the moment is a sentence, never blank and never a count.
         assertTrue("the moment must say something", surface.moment.isNotBlank())
         assertTrue(
             "the presence label must never be a raw count of the pack's cast",
-            surface.presenceLabel.isBlank() || surface.presenceLabel.contains("here") ||
-                surface.presenceLabel.contains("alone") || surface.presenceLabel.contains("Just you"),
+            surface.presenceLabel.isBlank() || surface.presenceLabel.contains("burada") ||
+                surface.presenceLabel.contains("Sadece siz"),
         )
     }
 
@@ -311,7 +312,7 @@ class RoutesAreRenderableTest {
         assertNotNull(snapshot.emptyState!!.actionLabel)
         assertTrue(
             "a search empty state must offer to clear the search",
-            snapshot.emptyState!!.actionLabel.contains("Clear", ignoreCase = true),
+            snapshot.emptyState!!.actionLabel.contains("Temizle", ignoreCase = true),
         )
     }
 
@@ -553,7 +554,7 @@ class RoutesAreRenderableTest {
             "a search that matches nothing must explain itself, not read as an empty library",
             shelf.emptyState,
         )
-        assertTrue(shelf.emptyState!!.title.contains("Nothing matched", ignoreCase = true))
+        assertTrue(shelf.emptyState!!.title.contains("eşleşen", ignoreCase = true))
     }
 
     // ------------------------------------------------------------------

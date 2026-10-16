@@ -89,13 +89,13 @@ object SessionsPresenter {
             totalCount = instances.size,
             emptyState = if (cards.isEmpty()) {
                 EmptyState(
-                    title = if (instances.isEmpty()) "No stories yet." else "Nothing matches that.",
+                    title = if (instances.isEmpty()) "Henüz hikâye yok." else "Bununla eşleşen bir şey yok.",
                     body = if (instances.isEmpty()) {
                         "Start a story from a Story Pack and it will appear here, ready to pick up."
                     } else {
                         "Try another search term."
                     },
-                    actionLabel = if (instances.isEmpty()) "Explore Story Packs" else "Clear search",
+                    actionLabel = if (instances.isEmpty()) "Hikâye Paketlerini Keşfet" else "Aramayı temizle",
                     artSeed = "charaly-empty-sessions",
                 )
             } else {
@@ -353,7 +353,7 @@ object ModelLibraryPresenter {
                 EmptyState(
                     title = "No models installed.",
                     body = "Import a GGUF from your device and it becomes available to every story.",
-                    actionLabel = "Import GGUF",
+                    actionLabel = "GGUF İçe Aktar",
                     artSeed = "charaly-empty-models",
                 )
             } else {
@@ -405,29 +405,36 @@ object ModelLibraryPresenter {
             displayName = model.displayName,
             sizeLabel = model.sizeLabel,
             originLabel = if (model.origin == dev.charaly.runtime.model.ModelOrigin.DOWNLOADED) {
-                "Downloaded"
+                "İndirildi"
             } else {
-                "Imported"
+                "İçe aktarıldı"
             },
             stateLabel = when {
-                model.compatibility.loadFailed -> "Could not load"
-                isLoaded -> "Ready"
-                model.compatibility.lastLoadedAtEpochMs > 0 -> "Installed"
-                else -> "Installed"
+                // A past failure is a diagnosis, and it is worth a word - but the row is
+                // still selectable, because the next attempt can succeed (see
+                // dev.charaly.runtime.model.ModelSelection.canGenerate).
+                model.compatibility.loadFailed -> "Yüklenemedi"
+                isLoaded -> "Hazır"
+                model.compatibility.lastLoadedAtEpochMs > 0 -> "Yüklü"
+                else -> "Yüklü"
             },
             detailRows = buildList {
-                model.architecture.takeIf { it.isNotBlank() }?.let { add(StatChip("Architecture", it)) }
-                model.quantization.takeIf { it.isNotBlank() }?.let { add(StatChip("Quantization", it)) }
-                add(StatChip("Context", "${model.effectiveContextTokens()} tokens"))
-                add(StatChip("Size", model.sizeLabel))
+                model.architecture.takeIf { it.isNotBlank() }?.let { add(StatChip("Mimari", it)) }
+                model.quantization.takeIf { it.isNotBlank() }?.let { add(StatChip("Kuantizasyon", it)) }
+                add(StatChip("Bağlam", "${model.effectiveContextTokens()} token"))
+                add(StatChip("Boyut", model.sizeLabel))
                 if (model.sha256.isNotBlank()) {
-                    add(StatChip("Verified", if (model.verified) "Yes" else "Not verified"))
+                    add(StatChip("Doğrulandı", if (model.verified) "Evet" else "Doğrulanmadı"))
                 }
             },
             speed = speed,
             // A model this build cannot load cannot be measured either, so it is not offered
             // a Measure control - a button that would always fail is worse than no button.
-            canBenchmark = speed.canBenchmark && engineVerdict.isLoadable && !model.compatibility.loadFailed,
+            //
+            // A *past* load failure is deliberately not in this condition. Measuring is how a
+            // model with a failed load is recovered and diagnosed; hiding the one control
+            // that could have told the user why is how "Yüklenemedi" became a dead end.
+            canBenchmark = speed.canBenchmark && engineVerdict.isLoadable,
             isActive = isActive,
             isReady = verdict.level == dev.charaly.runtime.model.DeviceFitLevel.READY,
             isLoaded = isLoaded,
@@ -438,14 +445,18 @@ object ModelLibraryPresenter {
                 // A file being present is not the same as this build being able to read
                 // it: someone can import a GGUF whose architecture the bundled engine
                 // does not register, and offering it as "Use" would fail at load time.
-                canUse = !model.compatibility.loadFailed && engineVerdict.isLoadable,
+                //
+                // `loadFailed` is NOT part of this condition. It records that an earlier
+                // load attempt failed, which is exactly the situation in which the user
+                // most needs the Use control - greying it out turned a recoverable failure
+                // into a model that could never be selected again.
+                canUse = engineVerdict.isLoadable,
                 canDelete = true,
                 canVerify = true,
                 canDownload = false,
                 canResume = false,
                 canCancel = false,
                 disabledReason = when {
-                    model.compatibility.loadFailed -> verdict.message
                     !engineVerdict.isLoadable -> engineVerdict.reason
                     else -> ""
                 },
@@ -553,6 +564,21 @@ object ModelLibraryPresenter {
         storiesUsing: List<StoryInstance>,
         isLoaded: Boolean,
         availableRamBytes: Long,
+        /**
+         * The catalogue's published record for this model, when it has one.
+         *
+         * Publisher metadata beats anything derived from the file: it is the publisher's own
+         * statement about the weights (licence, languages, version, what device it runs on),
+         * none of which a GGUF header carries. Imported GGUFs have none and fall back to the
+         * header-derived rows.
+         */
+        catalogItem: dev.charaly.runtime.model.ModelCatalogItem? = null,
+        /**
+         * This device's own measured tok/s, or null. Rendered as "Ölçülmedi" when absent -
+         * never as a zero, which would be a claim that the model is broken rather than that
+         * the measurement does not exist.
+         */
+        measuredSpeedLabel: String? = null,
     ): ModelDetailSnapshot {
         val verdict = model.deviceVerdict(availableRamBytes)
         val builtIn = ModelProfileLibrary.all
@@ -562,24 +588,34 @@ object ModelLibraryPresenter {
             displayName = model.displayName,
             sizeLabel = model.sizeLabel,
             originLabel = if (model.origin == dev.charaly.runtime.model.ModelOrigin.DOWNLOADED) {
-                "Downloaded"
+                "İndirildi"
             } else {
-                "Imported"
+                "İçe aktarıldı"
             },
             stateLabel = when {
-                model.compatibility.loadFailed -> "Could not load"
-                model.compatibility.engineSupport == EngineSupport.ENGINE_UPDATE_REQUIRED -> "Engine update required"
-                model.compatibility.engineSupport == EngineSupport.UNKNOWN_ARCHITECTURE -> "Engine support unknown"
-                isLoaded -> "Ready"
-                else -> "Installed"
+                model.compatibility.loadFailed -> "Yüklenemedi"
+                model.compatibility.engineSupport == EngineSupport.ENGINE_UPDATE_REQUIRED -> "Motor güncellemesi gerekli"
+                model.compatibility.engineSupport == EngineSupport.UNKNOWN_ARCHITECTURE -> "Motor desteği bilinmiyor"
+                isLoaded -> "Hazır"
+                else -> "Yüklü"
             },
-            detailRows = listOf(
-                StatChip("Architecture", model.architecture.ifBlank { "Unknown" }),
-                StatChip("Quantization", model.quantization.ifBlank { "Unknown" }),
-                StatChip("Size", model.sizeLabel),
-                StatChip("Context", "${model.effectiveContextTokens()} tokens"),
-                StatChip("Origin", if (model.origin == dev.charaly.runtime.model.ModelOrigin.DOWNLOADED) "Downloaded" else "Imported"),
-                StatChip("Licence", "As supplied by the publisher"),
+            // Published metadata wins when the catalogue knows this model: it is the
+            // publisher's own statement about the file, and the six rows below are the
+            // fallback for an imported GGUF nobody has published. Never both - two rows
+            // saying "Architecture" with the same value is a screen that looks unsure.
+            detailRows = catalogItem?.let { item ->
+                ModelCatalogPresenter.detailRows(item, measuredSpeedLabel) + listOf(
+                    StatChip("Kaynak", if (model.origin == dev.charaly.runtime.model.ModelOrigin.DOWNLOADED) "İndirildi" else "İçe aktarıldı"),
+                )
+            } ?: listOf(
+                StatChip("Mimari", model.architecture.ifBlank { "Bilinmiyor" }),
+                StatChip("Kuantizasyon", model.quantization.ifBlank { "Bilinmiyor" }),
+                StatChip("Boyut", model.sizeLabel),
+                StatChip("Bağlam", "${model.effectiveContextTokens()} token"),
+                StatChip("Kaynak", if (model.origin == dev.charaly.runtime.model.ModelOrigin.DOWNLOADED) "İndirildi" else "İçe aktarıldı"),
+                StatChip("Lisans", "Yayıncı tarafından sağlandığı gibi"),
+                // An unmeasured speed is "Ölçülmedi", never a zero and never a guess.
+                StatChip("Hız", measuredSpeedLabel?.takeIf { it.isNotBlank() } ?: "Ölçülmedi"),
             ),
             verdictMessage = verdict.message,
             verdictLevel = verdict.level.name,
@@ -596,15 +632,16 @@ object ModelLibraryPresenter {
                 )
             },
             actions = ModelActions(
-                canUse = !model.compatibility.loadFailed &&
-                    (model.compatibility.engineSupport == null ||
-                        model.compatibility.engineSupport == EngineSupport.SUPPORTED),
+                // Same rule as the card: an engine this build cannot run blocks Use, a load
+                // that failed once does not. `verdictMessage` still carries the failure.
+                canUse = model.compatibility.engineSupport == null ||
+                    model.compatibility.engineSupport == EngineSupport.SUPPORTED,
                 canDelete = true,
                 canVerify = true,
                 canDownload = false,
                 canResume = false,
                 canCancel = false,
-                disabledReason = if (model.compatibility.loadFailed) verdict.message else "",
+                disabledReason = "",
             ),
         )
     }

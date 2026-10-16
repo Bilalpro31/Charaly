@@ -124,7 +124,7 @@ fun ModelDetailScreen(
                     // load" are different worlds and must not look like one.
                     CharalyPill(
                         label = snapshot.stateLabel.uppercase(),
-                        selected = snapshot.stateLabel == "Ready",
+                        selected = snapshot.stateLabel == "Hazır",
                     )
                     CharalyPill(label = snapshot.sizeLabel)
                     CharalyPill(label = snapshot.originLabel)
@@ -171,9 +171,9 @@ fun ModelDetailScreen(
                     title = Loc.t("detail.how_it_speaks"),
                     micro = true,
                     caption = if (boundProfile.isNotBlank()) {
-                        "Bound as $boundProfile"
+                        "$boundProfile olarak bağlı"
                     } else {
-                        "The profile bound to your current story"
+                        "Geçerli hikâyenize bağlı profil"
                     },
                 )
             }

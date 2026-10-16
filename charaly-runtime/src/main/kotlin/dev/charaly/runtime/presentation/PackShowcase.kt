@@ -87,7 +87,7 @@ data class PackShowcase(
     val primaryActionLabel: String get() = invitation.ifBlank { "Enter Story" }
 
     /** Secondary action, shown only when there is something to continue. */
-    val continueLabel: String get() = if (canContinue) "Continue Story" else ""
+    val continueLabel: String get() = if (canContinue) "Hikâyeye Devam Et" else ""
 }
 
 /**

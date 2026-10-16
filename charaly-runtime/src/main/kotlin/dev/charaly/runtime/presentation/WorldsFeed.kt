@@ -191,7 +191,7 @@ object WorldsFeedPresenter {
     }
 
     /** The search field's placeholder, phrased as what is actually indexed. */
-    const val SEARCH_HINT = "Search worlds, moods, genres"
+    const val SEARCH_HINT = "Dünyalar, atmosferler, türler ara"
 
     private fun emptyState(
         noPacks: Boolean,
@@ -199,32 +199,32 @@ object WorldsFeedPresenter {
         genres: Set<String>,
     ): EmptyState = when {
         noPacks -> EmptyState(
-            title = "Your first world is waiting.",
-            body = "A world is a set of people, places and rules that remember what " +
-                "happened in them.",
-            actionLabel = "Build a world",
+            title = "İlk dünyanız sizi bekliyor.",
+            body = "Bir dünya; insanları, mekânları ve olanı hatırlayan kurallarıyla " +
+                "bir bütündür.",
+            actionLabel = "Bir dünya kur",
             artSeed = "charaly-empty-worlds",
         )
 
         query.isNotBlank() && genres.isNotEmpty() -> EmptyState(
-            title = "Nothing matched that search.",
-            body = "You are filtering by \"$query\" and ${genres.joinToString(" and ")} " +
-                "at the same time. Try one, or both.",
-            actionLabel = "Clear filters",
+            title = "Bu aramayla eşleşen bir şey yok.",
+            body = "\"$query\" ve ${genres.joinToString(" ve ")} ile aynı anda " +
+                "filtreliyorsunuz. Birini ya da ikisini deneyin.",
+            actionLabel = "Filtreleri temizle",
             artSeed = "charaly-empty-worlds-filtered",
         )
 
         query.isNotBlank() -> EmptyState(
-            title = "Nothing matched that search.",
-            body = "No world is called \"$query\", and none of them are written that way.",
-            actionLabel = "Clear search",
+            title = "Bu aramayla eşleşen bir şey yok.",
+            body = "\"$query\" adında bir dünya yok ve hiçbiri o şekilde yazılmamış.",
+            actionLabel = "Aramayı temizle",
             artSeed = "charaly-empty-worlds-search",
         )
 
         else -> EmptyState(
-            title = "Nothing matches that filter.",
-            body = "No world is filed under ${genres.joinToString(" or ")}.",
-            actionLabel = "Clear filters",
+            title = "Bu filtreye uyan bir şey yok.",
+            body = "${genres.joinToString(" veya ")} türünde bir dünya yok.",
+            actionLabel = "Filtreleri temizle",
             artSeed = "charaly-empty-worlds-genre",
         )
     }

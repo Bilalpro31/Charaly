@@ -150,7 +150,7 @@ class ModelHubPresenterTest {
         assertEquals("Qwen3 4B in GGUF format", card.description)
         assertEquals("apache-2.0", card.license)
         // Tally formatted, never rounded into a fake "size".
-        assertTrue("expected a download tally in ${card.metaLine}", card.downloadCount.contains("downloads"))
+        assertTrue("expected a download tally in ${card.metaLine}", card.downloadCount.contains("indirme"))
     }
 
     /**
@@ -265,11 +265,11 @@ class ModelHubPresenterTest {
         val verdict = ModelHubPresenter.classify(file("m.gguf", 1_000L), header = null, availableRamBytes = 0L)
 
         assertEquals(CharalyCompatibility.MANUAL_IMPORT_ONLY, verdict.compatibility)
-        assertEquals("Not checked yet", verdict.label)
+        assertEquals("Henüz kontrol edilmedi", verdict.label)
         assertTrue("downloading is still allowed", verdict.canDownload)
         assertTrue(
             "the uncertainty must be stated: ${verdict.reason}",
-            verdict.reason.contains("cannot promise", ignoreCase = true),
+            verdict.reason.contains("garanti edemez", ignoreCase = true),
         )
     }
 
@@ -648,7 +648,7 @@ class ModelHubPresenterTest {
             quantization = "",
             verdict = HubFileVerdict(
                 compatibility = CharalyCompatibility.MANUAL_IMPORT_ONLY,
-                label = "Not checked yet",
+                label = "Henüz kontrol edilmedi",
                 reason = "",
                 architecture = "",
                 contextLength = 0,

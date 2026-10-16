@@ -1,6 +1,17 @@
 cmake_minimum_required(VERSION 3.22.1)
 project(charaly_llama CXX C)
 
+# Debug APKs still ship an optimized llama.cpp.
+#
+# AGP configures the debug variant with CMAKE_BUILD_TYPE=Debug, which compiles
+# ggml's C sources at -O0 (the Gradle cppFlags only reach C++), so a debug build
+# runs inference several times slower than the same code in a release APK - the
+# difference between a story that responds and one that does not, on a phone.
+# Forcing Release here keeps the debug variant usable for real story sessions.
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(CMAKE_BUILD_TYPE "Release" CACHE STRING "" FORCE)
+endif()
+
 # ---------------------------------------------------------------------------
 # Charaly native inference: llama.cpp, compiled into the app process.
 #

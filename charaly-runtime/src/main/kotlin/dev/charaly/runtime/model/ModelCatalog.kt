@@ -63,6 +63,25 @@ data class ModelCatalogItem(
     val ggufArtifacts: List<String> = emptyList(),
     /** How much to trust [sizeBytes] and [recommendedRamBytes]. */
     val confidence: MetadataConfidence = MetadataConfidence.APPROXIMATE,
+    /**
+     * The rest of the published metadata.
+     *
+     * Every one of these was reachable only by scraping a Hub page before, which meant the
+     * Model Detail screen had to either guess or go blank. They all default, so a manifest
+     * that predates them still parses and a hand-written entry is still valid.
+     */
+    /** Lowest device class this is realistically usable on, in publisher's own words. */
+    val recommendedDevice: String = "",
+    /** Where the GGUF itself comes from, for attribution ("Hugging Face", "publisher CDN"). */
+    val ggufSource: String = "",
+    /** Publisher's release tag. Not inferred from the file name. */
+    val version: String = "",
+    /** Language(s) the model was trained for. */
+    val language: String = "",
+    /** Minimum Android API level, or 0 when the publisher does not state one. */
+    val minAndroidVersion: Int = 0,
+    /** True when the published build assumes a 64-bit ARM device. */
+    val requiresArm64: Boolean = false,
 ) {
     init {
         require(id.isNotBlank()) { "ModelCatalogItem needs an id" }
@@ -207,6 +226,41 @@ class BuiltInModelCatalog(
     companion object {
         val DEFAULT: List<ModelCatalogItem> = listOf(
             ModelCatalogItem(
+                id = "qwen2.5-1.5b-instruct-q4",
+                name = "Qwen 2.5 1.5B Instruct",
+                publisher = "Qwen",
+                description = "A conventional attention model, so Charaly's key/value prefix " +
+                    "cache works across turns: the model re-reads only what changed instead of " +
+                    "the whole prompt. Follows the action protocol and stops at its own " +
+                    "end-of-turn token. The recommended first install.",
+                parameterCount = 1_500_000_000L,
+                // Real Q4_K_M artifact size + sha256, measured from the Hub artifact 2026-10-09.
+                sizeBytes = 1_117_320_736L,
+                quantization = "Q4_K_M",
+                architecture = "Qwen2",
+                contextLength = 32768,
+                recommendedRamBytes = 2_200_000_000L,
+                roleplaySuitability = 4,
+                license = "Apache 2.0",
+                licenseUrl = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+                tags = listOf("small", "fast", "chat", "recommended"),
+                isRecommended = true,
+                upstreamId = "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+                ggufArtifacts = listOf(
+                    "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+                    "qwen2.5-1.5b-instruct-q5_k_m.gguf",
+                    "qwen2.5-1.5b-instruct-q6_k.gguf",
+                    "qwen2.5-1.5b-instruct-q8_0.gguf",
+                ),
+                download = DownloadMetadata(
+                    url = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+                    fileName = "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+                    sizeBytes = 1_117_320_736L,
+                    sha256 = "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e",
+                ),
+                confidence = MetadataConfidence.VERIFIED,
+            ),
+            ModelCatalogItem(
                 id = "qwen3-1.7b-q4",
                 name = "Qwen 3 1.7B Instruct",
                 publisher = "Qwen",
@@ -235,6 +289,68 @@ class BuiltInModelCatalog(
                     sizeBytes = 1_282_439_584L,
                     sha256 = "72c5c3cb38fa32d5256e2fe30d03e7a64c6c79e668ad84057e3bd66e250b24fb",
                 ),
+            ),
+            // ---- Qwen 3 4B Instruct 2507 -------------------------------------
+            //
+            // PHASE 9. This entry exists because the 1.5B model above was measured, on real
+            // weights, failing the app's own Turkish acceptance criteria (see
+            // app/src/test/.../storyloop/TurkishChatQualityTest.kt). It is the 2507 refresh
+            // rather than the original Qwen3-4B for two reasons that are facts about the
+            // weights, not preferences:
+            //
+            //  1. It is **non-thinking only**. Qwen's own card states the model "supports
+            //     only non-thinking mode and does not generate <think></think> blocks".
+            //     A roleplay chat cannot use a model that spends its opening tokens on a
+            //     scratchpad - the reader sees the working, not the character.
+            //  2. It is strictly better at what the original was chosen for. Against
+            //     Qwen3-4B Non-Thinking, Qwen reports MultiIF 61.3 -> 69.0 and IFEval
+            //     81.2 -> 83.4 (instruction following, i.e. obeying the system prompt's
+            //     "write only your own words" rule), plus "substantial gains in long-tail
+            //     knowledge coverage across multiple languages" - the axis Turkish is on.
+            //
+            // Sizes and SHA-256 are read from the Hub repo tree, not derived from a formula.
+            ModelCatalogItem(
+                id = "qwen3-4b-instruct-2507-q4",
+                name = "Qwen 3 4B Instruct 2507",
+                publisher = "Qwen",
+                description = "The recommended model for a Turkish conversation. Non-thinking " +
+                    "by design - it never opens a <think> block - and markedly better than " +
+                    "the 1.5B at following Charaly's speaking rules. Needs about 6 GB free.",
+                parameterCount = 4_000_000_000L,
+                // Real Q4_K_M artifact size, measured on the Hub 2026-10-15.
+                sizeBytes = 2_497_281_120L,
+                quantization = "Q4_K_M",
+                architecture = "qwen3",
+                // Natively 262144. What the app actually asks for is bounded by
+                // ModelPresetLibrary.contextBudget for the MEDIUM band, not by this number.
+                contextLength = 32_768,
+                // 2.33 GiB of weights, plus the KV cache for the window a MEDIUM band gets
+                // on a 6 GiB+ device, plus llama.cpp's compute buffers. The round 6 GB is
+                // headroom, not the file size.
+                recommendedRamBytes = 6_000_000_000L,
+                roleplaySuitability = 5,
+                license = "Apache 2.0",
+                licenseUrl = "https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507",
+                tags = listOf("turkish", "roleplay", "instruct", "non-thinking", "recommended"),
+                isRecommended = true,
+                upstreamId = "Qwen/Qwen3-4B-Instruct-2507",
+                ggufArtifacts = listOf(
+                    "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+                    "Qwen3-4B-Instruct-2507-Q5_K_M.gguf",
+                    "Qwen3-4B-Instruct-2507-Q6_K.gguf",
+                    "Qwen3-4B-Instruct-2507-Q8_0.gguf",
+                ),
+                download = DownloadMetadata(
+                    url = "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+                    fileName = "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+                    sizeBytes = 2_497_281_120L,
+                    sha256 = "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+                ),
+                ggufSource = "Hugging Face (unsloth)",
+                version = "2507",
+                language = "Multilingual, strong in Turkish",
+                requiresArm64 = true,
+                confidence = MetadataConfidence.VERIFIED,
             ),
             ModelCatalogItem(
                 id = "qwen3-4b-q4",

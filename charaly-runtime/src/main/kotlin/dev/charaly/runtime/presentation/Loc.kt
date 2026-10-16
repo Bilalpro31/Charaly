@@ -97,7 +97,7 @@ private val EN: Map<String, String> = mapOf(
     // ---- navigation -------------------------------------------------------
     "nav.home" to "Home",
     "nav.worlds" to "Worlds",
-    "nav.chat" to "Chat",
+    "nav.chat" to "Stage",
     "nav.library" to "Library",
     "nav.settings" to "Settings",
     "nav.models" to "Models",
@@ -235,6 +235,7 @@ private val EN: Map<String, String> = mapOf(
     "chat.composer_open_hint" to "Say something, or watch what happens.",
     "chat.stopped" to "Stopped",
     "chat.failed" to "Something interrupted the scene",
+    "chat.world_is_moving" to "The world is moving…",
     "chat.failure_open_models" to "Choose a model",
     "chat.opening_title" to "You are in %1${'$'}s",
     "chat.opening_title_generic" to "The scene is about to begin",
@@ -269,6 +270,7 @@ private val EN: Map<String, String> = mapOf(
     "error.no_scene" to "The scene could not be placed. Move somewhere else first.",
     "error.generation_cancelled" to "Generation stopped.",
     "error.persistence" to "That change could not be saved on this device.",
+    "error.pack_unavailable" to "This story needs a story-pack version that is not on this device. Restore that version before continuing.",
     "error.too_large_model" to "This model may exceed the available device memory.",
     "error.generic" to "Something went wrong.",
     "error.import_failed" to "That file could not be imported.",
@@ -353,6 +355,14 @@ private val EN: Map<String, String> = mapOf(
     "sheet.no_memories_body" to "Memories appear here as the story accumulates them.",
     "sheet.nobody_title" to "Nobody here yet.",
     "sheet.nobody_body" to "People arrive as the story needs them.",
+    // PHASE 9: these five were hardcoded English literals in StageSheets.kt, so a Turkish
+    // reader saw a fully translated sheet with one English paragraph in it. They are keys
+    // now, so the sheet is one language all the way down.
+    "sheet.just_you" to "Just you.",
+    "sheet.no_memories_body_long" to "Memories appear here as the story accumulates them - what people experienced, and what they decided about you.",
+    "sheet.nobody_body_long" to "People arrive as the story needs them. Open this again once someone has walked in.",
+    "sheet.elsewhere_in_world" to "Elsewhere in this world",
+    "sheet.nothing_pressing" to "Nothing is pressing yet.",
     "onboarding.stories_title" to "Your stories stay with you.",
     "onboarding.stories_body" to "Conversations, memories and worlds are files on this device.",
     "onboarding.worlds_title" to "Worlds, not chats.",
@@ -439,12 +449,12 @@ private val EN: Map<String, String> = mapOf(
 
 private val TR: Map<String, String> = mapOf(
     // ---- navigation -------------------------------------------------------
-    "nav.home" to "Ana Sayfa",
+    "nav.home" to "Ana",
     "nav.worlds" to "Dünyalar",
-    "nav.chat" to "Sohbet",
+    "nav.chat" to "Sahne",
     "nav.library" to "Kitaplık",
     "nav.settings" to "Ayarlar",
-    "nav.models" to "Modeller",
+    "nav.models" to "Motor",
     "nav.back" to "Geri",
 
     // ---- common actions --------------------------------------------------
@@ -476,7 +486,7 @@ private val TR: Map<String, String> = mapOf(
 
     // ---- home -------------------------------------------------------------
     "home.worlds_header" to "Dünyalar",
-    "home.worlds_caption" to "%1${'$'}d dünyaya adım at",
+    "home.worlds_caption" to "%1${'$'}d dünyaya adım atın",
     "home.stories_header" to "Hikâyeleriniz",
     "home.continuation" to "Devam Et",
     "home.model_ready_pill" to "Hazır",
@@ -494,6 +504,10 @@ private val TR: Map<String, String> = mapOf(
     "worlds.clear_filters" to "Filtreleri temizle",
     "worlds.empty_title" to "Henüz dünya yok.",
     "worlds.empty_body" to "Açtığınız dünyalar burada görünür.",
+    "worlds.feed_title" to "Dünya Akışı",
+    "worlds.dominant" to "ÖNE ÇIKAN",
+    "worlds.full" to "TAM",
+    "worlds.quiet" to "SAKİN",
 
     // ---- story setup ------------------------------------------------------
     "setup.step.scenario.title" to "Bir açılış seçin",
@@ -537,7 +551,7 @@ private val TR: Map<String, String> = mapOf(
     "model.downloaded" to "İndirildi",
     "model.imported_ok" to "%1${'$'}s yüklendi",
     "model.no_model_yet" to "Henüz model yok. Yanıt üretmek için bir GGUF içe aktarın.",
-    "model.missing_for_story" to "Bu hikâyenin modeli artık bu cihazda yok.",
+    "model.missing_for_story" to "Bu hikâye için seçili model bulunamadı.",
     "model.unsupported_arch" to "Desteklenmeyen mimari",
     "model.invalid_gguf" to "Bu dosya geçerli bir GGUF modeli değil",
     "model.file_missing" to "Model dosyası bulunamadı",
@@ -547,11 +561,11 @@ private val TR: Map<String, String> = mapOf(
 
     // ---- model library ---------------------------------------------------
     "models.title" to "Modeller",
-    "models.library" to "Model Kütüphanesi",
-    "models.your_models" to "Bu cihazdakiler",
+    "models.library" to "Motor Kütüphanesi",
+    "models.your_models" to "Bu cihazda",
     "models.explore" to "Modelleri keşfet",
-    "models.choose_prompt" to "Dünyalarınızı yaşatmak için bir yerel model seçin.",
-    "models.import_hint" to "Elinizdeki bir GGUF dosyasını içe aktarın. Cihazdan hiçbir yere gönderilmez.",
+    "models.choose_prompt" to "Dünyalarınızı canlandırmak için bir yerel model seçin.",
+    "models.import_hint" to "Elinizde olan bir GGUF dosyasını içe aktarın. Cihazınızdan hiçbir yere gönderilmez.",
     "models.offline" to "Çevrimdışısınız.",
     "models.offline_action" to "Yüklü modeller yine çalışır",
     "models.retry_search" to "Tekrar Dene",
@@ -569,7 +583,7 @@ private val TR: Map<String, String> = mapOf(
     "models.not_verified" to "Doğrulanmadı",
     "models.yes" to "Evet",
     "models.detail" to "Model",
-    "models.choose_local_body" to "Charaly bu cihazdaki bir modelle konuşur. Hiçbir şey gönderilmez.",
+    "models.choose_local_body" to "Charaly, bu cihazdaki bir modelle konuşur. Hiçbir şey gönderilmez.",
 
     // ---- chat -------------------------------------------------------------
     "chat.needs_model" to "Bu hikâye devam edebilmek için bir yerel modele ihtiyaç duyuyor.",
@@ -588,6 +602,9 @@ private val TR: Map<String, String> = mapOf(
     "chat.there_nearby" to "Yakında",
     "chat.there_elsewhere" to "Başka yerde",
     "chat.day" to "%1${'$'}d. gün",
+    "chat.scene_title" to "Sahne",
+    "chat.your_move" to "Hamleniniz",
+    "chat.world_is_moving" to "Dünya hareket ediyor…",
 
     // ---- settings ---------------------------------------------------------
     "settings.title" to "Ayarlar",
@@ -602,6 +619,19 @@ private val TR: Map<String, String> = mapOf(
     "settings.reduce_motion" to "Hareketi azalt",
     "settings.reduce_motion_caption" to "Geçişler yer değiştirmez. İçerik yine değişir.",
     "settings.build_world" to "Bir dünya kur",
+    "settings.storage" to "Depolama",
+    "settings.appearance" to "Görünüm",
+    "settings.story" to "Hikâye",
+    "settings.text_size" to "Metin boyutu",
+    "settings.auto_advance" to "Otomatik ilerle",
+    "settings.narration" to "Anlatım",
+    "settings.current_model" to "Geçerli model",
+    "settings.model_hub" to "Model Hub",
+    "settings.story_packs" to "Hikâye Paketleri",
+    "settings.models" to "Modeller",
+    "settings.cache" to "Önbellek",
+    "settings.about" to "Hakkında",
+    "settings.version" to "Charaly sürümü",
     "settings.back" to "Geri",
 
     // ---- empty states / errors -------------------------------------------
@@ -613,6 +643,7 @@ private val TR: Map<String, String> = mapOf(
     "error.no_scene" to "Sahne oluşturulamadı. Önce başka bir yere geçin.",
     "error.generation_cancelled" to "Üretim durduruldu.",
     "error.persistence" to "Bu değişiklik bu cihaza kaydedilemedi.",
+    "error.pack_unavailable" to "Bu hikâye, bu cihazda bulunmayan bir hikâye paketi sürümüne ihtiyaç duyuyor. Devam etmek için o sürümü geri yükleyin.",
     "error.too_large_model" to "Bu model cihazdaki kullanılabilir belleğin üzerine çıkabilir.",
     "error.generic" to "Bir şeyler ters gitti.",
     "error.import_failed" to "Bu dosya içe aktarılamadı.",
@@ -697,6 +728,12 @@ private val TR: Map<String, String> = mapOf(
     "sheet.no_memories_body" to "Anılar hikâye ilerledikçe burada birikir.",
     "sheet.nobody_title" to "Burada henüz kimse yok.",
     "sheet.nobody_body" to "İnsanlar hikâye gerektirdiğinde gelir.",
+    // PHASE 9 - the Turkish half of the five literals StageSheets.kt had in English.
+    "sheet.just_you" to "Yalnızca sen.",
+    "sheet.no_memories_body_long" to "Anılar hikâye ilerledikçe burada birikir: insanların yaşadıkları ve sen hakkında neye karar verdikleri.",
+    "sheet.nobody_body_long" to "İnsanlar hikâye gerektirdiğinde gelir. Biri içeri girdiğinde tekrar aç.",
+    "sheet.elsewhere_in_world" to "Bu dünyanın başka bir yerinde",
+    "sheet.nothing_pressing" to "Şu an acele eden bir şey yok.",
     "onboarding.stories_title" to "Hikâyeleriniz sizde kalır.",
     "onboarding.stories_body" to "Sohbetler, anılar ve dünyalar bu cihazdaki dosyalardır.",
     "onboarding.worlds_title" to "Sohbet değil, dünyalar.",

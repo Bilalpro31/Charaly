@@ -106,20 +106,20 @@ class ProductPresentationTest {
      */
     @Test
     fun `presence is phrased as a sentence and excludes the player`() {
-        assertEquals("Just you", StoryContextPresenter.presenceLabel(0))
-        assertEquals("1 person here", StoryContextPresenter.presenceLabel(1))
-        assertEquals("3 people here", StoryContextPresenter.presenceLabel(3))
-        assertEquals("11 people here", StoryContextPresenter.presenceLabel(11))
+        assertEquals("Sadece siz", StoryContextPresenter.presenceLabel(0))
+        assertEquals("1 kişi burada", StoryContextPresenter.presenceLabel(1))
+        assertEquals("3 kişi burada", StoryContextPresenter.presenceLabel(3))
+        assertEquals("11 kişi burada", StoryContextPresenter.presenceLabel(11))
     }
 
     @Test
     fun `time of day is a phrase, not a number`() {
-        assertEquals("Late night", StoryContextPresenter.timeOfDayLabel(2))
-        assertEquals("Morning", StoryContextPresenter.timeOfDayLabel(9))
-        assertEquals("Midday", StoryContextPresenter.timeOfDayLabel(12))
-        assertEquals("Afternoon", StoryContextPresenter.timeOfDayLabel(15))
-        assertEquals("Evening", StoryContextPresenter.timeOfDayLabel(19))
-        assertEquals("Night", StoryContextPresenter.timeOfDayLabel(23))
+        assertEquals("Gece yarısı", StoryContextPresenter.timeOfDayLabel(2))
+        assertEquals("Sabah", StoryContextPresenter.timeOfDayLabel(9))
+        assertEquals("Öğle", StoryContextPresenter.timeOfDayLabel(12))
+        assertEquals("Öğleden sonra", StoryContextPresenter.timeOfDayLabel(15))
+        assertEquals("Akşam", StoryContextPresenter.timeOfDayLabel(19))
+        assertEquals("Gece", StoryContextPresenter.timeOfDayLabel(23))
     }
 
     /**
@@ -207,12 +207,12 @@ class ProductPresentationTest {
 
     @Test
     fun `progress is words and never a percentage`() {
-        assertEquals("Off to a start", StoryContextPresenter.progressLabel(0))
-        assertEquals("Just begun", StoryContextPresenter.progressLabel(10))
-        assertEquals("Underway", StoryContextPresenter.progressLabel(40))
-        assertEquals("Halfway there", StoryContextPresenter.progressLabel(60))
-        assertEquals("Nearly there", StoryContextPresenter.progressLabel(90))
-        assertEquals("Finished", StoryContextPresenter.progressLabel(100))
+        assertEquals("Başlangıçta", StoryContextPresenter.progressLabel(0))
+        assertEquals("Yeni başladı", StoryContextPresenter.progressLabel(10))
+        assertEquals("Devam ediyor", StoryContextPresenter.progressLabel(40))
+        assertEquals("Yarı yolda", StoryContextPresenter.progressLabel(60))
+        assertEquals("Bitmek üzere", StoryContextPresenter.progressLabel(90))
+        assertEquals("Bitti", StoryContextPresenter.progressLabel(100))
         // The decisive property: no output contains a digit.
         for (progress in 0..100) {
             assertFalse(
@@ -246,17 +246,17 @@ class ProductPresentationTest {
     @Test
     fun `elapsed time reads as a phrase`() {
         val now = dev.charaly.runtime.domain.StoryTime.of(day = 3, hour = 14, minute = 0)
-        assertEquals("Just begun", StoryContextPresenter.elapsedLabel(now, now))
+        assertEquals("Yeni başladı", StoryContextPresenter.elapsedLabel(now, now))
         assertEquals(
-            "5 hours in",
+            "5 saat oldu",
             StoryContextPresenter.elapsedLabel(now, dev.charaly.runtime.domain.StoryTime.of(day = 3, hour = 9, minute = 0)),
         )
         assertEquals(
-            "1 day in",
+            "1 gün oldu",
             StoryContextPresenter.elapsedLabel(now, dev.charaly.runtime.domain.StoryTime.of(day = 2, hour = 14, minute = 0)),
         )
         assertEquals(
-            "2 days in",
+            "2 gün oldu",
             StoryContextPresenter.elapsedLabel(now, dev.charaly.runtime.domain.StoryTime.of(day = 1, hour = 14, minute = 0)),
         )
     }
@@ -488,13 +488,13 @@ class ProductPresentationTest {
                 .minusMinutes(minutesAgo),
             now,
         )
-        assertEquals("Just now", label(0))
-        assertEquals("Just now", label(30))
-        assertEquals("3 hours ago", label(180))
-        assertEquals("Earlier today", label(600))
-        assertEquals("Last night", label(60L * 20))
-        assertEquals("Yesterday", label(60L * 30))
-        assertEquals("2 days ago", label(60L * 24 * 2))
+        assertEquals("Şimdi", label(0))
+        assertEquals("Şimdi", label(30))
+        assertEquals("3 saat önce", label(180))
+        assertEquals("Bugün daha erken", label(600))
+        assertEquals("Dün gece", label(60L * 20))
+        assertEquals("Dün", label(60L * 30))
+        assertEquals("2 gün önce", label(60L * 24 * 2))
     }
 
     // ------------------------------------------------------------------
@@ -526,7 +526,7 @@ class ProductPresentationTest {
         assertTrue("the card has no presence label", card.presenceLabel.isNotBlank())
         assertTrue(
             "the card's presence label is a phrase",
-            card.presenceLabel == "Just you" || card.presenceLabel.endsWith("here"),
+            card.presenceLabel == "Sadece siz" || card.presenceLabel.endsWith("burada"),
         )
     }
 

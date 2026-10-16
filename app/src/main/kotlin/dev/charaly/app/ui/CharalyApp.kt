@@ -20,23 +20,29 @@ import androidx.activity.result.contract.ActivityResultContracts
 import dev.charaly.app.ui.nav.CharalyNavigator
 import dev.charaly.app.ui.nav.Route
 import dev.charaly.app.ui.nav.RouteHost
-import dev.charaly.app.ui.nav.destinationOrNull
+import dev.charaly.app.ui.nav.tabOrNull
 import dev.charaly.app.ui.nav.rememberNavigator
+import dev.charaly.app.ui.screens.CreateScreen
 import dev.charaly.app.ui.screens.EnterWorldScreen
 import dev.charaly.app.ui.screens.HomeScreen
 import dev.charaly.app.ui.screens.LibraryScreen
 import dev.charaly.app.ui.screens.ModelDetailScreen
 import dev.charaly.app.ui.screens.ModelHubScreen
+import dev.charaly.app.ui.screens.PackDeleteDialogs
+import dev.charaly.app.ui.packstore.PackOpenAction
+import dev.charaly.app.ui.screens.PackImportScreen
+import dev.charaly.app.ui.screens.PackOpenGateDialog
+import dev.charaly.app.ui.screens.PackStoreScreen
+import dev.charaly.app.ui.screens.SessionsScreen
 import dev.charaly.app.ui.screens.SettingsScreen
 import dev.charaly.app.ui.screens.ShowcaseScreen
+import dev.charaly.app.ui.screens.StoryRecordScreen
 import dev.charaly.app.ui.screens.StageSheet
 import dev.charaly.app.ui.screens.StageScreen
-import dev.charaly.app.ui.screens.StoryRecordScreen
-import dev.charaly.app.ui.screens.WorldsScreen
 import dev.charaly.app.ui.screens.heroHeightFor
 import dev.charaly.app.ui.shell.CharalyScaffold
-import dev.charaly.runtime.presentation.CharalyDestination
 import dev.charaly.runtime.presentation.LayoutPolicy
+import dev.charaly.runtime.storypack.StoryPackFormat
 
 /**
  * THE APPLICATION SHELL.
@@ -89,12 +95,20 @@ fun CharalyApp(
     val navigator = rememberNavigator()
     val snackbar = remember { SnackbarHostState() }
 
+    // The last crash report, read once per composition root. Blank on a device
+    // where the app has never crashed, which is the common case.
+    val context = LocalContext.current
+    val lastCrash = remember {
+        (context.applicationContext as? dev.charaly.app.CharalyApplication)
+            ?.readCrashReport()
+            .orEmpty()
+    }
+
     // Drop decoded artwork when the system asks for memory. Not on navigation, and not on
     // every scene change: the cache exists so the second visit to a location is free, and
     // evicting it on the way out would defeat that. Under real pressure, keeping 8 MB of
     // background is the wrong trade - and llama.cpp's mmap is the thing actually needing
     // the room.
-    val context = androidx.compose.ui.platform.LocalContext.current
     androidx.compose.runtime.DisposableEffect(context) {
         val component = context as? android.app.Activity
         val callback = object : android.content.ComponentCallbacks2 {
@@ -128,8 +142,53 @@ fun CharalyApp(
         val created = state.lastCreatedStoryId
         if (created != null) {
             viewModel.consumeCreatedStory()
-            viewModel.openStory(created)
-            navigator.replaceAll(Route.Stage(created))
+            openStory(viewModel, navigator, created)
+        }
+    }
+
+    // ---- the two pack file doors -------------------------------------------
+    //
+    // Both live in the shell because both are conversations with the system UI, and a
+    // screen that launches the system picker owns a result it cannot act on: the writing
+    // and the reviewing are the view model's, the uri dance is the shell's.
+
+    // A `.charaly-pack` in. MIME is `*/*` on purpose: providers frequently mislabel
+    // archives, so the view model judges the *name* and the archive itself instead of
+    // trusting a declaration that has proved untrustworthy.
+    val packPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+        onResult = { uri -> uri?.let(viewModel::readPackFile) },
+    )
+
+    // A `.charaly-pack` out. The system chooses the destination; the suggested name comes
+    // from the format itself, and the bytes wait in state between the two halves.
+    val packExporter = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument(StoryPackFormat.MEDIA_TYPE),
+        onResult = { uri ->
+            val pending = state.packExport
+            if (uri != null && pending != null) {
+                viewModel.writeExportedPack(uri, pending.bytes)
+            } else {
+                viewModel.cancelPackExport()
+            }
+        },
+    )
+    LaunchedEffect(state.packExport) {
+        state.packExport?.let { packExporter.launch(it.fileName) }
+    }
+
+    // Where the import review returns to when it finishes: the pack store when the file
+    // was picked from there, the Library otherwise - the new world has landed in it.
+    var packImportOrigin by remember { mutableStateOf<Route>(Route.Library) }
+
+    // A picked archive arrives asynchronously (inspection runs off the main thread), so
+    // the review screen is pushed the moment there is something to review - from wherever
+    // the picker was opened.
+    LaunchedEffect(state.pendingImport) {
+        if (state.pendingImport != null && navigator.current != Route.PackImport) {
+            packImportOrigin =
+                if (navigator.current == Route.PackStore) Route.PackStore else Route.Library
+            navigator.navigateTo(Route.PackImport)
         }
     }
 
@@ -149,13 +208,31 @@ fun CharalyApp(
     // This matters because CHAT and Stage are two routes to one screen. Tapping Chat with no
     // story open should show a navigable "nothing here yet"; the moment a story is open -
     // whether reached by tapping Chat or by opening one from the lobby - the stage owns the
-    // screen and the navigation pill goes away, because the composer wants the bottom edge.
+    // screen and the navigation goes away, because the composer wants the bottom edge.
     // Reading this from `state.story` rather than from a route is what keeps both routes
     // behaving identically.
     val stageOnScreen = state.story != null
-    val destination = when (val route = navigator.current) {
-        Route.Chat -> if (stageOnScreen) null else CharalyDestination.CHAT
-        else -> route.destinationOrNull()
+    val tab = when (val route = navigator.current) {
+        Route.Chat -> if (stageOnScreen) null else Route.Tab.SESSIONS
+        else -> route.tabOrNull()
+    }
+
+    // The open context sheet, owned HERE rather than inside the chat route.
+    //
+    // PHASE 9: it used to be `remember` state local to the stage screen, and the only
+    // `BackHandler` in the app - the one just below - could not see it. So system back
+    // with WORLD/MEMORY/PEOPLE/STORY open skipped the overlay and left the story behind
+    // it, throwing away the whole scene to dismiss one layer of it.
+    //
+    // Holding it at this level is what lets the back contract below be a single, readable
+    // rule: the topmost thing on screen is what back removes.
+    var stageSheet by remember { mutableStateOf<StageSheet?>(null) }
+
+    // Leaving a story must also leave its sheet. Otherwise the WORLD sheet a player opened
+    // and then backed out of is still open when the next story loads - the new scene
+    // arrives already covered, and the header control that opened it is gone.
+    LaunchedEffect(state.story?.id) {
+        if (state.story == null) stageSheet = null
     }
 
     // System back pops the stack, leaves the stage for the lobby, or leaves the app.
@@ -163,14 +240,55 @@ fun CharalyApp(
     // `leaveImmersive` is what stops "back" from closing the app while the user is reading
     // a story: the stage is opened with `replaceAll`, so its stack is one deep and a plain
     // pop would find nothing to pop and hand control to the activity.
+    //
+    // PHASE 9: the sheet is checked first. An overlay is the topmost thing on screen, so
+    // back has to take it before it takes the screen underneath - otherwise dismissing a
+    // panel silently ends the story. Only once nothing is layered does the original rule
+    // apply, unchanged.
     BackHandler(enabled = true) {
-        if (!navigator.leaveImmersive()) onExit()
+        val sheet = stageSheet
+        if (sheet != null) {
+            stageSheet = null
+        } else if (!navigator.leaveImmersive()) {
+            onExit()
+        }
     }
+
+    // THE DELETE CONFIRMATION, above every route.
+    //
+    // A pack can be deleted from the store and from a world's showcase, and a destructive
+    // decision has to mean the same thing from both. One dialog, fed by the view model's
+    // prompt - which grows into the "are you sure" stage when the installer refuses the
+    // plain delete - is how "your saves survive this" is promised exactly once.
+    PackDeleteDialogs(
+        prompt = state.packDeletePrompt,
+        onConfirm = { state.packDeletePrompt?.let { prompt -> viewModel.deletePack(prompt.packId, force = false) } },
+        onForceDelete = { state.packDeletePrompt?.let { prompt -> viewModel.deletePack(prompt.packId, force = true) } },
+        onDismiss = viewModel::dismissPackDelete,
+    )
+
+    // THE STORY-OPEN GATE, above every route like the delete confirmation is.
+    //
+    // A story pinned to a pack edition this device no longer has is refused HERE, with the
+    // compatibility contract's own explanation and the only recoveries that exist. The
+    // import action opens the very picker archives always arrive through; the catalog is
+    // offered when the whole pack is gone. Closing changes nothing: the save stays pinned.
+    PackOpenGateDialog(
+        gate = state.packOpenGate,
+        onAction = { action ->
+            viewModel.dismissPackOpenGate()
+            when (action) {
+                PackOpenAction.IMPORT_ARCHIVE -> packPicker.launch(arrayOf("*/*"))
+                PackOpenAction.OPEN_CATALOG -> navigator.navigateTo(Route.PackStore)
+            }
+        },
+        onDismiss = viewModel::dismissPackOpenGate,
+    )
 
     CharalyScaffold(
         policy = policy,
-        destination = destination,
-        onSelect = navigator::select,
+        tab = tab,
+        onSelectTab = navigator::select,
         snackbarHost = {
             SnackbarHost(
                 snackbar,
@@ -192,19 +310,29 @@ fun CharalyApp(
                     onContinue = { storyId -> openStory(viewModel, navigator, storyId) },
                     onOpenWorld = { packId -> navigator.navigateTo(Route.Showcase(packId)) },
                     onOpenStory = { storyId -> openStory(viewModel, navigator, storyId) },
-                    onOpenWorlds = { navigator.selectTab(Route.Tab.WORLDS) },
+                    onOpenLibrary = { navigator.select(Route.Tab.LIBRARY) },
                     onOpenModels = { navigator.navigateTo(Route.Models) },
-                    onOpenSettings = { navigator.navigateTo(Route.Settings) },
+                    onOpenSettings = { navigator.select(Route.Tab.ME) },
+                    onOpenNotifications = { navigator.select(Route.Tab.SESSIONS) },
                 )
 
-                Route.Worlds -> WorldsScreen(
-                    snapshot = viewModel.worldsSnapshot(),
+                Route.Sessions -> SessionsScreen(
+                    shelf = viewModel.libraryShelf(),
                     loading = state.loading,
                     policy = policy,
-                    onQueryChange = viewModel::setWorldsQuery,
-                    onToggleGenre = viewModel::toggleWorldsGenre,
-                    onClearFilters = viewModel::clearWorldsFilters,
-                    onOpenWorld = { packId -> navigator.navigateTo(Route.Showcase(packId)) },
+                    onContinue = { storyId -> openStory(viewModel, navigator, storyId) },
+                    onOpenStory = { storyId -> openStory(viewModel, navigator, storyId) },
+                    onOpenDetails = { storyId -> navigator.navigateTo(Route.StoryRecord(storyId)) },
+                    onOpenLibrary = { navigator.select(Route.Tab.LIBRARY) },
+                )
+
+                Route.Create -> CreateScreen(
+                    onWriteWorld = { navigator.navigateTo(Route.Authoring) },
+                    onImportCharacter = { navigator.navigateTo(Route.CharacterImport) },
+                    // SAF picker for a .charaly-pack; the review screen is pushed when the
+                    // inspected archive is ready.
+                    onImportPack = { packPicker.launch(arrayOf("*/*")) },
+                    onOpenPackStore = { navigator.navigateTo(Route.PackStore) },
                 )
 
                 // CHAT as a destination: the open story, or the most recent one, or an
@@ -222,6 +350,9 @@ fun CharalyApp(
                         policy = policy,
                         navigator = navigator,
                         storyAssets = storyAssets,
+                        sheet = stageSheet,
+                        onOpenSheet = { stageSheet = it },
+                        onDismissSheet = { stageSheet = null },
                     )
                 }
 
@@ -231,17 +362,22 @@ fun CharalyApp(
                     policy = policy,
                     navigator = navigator,
                     storyAssets = storyAssets,
+                    sheet = stageSheet,
+                    onOpenSheet = { stageSheet = it },
+                    onDismissSheet = { stageSheet = null },
                 )
 
                 Route.Library -> LibraryScreen(
                     shelf = viewModel.libraryShelf(),
+                    worlds = viewModel.worldsSnapshot(),
                     loading = state.loading,
                     policy = policy,
                     onQueryChange = viewModel::setLibraryQuery,
                     onContinue = { storyId -> openStory(viewModel, navigator, storyId) },
                     onOpenStory = { storyId -> openStory(viewModel, navigator, storyId) },
                     onOpenDetails = { storyId -> navigator.navigateTo(Route.StoryRecord(storyId)) },
-                    onOpenWorlds = { navigator.selectTab(Route.Tab.WORLDS) },
+                    onOpenWorld = { packId -> navigator.navigateTo(Route.Showcase(packId)) },
+                    onOpenSessions = { navigator.select(Route.Tab.SESSIONS) },
                 )
 
                 is Route.Showcase -> {
@@ -258,6 +394,17 @@ fun CharalyApp(
                         },
                         onContinueStory = { storyId -> openStory(viewModel, navigator, storyId) },
                         onAboutThisWorld = { showcase?.let { viewModel.announce(it.title) } },
+                        // "Paris · Çağdaş · Sürüm 1.2.0": the setting's nouns and the
+                        // edition this device holds, computed from the pack rather than
+                        // carried by the showcase projection, which is deliberately only
+                        // an invitation.
+                        settingLabel = viewModel.showcaseSettingLabel(route.packId),
+                        versionLabel = viewModel.showcaseVersionLabel(route.packId),
+                        // Library upkeep from the world's own page. Delete takes the same
+                        // confirmed path as the pack store's - see [PackDeleteDialogs].
+                        onExport = { viewModel.exportPack(route.packId) },
+                        onUpdate = { viewModel.updatePack(route.packId) },
+                        onDelete = { viewModel.requestPackDelete(route.packId) },
                     )
                 }
 
@@ -321,6 +468,8 @@ fun CharalyApp(
                         },
                         onOpenModels = { navigator.navigateTo(Route.Models) },
                         onEnter = { viewModel.createStory(route.packId) },
+                        // What this opening will ask of the reader, on the review step.
+                        objectiveRows = viewModel.reviewObjectives(),
                     )
                 }
 
@@ -357,6 +506,7 @@ fun CharalyApp(
                         isOnline = state.isOnline,
                         busy = state.modelBusy,
                         importState = state.modelImport,
+                        importProgress = state.importProgress,
                         hasInstalledModels = snapshot.installed.isNotEmpty(),
                         onFilterChange = viewModel::setModelFilter,
                         onQueryChange = viewModel::setHubQuery,
@@ -405,8 +555,7 @@ fun CharalyApp(
                         chapters = record?.chapters.orEmpty(),
                         onBack = { navigator.pop() },
                         onContinue = {
-                            viewModel.openStory(route.instanceId)
-                            navigator.replaceAll(Route.Stage(route.instanceId))
+                            openStory(viewModel, navigator, route.instanceId)
                         },
                         onDelete = {
                             viewModel.deleteSession(route.instanceId)
@@ -436,6 +585,8 @@ fun CharalyApp(
                     darkTheme = state.darkTheme,
                     reduceMotion = state.reduceMotion,
                     developerMode = state.developerMode,
+                    hudEnabled = state.hudEnabled,
+                    onSetHudEnabled = viewModel::setHudEnabled,
                     // The one authoritative selection. `loadedModelId` said "no model" for
                     // an imported GGUF that was merely still loading.
                     modelReady = state.model.canGenerate,
@@ -505,6 +656,7 @@ fun CharalyApp(
                         // The same `advance` a real turn takes, so this exercises the event
                         // engine rather than setting a field behind its back.
                         onAdvanceTime = viewModel::advanceClock,
+                        lastCrash = lastCrash,
                     )
                 } else {
                     dev.charaly.app.ui.screens.DeveloperLockedScreen(
@@ -514,12 +666,57 @@ fun CharalyApp(
 
                 // Authoring is the one tool in the app rather than a place to go, so it
                 // lives behind Settings and not on the navigation bar.
+                //
+                // Its two exits are the wizard's own: "Kütüphaneye Yükle" installs the pack
+                // through the real pipeline and returns to the Library where it landed, and
+                // "Dosya Olarak Kaydet" feeds the shell's existing SAF export request. The
+                // draft itself never reaches the view model - only the finished pack does.
                 Route.Authoring -> dev.charaly.app.ui.screens.AuthoringScreen(
                     packs = state.packs,
                     onBack = { navigator.pop() },
                     onSave = { pack ->
-                        viewModel.saveCreatedPack(pack)
-                        navigator.replaceAll(Route.Worlds)
+                        viewModel.installAuthoredPack(pack)
+                        navigator.replaceAll(Route.Library)
+                    },
+                    onExportFile = viewModel::exportAuthoredPack,
+                )
+
+                // The pack store: what this device holds, and what the catalog offers.
+                // Its two file actions are the shell's SAF launchers; every row action is
+                // a real pipeline call.
+                Route.PackStore -> {
+                    LaunchedEffect(route) { viewModel.refreshPackStore() }
+                    PackStoreScreen(
+                        installed = state.packStoreItems,
+                        catalog = state.catalogCards,
+                        catalogSourceNote = state.catalogSourceNote,
+                        loading = state.packBusy,
+                        onBack = { navigator.pop() },
+                        onImport = { packPicker.launch(arrayOf("*/*")) },
+                        onExport = { item -> viewModel.exportPack(item.packId) },
+                        onUpdate = { item -> viewModel.updatePack(item.packId) },
+                        onDelete = { item -> viewModel.requestPackDelete(item.packId) },
+                        onDownload = viewModel::startPackDownload,
+                        onPauseDownload = viewModel::pausePackDownload,
+                        onResumeDownload = viewModel::resumePackDownload,
+                        onCancelDownload = viewModel::cancelPackDownload,
+                        onRetryDownload = viewModel::retryPackDownload,
+                    )
+                }
+
+                // The import review: the one place a picked archive can become installed.
+                Route.PackImport -> PackImportScreen(
+                    session = state.pendingImport,
+                    done = state.packImportDone,
+                    busy = state.packBusy,
+                    onConfirm = viewModel::confirmPackImport,
+                    onCancel = {
+                        viewModel.cancelPackImport()
+                        navigator.pop()
+                    },
+                    onDone = {
+                        viewModel.acknowledgePackImportDone()
+                        navigator.replaceAll(packImportOrigin)
                     },
                 )
             }
@@ -541,9 +738,23 @@ private fun ChatRoute(
     policy: LayoutPolicy,
     navigator: CharalyNavigator,
     storyAssets: dev.charaly.app.ui.art.StoryAssetLoader?,
+    /**
+     * The open context sheet, owned one level up.
+     *
+     * PHASE 9: this used to be local `remember` state here, which made it invisible to the
+     * single `BackHandler` the app installs in [CharalyApp]. The consequence was not
+     * cosmetic - with WORLD/MEMORY/PEOPLE/STORY open, the system back button skipped the
+     * sheet entirely and left the story behind it. Opening a sheet and pressing back used
+     * to throw away the whole scene rather than one layer of it, which is the opposite of
+     * what back means for an overlay.
+     *
+     * Hoisting the value costs no layout change at all: the sheet still renders in the same
+     * place, in the same column, with the same handle. Only *who may close it* changed.
+     */
+    sheet: StageSheet?,
+    onOpenSheet: (StageSheet) -> Unit,
+    onDismissSheet: () -> Unit,
 ) {
-    var sheet by remember { mutableStateOf<StageSheet?>(null) }
-
     StageScreen(
         stage = viewModel.stageSnapshot(),
         loading = state.loading,
@@ -556,10 +767,10 @@ private fun ChatRoute(
         onBack = { navigator.leaveImmersive() },
         onSend = viewModel::send,
         onStop = viewModel::stopGeneration,
-        onOpenSheet = { sheet = it },
-        onDismissSheet = { sheet = null },
+        onOpenSheet = onOpenSheet,
+        onDismissSheet = onDismissSheet,
         onOpenModels = {
-            sheet = null
+            onDismissSheet()
             navigator.navigateTo(Route.Models)
         },
         onRetry = viewModel::retryGeneration,
@@ -568,8 +779,17 @@ private fun ChatRoute(
         assetLoader = storyAssets,
         onSelectSpeaker = { id ->
             viewModel.selectSpeaker(dev.charaly.runtime.domain.CharacterId(id))
-            sheet = null
+            onDismissSheet()
         },
+        // The same `advance` a real turn takes, so letting an hour pass is something the
+        // world experiences rather than a number replaced on a clock face.
+        onAdvanceTime = { minutes -> viewModel.advanceClock(minutes.toLong()) },
+        hudEnabled = state.hudEnabled,
+        // The branches the world holds open, above the composer, and what the story is
+        // asking of the player in the Story sheet. Both re-read whenever the story moves.
+        choices = state.offeredChoices,
+        onTakeChoice = viewModel::takeChoice,
+        objectives = viewModel.stageObjectives(),
     )
 }
 
@@ -579,8 +799,12 @@ private fun ChatRoute(
  * One function, because three call sites used to do this slightly differently - and the one
  * that forgot to load the story produced a stage with no transcript, which is the kind of
  * bug that looks like the engine failing.
+ *
+ * Navigation happens in `onOpened`, which the view model runs only after the compatibility
+ * gate has let the story through. Navigating first and checking afterwards left the stage
+ * open on a story that was never actually loaded - precisely how a save pinned to a missing
+ * pack edition ended up playing somebody else's canon.
  */
 private fun openStory(viewModel: CharalyViewModel, navigator: CharalyNavigator, storyId: String) {
-    viewModel.openStory(storyId)
-    navigator.replaceAll(Route.Stage(storyId))
+    viewModel.openStory(storyId) { navigator.replaceAll(Route.Stage(storyId)) }
 }

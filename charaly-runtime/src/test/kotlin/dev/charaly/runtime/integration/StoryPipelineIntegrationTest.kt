@@ -150,10 +150,23 @@ class StoryPipelineIntegrationTest {
             userInput = "Have you seen anyone in here?",
         )
         assertEquals(alice, request.speakerId)
-        assertEquals("Have you seen anyone in here?", request.messages.last().content)
+        // Phase 6 moves the volatile state reminder behind the transcript (KV reuse), so the
+        // player's words LEAD the message and the state trails them. Everything else this
+        // test guards is unchanged - and now guarded harder: the raw prompt must not leak
+        // world truth to Alice *anywhere* in what the model receives, not just in the
+        // system block.
+        assertTrue(
+            "the player's words must lead the message verbatim",
+            request.messages.last().content.startsWith("Have you seen anyone in here?"),
+        )
+        val rendered = request.systemPrompt + "\n\n" + request.messages.joinToString("\n") { it.content }
         assertFalse(
             "the raw prompt must not leak world truth to Alice",
             request.systemPrompt.contains("locked inside the cabinet"),
+        )
+        assertFalse(
+            "and the leak must not hide in the trailing state reminder either",
+            rendered.contains("locked inside the cabinet"),
         )
     }
 

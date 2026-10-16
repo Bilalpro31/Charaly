@@ -64,6 +64,9 @@ fun SettingsScreen(
     darkTheme: Boolean,
     reduceMotion: Boolean,
     developerMode: Boolean,
+    /** Whether the stage's HUD - tension meter and scene tools - is drawn. */
+    hudEnabled: Boolean = true,
+    onSetHudEnabled: (Boolean) -> Unit = {},
     modelReady: Boolean,
     /** One word for the model state, from the authoritative selection. */
     modelState: String = "",
@@ -102,7 +105,7 @@ fun SettingsScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .background(Charaly.surface.void),
+            .background(Charaly.surface.base),
         contentPadding = PaddingValues(
             start = Charaly.space.gutter,
             end = Charaly.space.gutter,
@@ -144,6 +147,13 @@ fun SettingsScreen(
                     checked = reduceMotion,
                     contentDescription = Loc.t("settings.reduce_motion"),
                     onCheckedChange = onSetReduceMotion,
+                )
+                SettingSwitch(
+                    title = "Sahne göstergeleri",
+                    caption = "Gerilim çubuğu ve sahne araçları. Kapalıyken metin tam genişliğe açılır.",
+                    checked = hudEnabled,
+                    contentDescription = "Sahne göstergeleri",
+                    onCheckedChange = onSetHudEnabled,
                 )
                 Text(
                     text = Loc.t("settings.language"),
@@ -279,6 +289,9 @@ fun SettingsScreen(
                     onRun = onRunModelTest,
                     onOpenModels = onOpenModels,
                     onClear = onClearModelTest,
+                    // The engine's own internals are dressed as product only for someone
+                    // who has asked for them. Everybody gets the verdict.
+                    showInternals = developerMode,
                 )
             }
         }
@@ -288,7 +301,7 @@ fun SettingsScreen(
             SettingsGroup(SettingsSection.ADVANCED) {
                 SettingSwitch(
                     title = Loc.t("settings.developer_mode"),
-                    caption = "Engine state, prompts and event logs. Off by default.",
+                    caption = "Motor durumu, istemler ve olay günlükleri. Varsayılan kapalı.",
                     checked = developerMode,
                     contentDescription = Loc.t("settings.developer_mode"),
                     onCheckedChange = onSetDeveloperMode,

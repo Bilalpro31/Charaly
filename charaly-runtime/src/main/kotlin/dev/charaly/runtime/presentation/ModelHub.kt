@@ -408,9 +408,9 @@ object ModelHubPresenter {
     ): HubFileVerdict {
         val bytes = header ?: return HubFileVerdict(
             compatibility = CharalyCompatibility.MANUAL_IMPORT_ONLY,
-            label = "Not checked yet",
-            reason = "Charaly has not read this file's header, so it cannot promise the " +
-                "model will load. Downloading is still allowed.",
+            label = "Henüz kontrol edilmedi",
+            reason = "Charaly bu dosyanın başlığını okumadı, bu yüzden modelin " +
+                "yükleneceğini garanti edemez. İndirme yine de mümkündür.",
             architecture = "",
             contextLength = 0,
             estimatedRamBytes = 0L,
@@ -537,9 +537,9 @@ object ModelHubPresenter {
     /** Human-readable byte count for a download tally. */
     fun formatCount(value: Long): String = when {
         value <= 0L -> ""
-        value >= 1_000_000L -> "%.1fM downloads".format(value / 1_000_000.0)
-        value >= 1_000L -> "%.0fk downloads".format(value / 1_000.0)
-        else -> "$value downloads"
+        value >= 1_000_000L -> "%.1fM indirme".format(value / 1_000_000.0)
+        value >= 1_000L -> "%.0fB indirme".format(value / 1_000.0)
+        else -> "$value indirme"
     }
 
     /**

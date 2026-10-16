@@ -10,6 +10,7 @@ import dev.charaly.runtime.domain.RelationshipKey
 import dev.charaly.runtime.domain.Scene
 import dev.charaly.runtime.domain.SceneState
 import dev.charaly.runtime.domain.StoryDuration
+import dev.charaly.runtime.domain.events.isPersonal
 import dev.charaly.runtime.domain.StoryInstance
 import dev.charaly.runtime.domain.StoryThreadStatus
 import dev.charaly.runtime.domain.StoryTime
@@ -75,6 +76,27 @@ enum class EventRejection {
     UNKNOWN_CONSEQUENCE,
     ALREADY_RESOLVED,
     DUPLICATE_COMMITMENT,
+    /**
+     * The revealer does not know the fact they claim to reveal.
+     *
+     * A reveal is a character telling what they know, so the authority for it lives in the
+     * revealer's own knowledge - not in the event's claim. Added last so the ordinal of no
+     * existing rejection reason moves.
+     */
+    REVEALER_DOES_NOT_KNOW,
+
+    /**
+     * A model proposal tried to teach a character a secret fact.
+     *
+     * A secret reaches a character through an AUTHORIZED source only: pack seeding, an
+     * authored engine effect, or a reveal by somebody who knows it. A model's own claim to
+     * have "discovered" it is a proposal, not an information source - if it counted, the
+     * `SecretRevealed` revealer check above would be bypassable by simply phrasing the same
+     * ask as `discover`. Teaching a character what they already know is not this refusal
+     * (it teaches nothing new and stays a no-op). Added last so the ordinal of no existing
+     * rejection reason moves.
+     */
+    SECRET_REQUIRES_AUTHORIZED_SOURCE,
 }
 
 data class EventValidation(
@@ -245,11 +267,12 @@ class EventEngine(val definition: WorldDefinition) {
     // ------------------------------------------------------------------
 
     fun validateEvent(instance: StoryInstance, event: WorldEvent): EventValidation =
-        validatePayload(instance, event.payload, eventOriginNote = null)
+        validatePayload(instance, event.payload, origin = event.origin, eventOriginNote = null)
 
     private fun validatePayload(
         instance: StoryInstance,
         payload: EventPayload,
+        origin: EventOrigin,
         eventOriginNote: String?,
     ): EventValidation {
         val errors = mutableListOf<EventRejection>()
@@ -313,7 +336,27 @@ class EventEngine(val definition: WorldDefinition) {
 
             is KnowledgeDiscovered -> {
                 if (definition.character(payload.characterId) == null) errors += EventRejection.UNKNOWN_CHARACTER
-                if (instance.knowledge.fact(payload.factId) == null) errors += EventRejection.UNKNOWN_FACT
+                val knownFact = instance.knowledge.fact(payload.factId)
+                if (knownFact == null) errors += EventRejection.UNKNOWN_FACT
+                // AUTHORITY: who may hand a character a secret.
+                //
+                // A secret arrives through an authorized source - pack seeding (origin
+                // STORY_PACK), an authored effect, or a reveal by someone who knows it -
+                // never through a MODEL_PROPOSAL. The model's `discover` tag is a proposal
+                // about what the character learned, exactly like `SecretRevealed`'s
+                // `revealedBy` claim is a proposal about what the revealer knew: neither is
+                // evidence. Validation runs before any mutation, so a refusal here leaves
+                // the character's knowledge untouched.
+                //
+                // Reinforcing what the character already knows is not a disclosure (nothing
+                // new is taught) and falls through to the no-op branch below.
+                if (
+                    origin == EventOrigin.MODEL_PROPOSAL &&
+                    knownFact?.secret == true &&
+                    !instance.knowledge.knows(payload.characterId, payload.factId)
+                ) {
+                    errors += EventRejection.SECRET_REQUIRES_AUTHORIZED_SOURCE
+                }
                 if (instance.knowledge.knows(payload.characterId, payload.factId)) {
                     notes += "${payload.characterId.value} already knows ${payload.factId.value}"
                     noOp = true
@@ -427,6 +470,28 @@ class EventEngine(val definition: WorldDefinition) {
             is SecretRevealed -> {
                 if (definition.character(payload.revealedBy) == null) errors += EventRejection.UNKNOWN_CHARACTER
                 if (instance.knowledge.fact(payload.factId) == null) errors += EventRejection.UNKNOWN_FACT
+                // WHO MAY REVEAL.
+                //
+                // A reveal is authorized by the revealer's own knowledge of the fact and by
+                // nothing else: not the event's mere claim that they know it, not the fact
+                // existing in world truth, and not its appearance in some other character's
+                // head. The check reads the authoritative, character-scoped knowledge store
+                // at the moment of acceptance - the same `knows` the context boundary is
+                // built from - so a character can only pass on what they were actually
+                // given (pack seeding via "story pack start", a `KnowledgeDiscovered`, or an
+                // earlier reveal). `FactRevealed` puts truth in the world and teaches it to
+                // nobody, and a `CharacterObserved` observation lives in the mind rather
+                // than in fact knowledge: neither is an alternative source, because the
+                // domain defines no rule making them one.
+                //
+                // Validation runs before any mutation, so a refusal here leaves no partial
+                // reveal: no knowledge granted, no secret memory written, no objective or
+                // reward downstream, and the fact is not marked revealed.
+                if (instance.knowledge.fact(payload.factId) != null &&
+                    !instance.knowledge.knows(payload.revealedBy, payload.factId)
+                ) {
+                    errors += EventRejection.REVEALER_DOES_NOT_KNOW
+                }
                 if (payload.recipients.isEmpty()) {
                     // A reveal to nobody is a contradiction: a secret that came out has
                     // an audience, and letting this through would register the fact as
@@ -1338,7 +1403,24 @@ class EventEngine(val definition: WorldDefinition) {
         // and recording it as a node that everything else points at would make the graph
         // lie in the one way that matters.
         val wasNoOp = changes.any { it.startsWith("no change") }
-        val withEvent = current.worldState.recordEvent(scheduled.id, stillActive)
+        // Retain the event's own summary so the next prompt can be told WHAT JUST HAPPENED.
+        // Only a real change earns a line: a no-op "did not happen", and saying it happened
+        // would make the model's picture of the past drift from the world's.
+        val withEvent = current.worldState.recordEvent(
+            scheduled.id,
+            stillActive,
+            change = if (wasNoOp) {
+                null
+            } else {
+                dev.charaly.runtime.domain.WorldChange(
+                    at = scheduled.scheduledAt,
+                    eventId = scheduled.id,
+                    summary = scheduled.payload.summary,
+                    origin = scheduled.origin,
+                    personal = scheduled.payload.isPersonal,
+                )
+            },
+        )
         val link = if (wasNoOp) null else scheduled.causalLink()
         val recorded = current.evolved(
             worldState = if (link == null) withEvent else withEvent.recordCausality(link),

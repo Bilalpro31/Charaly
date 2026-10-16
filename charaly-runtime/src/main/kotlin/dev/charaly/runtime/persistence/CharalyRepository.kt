@@ -61,7 +61,10 @@ class FileCharalyStorage(private val root: File) : CharalyStorage {
         root.walkTopDown()
             .filter { it.isFile }
             .mapNotNull { file -> file.relativeToOrNull(root)?.path?.replace('\\', '/') }
-            .filter { it.startsWith(prefix) }
+            // Half-written temporaries and last-known-good backups are bookkeeping, never
+            // documents: listing them would report a story that does not exist and a backup
+            // as a second story with the same id.
+            .filter { it.startsWith(prefix) && !it.endsWith(TMP_SUFFIX) && !it.startsWith("$BACKUP_DIR/") }
             .sorted()
             .toList()
 
@@ -136,3 +139,19 @@ data class StorageFailure(
 )
 
 internal fun sanitizeId(id: EntityId): String = id.value.replace(Regex("[^A-Za-z0-9._-]"), "_")
+
+/**
+ * Where last-known-good copies of documents live.
+ *
+ * Not decoration: a save is rewritten every turn, and the one window where that is dangerous
+ * is the one a crash opens. Keeping the previous good copy means a torn write costs the
+ * *last* turn instead of the whole story, and recovery is a read of the backup rather than
+ * a shrug.
+ */
+internal const val BACKUP_DIR: String = "backups"
+
+/** The transient suffix [FileCharalyStorage] uses while writing. */
+internal const val TMP_SUFFIX: String = ".tmp"
+
+/** The backup copy of [name], kept beside the document tree and out of listings. */
+internal fun backupName(name: String): String = "$BACKUP_DIR/$name"

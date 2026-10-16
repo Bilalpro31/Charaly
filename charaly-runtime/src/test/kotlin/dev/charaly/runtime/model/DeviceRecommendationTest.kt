@@ -91,7 +91,7 @@ class DeviceRecommendationTest {
 
         assertEquals(RecommendationBasis.MEASURED_ON_THIS_DEVICE, recommendation.basis)
         assertTrue(recommendation.claimsSpeed)
-        assertEquals("Fast on this device", recommendation.label)
+        assertEquals("Bu cihazda Hızlı", recommendation.label)
         assertTrue("the evidence should quote the measurement: ${recommendation.evidence}",
             recommendation.evidence.contains("tok/s"))
     }
@@ -141,7 +141,7 @@ class DeviceRecommendationTest {
         assertFalse("a too-slow model was recommended", recommendation.isRecommended)
         assertTrue(
             "the label should not read as a positive: ${recommendation.label}",
-            recommendation.label.contains("Too slow"),
+            recommendation.label.contains("çok yavaş"),
         )
     }
 
@@ -153,7 +153,7 @@ class DeviceRecommendationTest {
     fun `with ram figures but no benchmark the label is about fit`() {
         val recommendation = ModelRecommender.recommend(model(), roomy)
         assertEquals(RecommendationBasis.DEVICE_CLASS, recommendation.basis)
-        assertEquals("Fits your device", recommendation.label)
+        assertEquals("Cihazınıza uygun", recommendation.label)
         assertEquals("the evidence field must be empty without a measurement", "", recommendation.evidence)
     }
 
@@ -183,7 +183,7 @@ class DeviceRecommendationTest {
         val recommendation = ModelRecommender.recommend(huge, tight)
         assertTrue("expected a memory warning, got none", recommendation.memoryWarning.isNotBlank())
         assertFalse("an oversized model was recommended", recommendation.isRecommended)
-        assertEquals("Too large for this device", recommendation.label)
+        assertEquals("Bu cihaz için çok büyük", recommendation.label)
     }
 
     @Test

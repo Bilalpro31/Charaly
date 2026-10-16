@@ -174,23 +174,23 @@ object StoryContextPresenter {
     private fun entries(instance: StoryInstance, world: WorldSheet): List<StoryContextEntry> = listOf(
         StoryContextEntry(
             id = ContextEntryId.WORLD,
-            label = "World",
+            label = "Dünya",
             summary = world.locationName,
         ),
         StoryContextEntry(
             id = ContextEntryId.MEMORY,
-            label = "Memory",
-            summary = "${instance.memories.current().count { it.importance >= StoryFeed.NOTABLE_IMPORTANCE }} remembered",
+            label = "Hafıza",
+            summary = "${instance.memories.current().count { it.importance >= StoryFeed.NOTABLE_IMPORTANCE }} anı",
         ),
         StoryContextEntry(
             id = ContextEntryId.PEOPLE,
-            label = "People",
+            label = "İnsanlar",
             summary = world.presenceLabel,
         ),
         StoryContextEntry(
             id = ContextEntryId.STORY,
-            label = "Story",
-            summary = "${instance.storyThreads.values.count { it.status.isOpen }} open",
+            label = "Hikâye",
+            summary = "${instance.storyThreads.values.count { it.status.isOpen }} açık",
         ),
     )
 
@@ -217,10 +217,10 @@ object StoryContextPresenter {
             .filter { it.isNotBlank() }
 
         return WorldSheet(
-            locationName = location?.name.orEmpty().ifBlank { "Somewhere" },
+            locationName = location?.name.orEmpty().ifBlank { "Bir yer" },
             locationDescription = location?.description.orEmpty(),
             timeOfDay = timeOfDayLabel(now.hour),
-            dayLabel = "Day ${now.day}",
+            dayLabel = "${now.day}. Gün",
             clockLabel = now.formatClock(),
             activeScene = sceneLabel(scene, location?.name.orEmpty(), companions),
             nearby = nearby,
@@ -240,41 +240,41 @@ object StoryContextPresenter {
         locationName: String,
         companions: List<String>,
     ): String {
-        val where = locationName.ifBlank { "here" }
+        val where = locationName.ifBlank { "burada" }
         val who = when (companions.size) {
-            0 -> "You are alone here."
-            1 -> "${companions.first()} is with you."
-            2 -> "${companions[0]} and ${companions[1]} are with you."
-            else -> "${companions.first()} and ${companions.size - 1} others are here."
+            0 -> "Burada yalnızsınız."
+            1 -> "${companions.first()} sizinle."
+            2 -> "${companions[0]} ve ${companions[1]} sizinle."
+            else -> "${companions.first()} ve ${companions.size - 1} kişi daha burada."
         }
         val objective = scene?.objective?.trim().orEmpty()
         return when {
             objective.isNotEmpty() -> "$who $objective".trim()
-            scene == null -> "Nothing is happening here yet."
-            else -> "$who You are at $where.".trim()
+            scene == null -> "Burada henüz bir şey olmuyor."
+            else -> "$who Şu an $where bulunuyorsunuz.".trim()
         }
     }
 
     /**
-     * "Just you" / "1 person here" / "3 people here".
+     * "Sadece siz" / "1 kişi burada" / "3 kişi burada".
      *
      * Counts the player's own character? No - the player knows they are there. Counting
      * everyone else is the number that carries information.
      */
     fun presenceLabel(nearbyCount: Int): String = when (nearbyCount) {
-        0 -> "Just you"
-        1 -> "1 person here"
-        else -> "$nearbyCount people here"
+        0 -> "Sadece siz"
+        1 -> "1 kişi burada"
+        else -> "$nearbyCount kişi burada"
     }
 
     fun timeOfDayLabel(hour: Int): String = when {
-        hour < 5 -> "Late night"
-        hour < 8 -> "Early morning"
-        hour < 12 -> "Morning"
-        hour < 14 -> "Midday"
-        hour < 18 -> "Afternoon"
-        hour < 22 -> "Evening"
-        else -> "Night"
+        hour < 5 -> "Gece yarısı"
+        hour < 8 -> "Sabahın erken saati"
+        hour < 12 -> "Sabah"
+        hour < 14 -> "Öğle"
+        hour < 18 -> "Öğleden sonra"
+        hour < 22 -> "Akşam"
+        else -> "Gece"
     }
 
     /**
@@ -477,10 +477,10 @@ object StoryContextPresenter {
                     id = thread.id.value,
                     title = thread.title,
                     status = when (thread.status) {
-                        dev.charaly.runtime.domain.StoryThreadStatus.ACTIVE -> "In play"
-                        dev.charaly.runtime.domain.StoryThreadStatus.DORMANT -> "Just started"
-                        dev.charaly.runtime.domain.StoryThreadStatus.COMPLETED -> "Finished"
-                        dev.charaly.runtime.domain.StoryThreadStatus.FAILED -> "Abandoned"
+                        dev.charaly.runtime.domain.StoryThreadStatus.ACTIVE -> "Devam ediyor"
+                        dev.charaly.runtime.domain.StoryThreadStatus.DORMANT -> "Yeni başladı"
+                        dev.charaly.runtime.domain.StoryThreadStatus.COMPLETED -> "Bitti"
+                        dev.charaly.runtime.domain.StoryThreadStatus.FAILED -> "Terk edildi"
                     },
                     progress = progressLabel(thread.progress),
                 )
@@ -496,22 +496,22 @@ object StoryContextPresenter {
      * lost - only the false precision is.
      */
     fun progressLabel(progress: Int): String = when {
-        progress <= 0 -> "Off to a start"
-        progress < 25 -> "Just begun"
-        progress < 50 -> "Underway"
-        progress < 75 -> "Halfway there"
-        progress < 100 -> "Nearly there"
-        else -> "Finished"
+        progress <= 0 -> "Başlangıçta"
+        progress < 25 -> "Yeni başladı"
+        progress < 50 -> "Devam ediyor"
+        progress < 75 -> "Yarı yolda"
+        progress < 100 -> "Bitmek üzere"
+        else -> "Bitti"
     }
 
     fun elapsedLabel(now: dev.charaly.runtime.domain.StoryTime, since: dev.charaly.runtime.domain.StoryTime): String {
         val minutes = now.totalMinutes - since.totalMinutes
         val days = minutes / (60 * 24)
         return when {
-            minutes < 60 -> "Just begun"
-            minutes < 60 * 24 -> "${minutes / 60} hours in"
-            days == 1L -> "1 day in"
-            else -> "$days days in"
+            minutes < 60 -> "Yeni başladı"
+            minutes < 60 * 24 -> "${minutes / 60} saat oldu"
+            days == 1L -> "1 gün oldu"
+            else -> "$days gün oldu"
         }
     }
 

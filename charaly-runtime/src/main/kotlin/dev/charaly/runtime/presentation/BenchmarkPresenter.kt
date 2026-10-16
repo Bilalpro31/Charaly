@@ -114,7 +114,7 @@ object BenchmarkPresenter {
         // "Measure" control is offered because measuring is cheap next to being wrong.
         record == null -> SpeedVerdict(
             state = SpeedState.UNMEASURED,
-            label = "Not measured",
+            label = "Ölçülmedi",
         )
 
         else -> measured(record)
@@ -146,7 +146,7 @@ object BenchmarkPresenter {
             } else {
                 listOfNotNull(measuringName.takeIf { it.isNotBlank() }, phaseLabel.takeIf { it.isNotBlank() })
                     .joinToString(" ")
-                    .ifBlank { "Measuring…" }
+                    .ifBlank { "Ölçülüyor…" }
             },
             failureMessage = failureMessage,
         )
@@ -176,22 +176,22 @@ object BenchmarkPresenter {
         val conditions = conditionsLabel(record)
         return SpeedVerdict(
             state = SpeedState.MEASURED,
-            label = "${dev.charaly.runtime.model.PerformanceTier.of(benchmark.tokensPerSecond).label} on this device",
+            label = "Bu cihazda ${dev.charaly.runtime.model.PerformanceTier.of(benchmark.tokensPerSecond).label}",
             // The evidence line always names the rate *and* where the number came from.
             // A bare "18.7 tok/s" on a model detail screen is indistinguishable from a
             // guess, and that ambiguity is what this whole feature exists to remove.
-            evidence = "%.1f tok/s, measured%s".format(
+            evidence = "%.1f tok/s, %s ölçüldü".format(
                 benchmark.tokensPerSecond,
-                if (conditions.isBlank()) "" else " on $conditions",
+                if (conditions.isBlank()) "bu cihazda" else conditions,
             ),
             conditions = conditions,
             latencyLabel = if (benchmark.firstTokenMillis > 0L) {
-                "%.1fs to the first word".format(benchmark.firstTokenMillis / 1000.0)
+                "ilk kelimeye %.1f sn".format(benchmark.firstTokenMillis / 1000.0)
             } else {
                 ""
             },
             memoryLabel = if (benchmark.peakMemoryBytes > 0L) {
-                "peak ${dev.charaly.runtime.model.formatBytes(benchmark.peakMemoryBytes)} resident"
+                "en yüksek ${dev.charaly.runtime.model.formatBytes(benchmark.peakMemoryBytes)} bellek"
             } else {
                 ""
             },
@@ -206,13 +206,13 @@ object BenchmarkPresenter {
      * strength of a hardcoded string.
      */
     private fun conditionsLabel(record: BenchmarkRecord): String {
-        val threads = if (record.threads > 0) "${record.threads} threads" else ""
+        val threads = if (record.threads > 0) "${record.threads} iş parçacığı" else ""
         val accelerator = record.devices
             .firstOrNull { it.startsWith("GPU:") || it.startsWith("ACCELERATOR:") }
             ?.substringAfter(':')
             ?.takeIf { it.isNotBlank() }
             ?: if (record.gpuLayers > 0) "GPU" else "CPU"
-        val offload = if (record.gpuLayers > 0) " · ${record.gpuLayers} layers offloaded" else ""
+        val offload = if (record.gpuLayers > 0) " · ${record.gpuLayers} katman devredildi" else ""
         return listOf(threads, "$accelerator$offload").filter { it.isNotBlank() }.joinToString(" · ")
     }
 }

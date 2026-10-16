@@ -308,12 +308,17 @@ fun SceneBackdrop(
             )
         }
 
-        // Bottom-weighted scrim so prose set over the backdrop stays legible without
-        // greying out the picture the pack asked for.
+        // Two scrims: one at the crown of the frame and one along the floor.
+        //
+        // The top band is what lets the header and the amber clock sit over a bright sky
+        // without a plate behind them; the bottom one keeps prose readable over the ground
+        // of the picture. A single bottom-weighted scrim darkens the floor and leaves the
+        // chrome fighting a sunrise.
         Canvas(Modifier.fillMaxSize()) {
             drawRect(
                 brush = Brush.verticalGradient(
-                    0f to Color.Transparent,
+                    0f to Color(0xFF000000).copy(alpha = 0.55f * strength),
+                    0.18f to Color(0xFF000000).copy(alpha = 0.12f * strength),
                     0.45f to Color(0xFF000000).copy(alpha = 0.20f * strength),
                     1f to Color(0xFF000000).copy(alpha = 0.86f * strength),
                 ),

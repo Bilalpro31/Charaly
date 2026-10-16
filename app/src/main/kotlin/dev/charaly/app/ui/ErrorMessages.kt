@@ -30,6 +30,7 @@ object ErrorMessages {
         is CharalyError.Generation -> Loc.t("error.generation_failed")
         is CharalyError.Cancelled -> Loc.t("error.generation_cancelled")
         is CharalyError.Persistence -> Loc.t("error.persistence")
+        is CharalyError.PackUnavailable -> Loc.t("error.pack_unavailable")
     }
 
     /** Inference-engine failures, translated into user language. */

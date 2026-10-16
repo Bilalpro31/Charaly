@@ -85,6 +85,14 @@ fun DeveloperScreen(
      * behind Developer Mode.
      */
     onAdvanceTime: (Long) -> Unit = {},
+    /**
+     * The last uncaught-exception report, written by the application's crash handler.
+     *
+     * Blank when the app has never crashed. This is the first thing to read when a user
+     * reports "the app closed", which is exactly why it lives here rather than in a
+     * log the user cannot reach.
+     */
+    lastCrash: String = "",
 ) {
     LazyColumn(
         modifier = Modifier
@@ -107,7 +115,7 @@ fun DeveloperScreen(
                 )
                 Spacer(Modifier.width(Charaly.space.xs))
                 Text(
-                    text = "Developer",
+                    text = "Geliştirici",
                     style = MaterialTheme.typography.headlineLarge,
                     color = Charaly.ink.primary,
                     modifier = Modifier.semantics { heading() },
@@ -124,22 +132,22 @@ fun DeveloperScreen(
                     .padding(Charaly.space.md),
             ) {
                 Text(
-                    text = "Open story: ${instanceId.ifBlank { "none" }}",
+                    text = "Açık hikâye: ${instanceId.ifBlank { "yok" }}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Charaly.ink.secondary,
                 )
                 Text(
-                    text = "Stories on this device: ${stories.size}",
+                    text = "Bu cihazdaki hikâyeler: ${stories.size}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Charaly.ink.secondary,
                 )
                 Text(
-                    text = "Prompt estimate: $promptEstimate characters",
+                    text = "İstek tahmini: $promptEstimate karakter",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Charaly.ink.secondary,
                 )
                 Text(
-                    text = "Story health: $storyHealthStatus",
+                    text = "Hikâye sağlığı: $storyHealthStatus",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Charaly.ink.secondary,
                 )
@@ -155,7 +163,7 @@ fun DeveloperScreen(
                     .padding(Charaly.space.md),
             ) {
                 Text(
-                    text = "World clock",
+                    text = "Dünya saati",
                     style = MaterialTheme.typography.titleSmall,
                     color = Charaly.ink.primary,
                 )
@@ -183,34 +191,39 @@ fun DeveloperScreen(
             }
         }
 
+        if (lastCrash.isNotBlank()) {
+            item(key = "crash-header") { CharalySectionHeader(title = "Son çökme", micro = true) }
+            item(key = "crash") { Dump(lastCrash, long = true) }
+        }
+
         item(key = "model-header") { CharalySectionHeader(title = "Model", micro = true) }
         item(key = "model") { Dump(modelDiagnostics) }
 
-        item(key = "health-header") { CharalySectionHeader(title = "Story health", micro = true) }
+        item(key = "health-header") { CharalySectionHeader(title = "Hikâye sağlığı", micro = true) }
         item(key = "health") { Dump(storyHealth) }
 
-        item(key = "threads-header") { CharalySectionHeader(title = "Story threads", micro = true) }
+        item(key = "threads-header") { CharalySectionHeader(title = "Hikâye ipleri", micro = true) }
         item(key = "threads") { Dump(threads) }
 
-        item(key = "commitments-header") { CharalySectionHeader(title = "Commitments", micro = true) }
+        item(key = "commitments-header") { CharalySectionHeader(title = "Sözler", micro = true) }
         item(key = "commitments") { Dump(commitments) }
 
-        item(key = "minds-header") { CharalySectionHeader(title = "Character minds", micro = true) }
+        item(key = "minds-header") { CharalySectionHeader(title = "Karakter zihinleri", micro = true) }
         item(key = "minds") { Dump(minds) }
 
-        item(key = "causality-header") { CharalySectionHeader(title = "Causality", micro = true) }
+        item(key = "causality-header") { CharalySectionHeader(title = "Neden-sonuç", micro = true) }
         item(key = "causality") { Dump(causality) }
 
-        item(key = "events-header") { CharalySectionHeader(title = "Event log", micro = true) }
+        item(key = "events-header") { CharalySectionHeader(title = "Olay günlüğü", micro = true) }
         item(key = "events") { Dump(eventLog) }
 
-        item(key = "budget-header") { CharalySectionHeader(title = "Context budget", micro = true) }
+        item(key = "budget-header") { CharalySectionHeader(title = "Bağlam bütçesi", micro = true) }
         item(key = "budget") { Dump(contextSections) }
 
-        item(key = "prompt-header") { CharalySectionHeader(title = "Assembled prompt", micro = true) }
+        item(key = "prompt-header") { CharalySectionHeader(title = "Birleştirilmiş istem", micro = true) }
         item(key = "prompt") { Dump(contextPreview, long = true) }
 
-        item(key = "state-header") { CharalySectionHeader(title = "World state", micro = true) }
+        item(key = "state-header") { CharalySectionHeader(title = "Dünya durumu", micro = true) }
         item(key = "state") { Dump(worldState, long = true) }
     }
 }
@@ -255,16 +268,16 @@ fun DeveloperLockedScreen(onBack: () -> Unit) {
     ) {
         CharalyIconButton(
             icon = Icons.AutoMirrored.Filled.ArrowBack,
-            contentDescription = "Back",
+            contentDescription = "Geri",
             onClick = onBack,
         )
         CharalyEmptyState(
             state = dev.charaly.runtime.presentation.EmptyState(
-                title = "Developer mode is off.",
-                body = "Turn it on in Settings · Advanced to look at the engine's own view.",
+                title = "Geliştirici modu kapalı.",
+                body = "Ayarlar · Gelişmiş bölümünden açarak motorun kendi görünümüne bakabilirsiniz.",
                 artSeed = "charaly-empty-developer",
             ),
-            action = { CharalyAction(label = "Back", onClick = onBack) },
+            action = { CharalyAction(label = "Geri", onClick = onBack) },
         )
     }
 }

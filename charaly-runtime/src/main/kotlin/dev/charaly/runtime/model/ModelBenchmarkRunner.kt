@@ -154,6 +154,13 @@ interface LocalInferenceEngine : dev.charaly.runtime.inference.InferenceEngine, 
      */
     fun configThreads(): Int = 0
 
+    /**
+     * Worker threads this engine evaluates a PROMPT with, as opposed to [configThreads]
+     * for decoding one token. PHASE 10; defaults to 0 ("the engine decided") so scripted
+     * engines in tests keep compiling unchanged.
+     */
+    fun configThreadsBatch(): Int = 0
+
     /** Layers offloaded to an accelerator. 0 today; see the app's engine configuration. */
     fun configGpuLayers(): Int = 0
 
@@ -169,6 +176,15 @@ interface LocalInferenceEngine : dev.charaly.runtime.inference.InferenceEngine, 
      * native side to have a diagnostic about.
      */
     fun lastDiagnostic(): String = ""
+
+    /**
+     * The engine's own clocks for the most recent real turn, or null when it cannot
+     * measure (a scripted engine, or no native library).
+     *
+     * Defaulted to null, not zeros: a fabricated timing is worse than an absent one, for
+     * the same reason there is no `estimatedTokensPerSecond` anywhere in this codebase.
+     */
+    fun lastTimings(): dev.charaly.runtime.inference.InferenceTimings? = null
 
     /** The context size this engine was configured with. */
     fun configContextSize(): Int = 2048

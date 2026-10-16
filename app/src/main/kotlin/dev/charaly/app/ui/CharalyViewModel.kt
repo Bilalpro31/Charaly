@@ -10,6 +10,24 @@ import dev.charaly.app.model.HuggingFaceServices
 import dev.charaly.app.model.LlamaBenchmarkRunner
 import dev.charaly.app.model.ModelEntry
 import dev.charaly.app.model.ModelManager
+import dev.charaly.app.ui.packstore.PackDeletePrompt
+import dev.charaly.app.ui.packstore.PackDownloadUi
+import dev.charaly.app.ui.packstore.PackExportRequest
+import dev.charaly.app.ui.packstore.PackImportSession
+import dev.charaly.app.ui.packstore.PackInstallState
+import dev.charaly.app.ui.packstore.PackObjectiveRow
+import dev.charaly.app.ui.packstore.PackOpenGate
+import dev.charaly.app.ui.packstore.PackStoreItem
+import dev.charaly.app.ui.packstore.StoryCatalogCard
+import dev.charaly.app.ui.packstore.activeRows
+import dev.charaly.app.ui.packstore.installStateOf
+import dev.charaly.app.ui.packstore.packVersionLabel
+import dev.charaly.app.ui.packstore.scenarioObjectives
+import dev.charaly.app.ui.packstore.toGateUi
+import dev.charaly.app.ui.packstore.toImportReportUi
+import dev.charaly.app.ui.packstore.toPackDownloadUi
+import dev.charaly.app.ui.packstore.toPackStoreItem
+import dev.charaly.app.ui.packstore.toStoryCatalogCard
 import dev.charaly.runtime.model.BenchmarkPhase
 import dev.charaly.runtime.model.BenchmarkRecord
 import dev.charaly.runtime.model.DownloadProgress
@@ -30,6 +48,7 @@ import dev.charaly.runtime.presentation.HubSearchState
 import dev.charaly.runtime.presentation.ModelHubPresenter
 import dev.charaly.runtime.domain.CharacterId
 import dev.charaly.runtime.domain.LocationId
+import dev.charaly.runtime.domain.OfferedChoice
 import dev.charaly.runtime.domain.PersonaBinding
 import dev.charaly.runtime.domain.StoryDuration
 import dev.charaly.runtime.domain.StoryInstance
@@ -37,6 +56,8 @@ import dev.charaly.runtime.domain.StoryInstanceId
 import dev.charaly.runtime.domain.StoryPack
 import dev.charaly.runtime.domain.StoryPackId
 import dev.charaly.runtime.domain.WorldDefinition
+import dev.charaly.runtime.domain.settingEra
+import dev.charaly.runtime.domain.settingUniverse
 import dev.charaly.runtime.engine.StoryCreationOptions
 import dev.charaly.runtime.inference.LoadOutcome
 import dev.charaly.runtime.inference.ModelLoadRequest
@@ -70,6 +91,19 @@ import dev.charaly.runtime.presentation.WorldPanelSnapshot
 import dev.charaly.runtime.session.CharalyError
 import dev.charaly.runtime.session.CharalyRuntime
 import dev.charaly.runtime.session.GenerationUpdate
+import dev.charaly.runtime.storypack.BuiltInStoryCatalog
+import dev.charaly.runtime.storypack.InstalledPackRecord
+import dev.charaly.runtime.storypack.PackDownloadState
+import dev.charaly.runtime.storypack.PackOpenDecision
+import dev.charaly.runtime.storypack.RemoteStoryCatalog
+import dev.charaly.runtime.storypack.StoryCatalog
+import dev.charaly.runtime.storypack.StoryCatalogItem
+import dev.charaly.runtime.storypack.StoryCatalogSource
+import dev.charaly.runtime.storypack.StoryPackDownloadManager
+import dev.charaly.runtime.storypack.StoryPackFormat
+import dev.charaly.runtime.storypack.StoryPackInstaller
+import dev.charaly.runtime.storypack.openDecision
+import dev.charaly.runtime.storypack.storyCatalogSourceNote
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.Job
@@ -153,6 +187,14 @@ data class CharalyUiState(
      * that lazily on the first turn.
      */
     val modelImport: ModelImportState = ModelImportState.NONE,
+    /**
+     * Measured import progress: bytes copied, and what the provider said the file is.
+     *
+     * Null [ImportProgress.fraction] is deliberate - when the provider will not declare a
+     * size there is no percentage to draw, and the row shows activity instead. A guessed
+     * percentage is the one thing a progress bar must never show.
+     */
+    val importProgress: dev.charaly.app.model.ImportProgress? = null,
 
     // ---- imported characters --------------------------------------------
     //
@@ -223,6 +265,8 @@ data class CharalyUiState(
     val developerMode: Boolean = false,
     val darkTheme: Boolean = true,
     val reduceMotion: Boolean = false,
+    /** Whether the stage's HUD - tension meter and scene tools - is drawn. */
+    val hudEnabled: Boolean = true,
     /**
      * The active UI language, as a two-letter code.
      *
@@ -232,6 +276,55 @@ data class CharalyUiState(
      */
     val languageTag: String = "en",
     val lastFailedGeneration: String = "",
+    /**
+     * The player's line whose turn did not finish - failed, cancelled, or still running.
+     *
+     * Retry re-sends THIS line. Falling back to "whatever the last input was" pointed
+     * Retry at the *previous* turn's text after an interrupted send: the stage silently
+     * dropped the user's new message, deleted the last reply and re-ran an old line.
+     * Cleared when a turn finishes, so a retry after a completed turn is a regeneration.
+     */
+    val retryInput: String? = null,
+
+    // ---- story packs --------------------------------------------------------
+    //
+    // The pack store's whole state, in the shape its screen draws. Two rules hold here as
+    // everywhere else in this file: nothing is installed except through
+    // [StoryPackInstaller], and nothing user-facing carries an id, a digest or a path -
+    // the projections in `dev.charaly.app.ui.packstore` enforce the second by having no
+    // field for them.
+    val packStoreItems: List<PackStoreItem> = emptyList(),
+    val catalogCards: List<StoryCatalogCard> = emptyList(),
+    /** The catalog footnote ("Çevrimdışı katalog · …"), or blank when none is loaded. */
+    val catalogSourceNote: String = "",
+    /** Live downloads keyed by catalog entry id. Only real frames land here. */
+    val packDownloads: Map<String, PackDownloadUi> = emptyMap(),
+    /**
+     * A picked archive, held between review and decision.
+     *
+     * The bytes travel with the review so confirming cannot install something other than
+     * what was examined. Cleared on commit *and* on cancel, for the same reason the pending
+     * character card is.
+     */
+    val pendingImport: PackImportSession? = null,
+    /** The install summary shown before the import review returns to the library. */
+    val packImportDone: String? = null,
+    /** A finished export, waiting for the system's "save as" sheet to hand back a uri. */
+    val packExport: PackExportRequest? = null,
+    /** The delete confirmation's own state, including the installer's "are you sure". */
+    val packDeletePrompt: PackDeletePrompt? = null,
+    /**
+     * A story that cannot be opened the way it was written, and why.
+     *
+     * Fed by the compatibility check that runs BEFORE a story is resumed - the pinned pack
+     * edition is missing, or the pack itself is. One dialog above every route, exactly like
+     * [packDeletePrompt]: the decision belongs to the view model, the shell only draws it.
+     */
+    val packOpenGate: PackOpenGate? = null,
+    /** True while a pack operation is running; screens render it as activity, not a block. */
+    val packBusy: Boolean = false,
+    /** The branches the open story's world currently offers. */
+    val offeredChoices: List<OfferedChoice> = emptyList(),
 
     val notice: String? = null,
     val error: String? = null,
@@ -302,6 +395,18 @@ private data class PickedCard(
     val name: String,
     val bytes: ByteArray,
     val source: CharCardFileSource,
+)
+
+/**
+ * A story pack file that has been chosen and read, before it has been inspected.
+ *
+ * The name exists for one decision and one line of copy: refusing a wrong file by its own
+ * name ("that is a photo") is more useful than parsing it far enough to dislike it. The
+ * bytes are the archive, and reach state only as `PackImportSession.bytes`.
+ */
+private data class PickedPack(
+    val name: String,
+    val bytes: ByteArray,
 )
 
 /**
@@ -418,6 +523,41 @@ class CharalyViewModel(
      * assert the flow without native code.
      */
     private val inferenceEngine: dev.charaly.runtime.inference.InferenceEngine? = null,
+    /**
+     * THE lazy loader, shared with [CharalyRuntime].
+     *
+     * Shared, not re-created: it owns the load lock that keeps "exactly one model resident"
+     * true. A second instance here would mean the pre-flight this class runs and the load
+     * `respond` triggers could interleave into two half-loaded models - which is how a
+     * correctly registered model ended up reporting itself as not loaded.
+     */
+    private val residency: dev.charaly.app.model.LocalModelResidency,
+    /**
+     * The story pack pipeline: inspect, import, export, delete.
+     *
+     * Required rather than defaulted, because demo seeding runs through it on every cold
+     * start - the packs Charaly ships with are installed by exactly the code that installs
+     * a downloaded one, and a build without an installer would have no honest way to seed
+     * anything.
+     */
+    private val packInstaller: StoryPackInstaller,
+    /**
+     * What the catalog offers. Falls back to the empty built-in listing, so a unit test
+     * that never touches the store compiles and runs with no network.
+     */
+    private val storyCatalog: StoryCatalog = BuiltInStoryCatalog.EMPTY,
+    /**
+     * The download pipeline for catalog packs. Null in tests, which makes every download
+     * action report honestly that it cannot run rather than pretending to.
+     */
+    private val packDownloader: StoryPackDownloadManager? = null,
+    /**
+     * Where an exported `.charaly-pack` is written.
+     *
+     * The same port pattern as [cardFiles]: the export *decision* is testable without a
+     * content provider, and the write is the only Android-shaped half.
+     */
+    private val packFiles: dev.charaly.app.ui.PackFileWriter? = null,
 ) : ViewModel() {
 
     private val draftJson = kotlinx.serialization.json.Json {
@@ -450,6 +590,15 @@ class CharalyViewModel(
      * to start while another model load is in flight.
      */
     private var testJob: Job? = null
+
+    /**
+     * The collection job behind each catalog download, keyed by catalog entry.
+     *
+     * A download is a flow the view model owns exactly one collector for: two collectors
+     * over one item would race the same staging tree, and the second would either corrupt
+     * the first's partial file or install a half of each.
+     */
+    private val packDownloadJobs = mutableMapOf<String, Job>()
 
     init {
         applyLanguage()
@@ -565,7 +714,7 @@ class CharalyViewModel(
                         it.copy(
                             hubState = HubSearchState.Failed(
                                 message = error.message?.takeIf { it.isNotBlank() }
-                                    ?: "The model library could not be reached.",
+                                    ?: "Model kütüphanesine ulaşılamadı.",
                                 actionLabel = "Retry",
                                 offline = NetworkCapability.offline(),
                             ),
@@ -642,7 +791,7 @@ class CharalyViewModel(
                             hubDetailState = HubDetailState.Failed(
                                 repoId = repoId,
                                 message = error.message?.takeIf { message -> message.isNotBlank() }
-                                    ?: "This model could not be opened.",
+                                    ?: "Bu model açılamadı.",
                                 offline = NetworkCapability.offline(),
                             ),
                         )
@@ -676,7 +825,7 @@ class CharalyViewModel(
      */
     fun startHubDownload(detail: HubRepoDetail, file: HubFileOption) {
         val services = hub ?: run {
-            _state.update { it.copy(error = "Internet connection required.") }
+            _state.update { it.copy(error = "İnternet bağlantısı gerekli.") }
             return
         }
         val repo = detail.toRepoRecord()
@@ -690,7 +839,7 @@ class CharalyViewModel(
                 ?.ggufFiles
                 ?.firstOrNull { it.path == file.path }
             if (source == null) {
-                _state.update { it.copy(error = "That file is no longer available on the Hub.") }
+                _state.update { it.copy(error = "Bu dosya artık Hub'da mevcut değil.") }
                 return@launch
             }
             val item = ModelHubPresenter.toCatalogItem(repo, source, file.verdict)
@@ -811,7 +960,25 @@ class CharalyViewModel(
             // own packs, and a fresh install still has something to play with.
             val existingIds = restored.packs.map { it.id }.toSet()
             val missing = DemoStoryPacks.all.filterNot { it.id in existingIds }
-            runCatching { missing.forEach { runtime.createPack(it) } }
+            // THROUGH THE PIPELINE - export, validate, stage, commit, register.
+            //
+            // The demo packs used to be written straight into the repository with
+            // `createPack`, which meant "installed" had two meanings on this device: packs
+            // the registry vouched for, and packs that were simply *there* - unversioned,
+            // unchecksummed, invisible to export/update/delete and unreadable by the edition
+            // resolver a pinned story needs. Seeding now runs the demo's authored content
+            // through `exportPack` into real archive bytes and back in through `import`, so
+            // a first run produces exactly the state a first download does. The bytes are
+            // real and so is the validation: a demo that would not survive its own format is
+            // refused here rather than shipped broken.
+            runCatching {
+                missing.forEach { demo ->
+                    packInstaller.import(
+                        bytes = packInstaller.exportPack(demo),
+                        source = InstalledPackRecord.SOURCE_BUILTIN,
+                    )
+                }
+            }
             val packs = runCatching { runtime.listPacks() }.getOrDefault(restored.packs)
 
             // Imported GGUF files and registry entries are reconciled on every
@@ -836,9 +1003,18 @@ class CharalyViewModel(
                 runCatching { runner.recordsByModelId() }.getOrDefault(emptyMap())
             }.orEmpty()
 
-            val status = when (val model = installed.firstOrNull { it.id == active }) {
+            // NO NATIVE LOAD AT BOOT.
+            //
+            // Restarting must not spend ten seconds reading weights before the user can
+            // read their own story, and - more importantly - a boot-time load is the one
+            // that happens on a cold, memory-pressured process, so it is the load most
+            // likely to fail and then be *recorded* as this model's fate. Native residency
+            // is deliberately never persisted: the model is READY again the moment the
+            // registry restores and the file is still there, and the weights come back on
+            // the first turn through `ensureModelResident`.
+            val status = when (installed.firstOrNull { it.id == active }) {
                 null -> EngineStatus.Failed(Loc.t("model.no_model_yet"))
-                else -> loadModel(model)
+                else -> EngineStatus.Unknown
             }
 
             _state.update {
@@ -852,6 +1028,7 @@ class CharalyViewModel(
                     developerMode = preferences.developerMode,
                     darkTheme = preferences.darkTheme,
                     reduceMotion = preferences.reduceMotion,
+                    hudEnabled = preferences.hudEnabled,
                     languageTag = Loc.code(),
                     importedCharacters = imported,
                     benchmarkRecords = records,
@@ -942,6 +1119,39 @@ class CharalyViewModel(
             instance = instance,
         )
     }
+
+    /** The open story's active objectives, for the Story sheet's "Görevler". */
+    fun stageObjectives(): List<PackObjectiveRow> =
+        _state.value.story?.objectives.orEmpty().activeRows()
+
+    /**
+     * What the selected opening will ask of the reader, for the wizard's review.
+     *
+     * Read from the draft's pack and scenario so the list is exactly what the story will
+     * start with - the same ids the runtime's objective engine will arm on the first turn.
+     */
+    fun reviewObjectives(): List<PackObjectiveRow> {
+        val draft = _state.value.newStoryDraft ?: return emptyList()
+        val pack = packById(draft.packId) ?: return emptyList()
+        return scenarioObjectives(pack, draft.scenarioId)
+    }
+
+    /**
+     * "Paris · Çağdaş" - the setting's own nouns, for the showcase's fact line.
+     *
+     * The pack's helpers rather than raw fields, so an empty universe falls back to canon
+     * exactly as the authoring tool reads it.
+     */
+    fun showcaseSettingLabel(packId: String): String {
+        val pack = packById(packId) ?: return ""
+        return listOf(pack.settingUniverse(), pack.settingEra())
+            .filter { it.isNotBlank() }
+            .joinToString(" · ")
+    }
+
+    /** "Sürüm 1.2.0" - which edition of this world this device holds. */
+    fun showcaseVersionLabel(packId: String): String =
+        packVersionLabel(packById(packId)?.semanticVersion.orEmpty())
 
     /** A world's showcase. The strict projection: no roster, no events, no locations. */
     fun showcase(packId: String): dev.charaly.runtime.presentation.PackShowcase? {
@@ -1044,6 +1254,13 @@ class CharalyViewModel(
             model = model,
             binding = binding,
             storiesUsing = current.instances.filter { it.modelBinding.installedModelId == modelId },
+            // The publisher's own metadata, when the catalogue knows this model. Flows
+            // straight into the detail rows - no second source of truth for a licence or a
+            // context length.
+            catalogItem = catalog.items.firstOrNull { it.id == model.catalogId },
+            measuredSpeedLabel = current.benchmarkRecords[model.id]?.let { record ->
+                dev.charaly.runtime.presentation.BenchmarkPresenter.verdict(record = record).label
+            },
             isLoaded = current.loadedModelId == modelId,
             availableRamBytes = models.availableRamBytes(),
         )
@@ -1103,7 +1320,7 @@ class CharalyViewModel(
         val plain = runtime.turnCost(userInputChars = 0, appliedActions = 0).minutes
         val withActions = runtime.turnCost(userInputChars = 0, appliedActions = 2).minutes
         val ceiling = dev.charaly.runtime.session.TurnClockPolicy.MAX_TURN_MINUTES
-        return "A turn costs $plain min, $withActions min with actions, at most $ceiling."
+        return "Sade bir tur $plain dk, eylemlerle $withActions dk, en fazla $ceiling dk sürer."
     }
 
     /** The imported-characters library screen. */
@@ -1125,7 +1342,7 @@ class CharalyViewModel(
                 dev.charaly.runtime.presentation.StoryContextPresenter
                     .timeOfDayLabel(instance.worldClock.now.hour)
                     .takeIf { it.isNotBlank() },
-                "Day ${instance.worldClock.now.day}".takeIf { instance.worldClock.now.day > 1 },
+                "%1${'$'}d. Gün".format(instance.worldClock.now.day).takeIf { instance.worldClock.now.day > 1 },
             ).joinToString(" · "),
             beats = dev.charaly.runtime.presentation.StoryPresenter.build(
                 instance = instance,
@@ -1196,13 +1413,24 @@ class CharalyViewModel(
     }
 
     /**
-     * Throws away the last reply and generates it again.
+     * Retries the turn that did not finish, or - when the last turn completed - throws
+     * away its reply and generates it again.
      *
      * The stage's Retry action. A failure that offers "Try again" and cannot is worse than
-     * one that offers nothing.
+     * one that offers nothing. And a Retry that quietly retries a DIFFERENT turn than the
+     * one that failed is worse than both: after an interrupted send the old fallback
+     * re-sent the previous turn's input and deleted the reply beside it.
      */
     fun retryGeneration() {
         val story = _state.value.story ?: return
+        val interrupted = _state.value.retryInput
+        if (interrupted != null) {
+            // The interrupted turn is re-run exactly as the player wrote it. Nothing of it
+            // was persisted (a turn saves once, at the end), so this cannot duplicate its
+            // message, its actions or its rewards.
+            runGeneration(story, interrupted, story.focusCharacterId)
+            return
+        }
         regenerate()
         if (story.conversation.lastUserEntry() == null) {
             // Nothing to retry: the turn never reached the transcript. Send an empty line
@@ -1228,10 +1456,18 @@ class CharalyViewModel(
     // Navigation-facing actions
     // ------------------------------------------------------------------
 
-    /** Opens a story and marks it played. */
-    fun openStory(instanceId: String) {
+    /**
+     * Opens a story and marks it played - or refuses, with a reason and a way back.
+     *
+     * [onOpened] runs only when the story is actually open (the shell navigates in it), so
+     * a blocked story never reaches the stage half-loaded. The compatibility check runs
+     * BEFORE the touch: failing to open must not rewrite the Story Instance in any way,
+     * not even its "last played" stamp.
+     */
+    fun openStory(instanceId: String, onOpened: () -> Unit = {}) {
         viewModelScope.launch {
             val instance = runtime.loadStory(StoryInstanceId(instanceId)) ?: return@launch
+            if (blockIfUnplayable(instance)) return@launch
             val touched = runCatching { runtime.touch(instance, now()) }.getOrDefault(instance)
             bindModelForStory(touched)
             syncModelState()
@@ -1242,9 +1478,12 @@ class CharalyViewModel(
                     generationPhase = GenerationPhase.IDLE,
                     failureMessage = "",
                     lastFailedGeneration = "",
+                    retryInput = null,
                 )
             }
             refreshInstances()
+            refreshOfferedChoices()
+            onOpened()
         }
     }
 
@@ -1254,12 +1493,39 @@ class CharalyViewModel(
             preferences.newStoryDraftJson = ""
             val instance = runCatching { runtime.continueStory(StoryPackId(packId)) }.getOrNull()
                 ?: return@launch
+            if (blockIfUnplayable(instance)) return@launch
             val touched = runCatching { runtime.touch(instance, now()) }.getOrDefault(instance)
             bindModelForStory(touched)
-            _state.update { it.copy(story = touched, failureMessage = "", streamingText = "") }
+            _state.update {
+                it.copy(story = touched, failureMessage = "", streamingText = "", retryInput = null)
+            }
             refreshInstances()
         }
     }
+
+    /**
+     * THE story-open compatibility gate.
+     *
+     * Phase 4 found the hole this closes: `compatibilityFor` existed and answered
+     * `MIGRATION_REQUIRED` / `PACK_MISSING`, but story-open never asked it - a story pinned
+     * to a missing edition opened against whatever edition happened to be active, which is
+     * exactly the silent canon swap the pinning exists to prevent. So the question is asked
+     * here, once, on the one path every "open / resume" takes.
+     *
+     * Returns true when the story is blocked and the gate is on screen. A blocked story is
+     * not opened, not touched, and its version is never swapped: the only way forward is
+     * the recovery the dialog names.
+     */
+    private suspend fun blockIfUnplayable(instance: StoryInstance): Boolean {
+        val decision = runCatching { packInstaller.compatibilityFor(instance).openDecision() }
+            .getOrNull() ?: return false // The check itself failed; legacy behaviour stands.
+        if (decision !is PackOpenDecision.Blocked) return false
+        _state.update { it.copy(packOpenGate = decision.toGateUi(instance.id.value, instance.displayTitle)) }
+        return true
+    }
+
+    /** "Vazgeç": the user understood, the story stays exactly as it was. */
+    fun dismissPackOpenGate() = _state.update { it.copy(packOpenGate = null) }
 
     // ------------------------------------------------------------------
     // New story
@@ -1403,13 +1669,14 @@ class CharalyViewModel(
                     newStoryStep = NewStoryStep.SCENARIO,
                     lastCreatedStoryId = instance.id.value,
                     notice = when (brought) {
-                        0 -> "Stepped into ${instance.displayTitle}"
+                        0 -> "${instance.displayTitle} hikâyesine girildi"
                         1 -> "Stepped into ${instance.displayTitle} with 1 imported character"
                         else -> "Stepped into ${instance.displayTitle} with $brought imported characters"
                     },
                 )
             }
             refreshInstances()
+            refreshOfferedChoices()
         }
     }
 
@@ -1588,6 +1855,462 @@ class CharalyViewModel(
     private suspend fun refreshImportedCharacters() {
         val imported = runCatching { runtime.listImportedCharacters() }.getOrDefault(emptyList())
         _state.update { it.copy(importedCharacters = imported) }
+    }
+
+    // ------------------------------------------------------------------
+    // Story packs: the store, import, export, download, delete
+    // ------------------------------------------------------------------
+
+    /**
+     * Reads a `.charaly-pack` the user picked, and *reviews* it.
+     *
+     * Nothing is written here - the archive is decoded, validated and health-checked by
+     * `inspect`, which is a dry run by construction, and the result waits in `pendingImport`
+     * for [confirmPackImport]. A wrong file is refused by its own name first ("that is not
+     * a story pack") so a mis-tap gets a sentence about the tap rather than a validator
+     * report about a PDF; an unverifiable name falls through to inspection, whose refusal
+     * is equally polite.
+     */
+    fun readPackFile(uri: android.net.Uri) {
+        viewModelScope.launch {
+            _state.update { it.copy(packBusy = true, error = null) }
+            val picked = withContext(Dispatchers.IO) {
+                runCatching {
+                    PickedPack(
+                        name = cardFiles?.displayName(uri).orEmpty(),
+                        bytes = readAllBytes(uri),
+                    )
+                }
+            }
+            val pack = picked.getOrElse {
+                _state.update {
+                    it.copy(packBusy = false, error = "Dosya okunamadı. Tekrar deneyin.")
+                }
+                return@launch
+            }
+            val suffix = ".${StoryPackFormat.FILE_EXTENSION}"
+            if (pack.name.isNotBlank() && pack.name.contains('.') && !pack.name.endsWith(suffix, ignoreCase = true)) {
+                _state.update {
+                    it.copy(
+                        packBusy = false,
+                        error = "Seçilen dosya bir hikâye paketi değil. $suffix uzantılı bir dosya seçin.",
+                    )
+                }
+                return@launch
+            }
+            val candidate = runCatching { packInstaller.inspect(pack.bytes) }.getOrElse {
+                _state.update {
+                    it.copy(packBusy = false, error = "Paket incelenemedi. Dosya bozuk olabilir.")
+                }
+                return@launch
+            }
+            _state.update {
+                it.copy(
+                    packBusy = false,
+                    pendingImport = PackImportSession(
+                        sourceName = pack.name,
+                        bytes = pack.bytes,
+                        report = candidate.report.toImportReportUi(),
+                        title = candidate.title,
+                        versionLabel = packVersionLabel(candidate.packVersion),
+                        isUpgrade = candidate.isUpgrade,
+                        previousVersion = candidate.existingVersion.orEmpty(),
+                    ),
+                )
+            }
+        }
+    }
+
+    /**
+     * Installs the reviewed archive.
+     *
+     * The bytes are the ones that were reviewed - never a re-read - and the import path is
+     * the pipeline's own: validate, stage, re-read, commit, register. A rejection that
+     * appears *now* (the archive changed under us, the disk refused the commit) replaces
+     * the on-screen report rather than being swallowed into a toast.
+     */
+    fun confirmPackImport() {
+        val pending = _state.value.pendingImport ?: return
+        viewModelScope.launch {
+            _state.update { it.copy(packBusy = true) }
+            val outcome = runCatching {
+                packInstaller.import(pending.bytes, source = InstalledPackRecord.SOURCE_IMPORT)
+            }
+            val result = outcome.getOrElse {
+                _state.update {
+                    it.copy(packBusy = false, error = "Paket kurulamadı. Boş yer olup olmadığını kontrol edin.")
+                }
+                return@launch
+            }
+            when (result) {
+                is StoryPackInstaller.ImportResult.Installed -> {
+                    val upgraded = result.upgradedFrom
+                    _state.update {
+                        it.copy(
+                            packBusy = false,
+                            pendingImport = null,
+                            packImportDone = if (upgraded == null) {
+                                "${result.record.title} kuruldu; kütüphaneye eklendi."
+                            } else {
+                                "${result.record.title} $upgraded sürümünden güncellendi. " +
+                                    "Eski sürüm, o sürümle başlayan hikâyeler için korunuyor."
+                            },
+                        )
+                    }
+                    refreshPackStore()
+                    refreshInstances()
+                }
+
+                is StoryPackInstaller.ImportResult.Rejected -> _state.update {
+                    it.copy(
+                        packBusy = false,
+                        pendingImport = pending.copy(report = result.report.toImportReportUi()),
+                    )
+                }
+            }
+        }
+    }
+
+    /** Backing out of the review. Writes nothing, by construction. */
+    fun cancelPackImport() = _state.update { it.copy(pendingImport = null, packBusy = false) }
+
+    /** Clears the post-install summary once the screen has shown it and moved on. */
+    fun acknowledgePackImportDone() = _state.update { it.copy(packImportDone = null) }
+
+    /**
+     * Produces the archive for an installed pack.
+     *
+     * Rebuilt from what is installed rather than copied from the incoming file, so an
+     * export is a statement about *this* device's content and survives the round trip the
+     * same way a hand-edited install would. The bytes wait in [CharalyUiState.packExport];
+     * the shell asks the system where to put them and calls [writeExportedPack].
+     */
+    fun exportPack(packId: String) {
+        viewModelScope.launch {
+            _state.update { it.copy(packBusy = true) }
+            val bytes = runCatching { packInstaller.export(packId) }.getOrNull()
+            if (bytes == null) {
+                _state.update { it.copy(packBusy = false, error = "Bu paket dışa aktarılamadı." ) }
+                return@launch
+            }
+            val version = runCatching {
+                packInstaller.installedRecords().firstOrNull { it.packId == packId }?.packVersion
+            }.getOrNull().orEmpty()
+            _state.update {
+                it.copy(
+                    packBusy = false,
+                    packExport = PackExportRequest(
+                        fileName = StoryPackFormat.fileNameFor(
+                            packId = packId,
+                            packVersion = version.ifBlank { "1.0.0" },
+                        ),
+                        bytes = bytes,
+                    ),
+                )
+            }
+        }
+    }
+
+    /**
+     * Writes the exported archive to the uri the system created.
+     *
+     * Success and failure both earn a sentence: an export that silently wrote nothing is a
+     * file the user believes they shared. The pending request is cleared either way, so a
+     * cancelled "save as" sheet cannot leave bytes waiting to leak into a later export.
+     */
+    fun writeExportedPack(uri: android.net.Uri, bytes: ByteArray) {
+        viewModelScope.launch {
+            val writer = packFiles ?: run {
+                _state.update {
+                    it.copy(packExport = null, error = "Bu oturumda dosya yazılamıyor.")
+                }
+                return@launch
+            }
+            val written = withContext(Dispatchers.IO) { runCatching { writer.write(uri, bytes) } }
+            _state.update {
+                it.copy(
+                    packExport = null,
+                    notice = if (written.isSuccess) "Paket dışa aktarıldı." else null,
+                    error = if (written.isSuccess) {
+                        null
+                    } else {
+                        written.exceptionOrNull()?.message?.takeIf { message -> message.isNotBlank() }
+                            ?: "Paket dışa aktarılamadı."
+                    },
+                )
+            }
+        }
+    }
+
+    /** The "save as" sheet was dismissed. The export is abandoned, deliberately. */
+    fun cancelPackExport() = _state.update { it.copy(packExport = null) }
+
+    /**
+     * Installs a pack the authoring wizard just finished.
+     *
+     * The authored pack takes the *same* door every `.charaly-pack` file takes: it is
+     * exported to real archive bytes by `exportPack` and imported through the pipeline
+     * (validate, stage, re-read, commit, register). A shortcut straight to the repository
+     * would mean an authored pack was the one kind of content never validated - and the
+     * wizard's review step would be theatre. A rejection that appears now (the archive
+     * changed shape between review and install) is reported in the installer's own words.
+     */
+    fun installAuthoredPack(pack: dev.charaly.runtime.domain.StoryPack) {
+        viewModelScope.launch {
+            _state.update { it.copy(packBusy = true, error = null) }
+            val bytes = runCatching { packInstaller.exportPack(pack) }.getOrNull()
+            val result = if (bytes == null) {
+                null
+            } else {
+                runCatching {
+                    packInstaller.import(bytes, source = InstalledPackRecord.SOURCE_IMPORT)
+                }.getOrNull()
+            }
+            when (result) {
+                is StoryPackInstaller.ImportResult.Installed -> {
+                    _state.update {
+                        it.copy(packBusy = false, notice = "${result.record.title} kütüphaneye eklendi.")
+                    }
+                    refreshPackStore()
+                    refreshInstances()
+                }
+
+                is StoryPackInstaller.ImportResult.Rejected -> _state.update {
+                    it.copy(
+                        packBusy = false,
+                        error = result.report.errors.joinToString(" ") { issue -> issue.message }
+                            .ifBlank { "Paket kurulamadı; 5. adımdaki kontrole dönün." },
+                    )
+                }
+
+                null -> _state.update {
+                    it.copy(packBusy = false, error = "Paket hazırlanamadı. Boş yer olup olmadığını kontrol edin.")
+                }
+            }
+        }
+    }
+
+    /**
+     * Requests a "save as" for a pack the authoring wizard just finished.
+     *
+     * Not [exportPack] - that rebuilds an *installed* pack by id, and this pack is not
+     * installed (saving a file must not install anything). The bytes come from
+     * `exportPack`'s uninstalled sibling, and everything after that is the existing SAF
+     * conversation: the request waits in [CharalyUiState.packExport], the shell launches
+     * `CreateDocument`, and [writeExportedPack] writes what was requested.
+     */
+    fun exportAuthoredPack(pack: dev.charaly.runtime.domain.StoryPack) {
+        viewModelScope.launch {
+            _state.update { it.copy(packBusy = true, error = null) }
+            val bytes = runCatching { packInstaller.exportPack(pack) }.getOrNull()
+            if (bytes == null) {
+                _state.update { it.copy(packBusy = false, error = "Paket dışa aktarılamadı.") }
+                return@launch
+            }
+            _state.update {
+                it.copy(
+                    packBusy = false,
+                    packExport = PackExportRequest(
+                        fileName = StoryPackFormat.fileNameFor(
+                            packId = pack.id.value,
+                            packVersion = pack.semanticVersion,
+                        ),
+                        bytes = bytes,
+                    ),
+                )
+            }
+        }
+    }
+
+    /**
+     * Starts (or re-issues) one catalog download.
+     *
+     * Collected one pipeline per catalog entry: a second tap while a transfer runs must not
+     * start a second writer against the same staging tree. Every frame is projected through
+     * `toPackDownloadUi` into the card, which is where the honesty lives - the bar only has
+     * a fraction when the pipeline genuinely has one.
+     */
+    fun startPackDownload(card: StoryCatalogCard) {
+        val item = storyCatalog.byId(card.itemId) ?: run {
+            _state.update { it.copy(error = "Bu paket artık katalogda değil.") }
+            return
+        }
+        collectPackDownload(item)
+    }
+
+    private fun collectPackDownload(item: StoryCatalogItem) {
+        val downloads = packDownloader ?: run {
+            _state.update { it.copy(error = "Paket indirme bu oturumda kullanılamıyor.") }
+            return
+        }
+        if (packDownloadJobs[item.id]?.isActive == true) return
+        packDownloadJobs[item.id] = viewModelScope.launch {
+            downloads.download(item).collect { frame ->
+                val ui = frame.toPackDownloadUi()
+                _state.update { current ->
+                    current.copy(
+                        packDownloads = current.packDownloads + (frame.itemId to ui),
+                        catalogCards = current.catalogCards.map { card ->
+                            if (card.itemId == frame.itemId) card.copy(download = ui) else card
+                        },
+                    )
+                }
+                if (frame.state == PackDownloadState.READY) {
+                    refreshPackStore()
+                    _state.update {
+                        it.copy(notice = "${item.title} kütüphaneye eklendi.")
+                    }
+                }
+            }
+            packDownloadJobs.remove(item.id)
+        }
+    }
+
+    /** Pauses a running transfer. The partial file stays; resume continues from it. */
+    fun pausePackDownload(itemId: String) {
+        packDownloader?.pause(itemId)
+    }
+
+    /** Resumes a paused transfer with a range request from the partial file's end. */
+    fun resumePackDownload(itemId: String) {
+        packDownloader?.resumeAllowed(itemId)
+        storyCatalog.byId(itemId)?.let(::collectPackDownload)
+    }
+
+    /** Cancels outright. The partial file is discarded by the pipeline. */
+    fun cancelPackDownload(itemId: String) {
+        packDownloader?.cancel(itemId)
+    }
+
+    /** Re-issues a failed or cancelled download from the beginning. */
+    fun retryPackDownload(itemId: String) {
+        packDownloader?.resumeAllowed(itemId)
+        storyCatalog.byId(itemId)?.let(::collectPackDownload)
+    }
+
+    /**
+     * Opens the delete confirmation for a pack.
+     *
+     * The prompt carries the pack's own title and, once the installer has refused a plain
+     * delete, the number of stories that depend on it. Both dialogs promise what the
+     * installer guarantees: saves are never part of a deletion.
+     */
+    fun requestPackDelete(packId: String) {
+        viewModelScope.launch {
+            val title = runCatching {
+                packInstaller.installedRecords().firstOrNull { it.packId == packId }?.title
+            }.getOrNull().orEmpty()
+            _state.update {
+                it.copy(
+                    packDeletePrompt = PackDeletePrompt(
+                        packId = packId,
+                        title = title.ifBlank { "Bu paket" },
+                        activeStories = 0,
+                        blocked = false,
+                    ),
+                )
+            }
+        }
+    }
+
+    /**
+     * Deletes a pack, with the installer as the only judge of whether that may happen.
+     *
+     * `force = false` first, always: when stories run on this pack the installer answers
+     * `Blocked` and the prompt grows into the "are you sure" dialog rather than the delete
+     * happening anyway. Insisting (`force = true`) keeps every save - the outcome's own
+     * `keptSaves` count is what the notice reports.
+     */
+    fun deletePack(packId: String, force: Boolean) {
+        viewModelScope.launch {
+            when (val outcome = packInstaller.delete(packId, force)) {
+                is StoryPackInstaller.DeleteOutcome.Deleted -> {
+                    _state.update {
+                        it.copy(
+                            packDeletePrompt = null,
+                            notice = if (outcome.keptSaves > 0) {
+                                "${outcome.record.title} silindi. Bağlı ${outcome.keptSaves} hikâyenin kaydı korundu."
+                            } else {
+                                "${outcome.record.title} silindi."
+                            },
+                        )
+                    }
+                    refreshPackStore()
+                }
+
+                is StoryPackInstaller.DeleteOutcome.Blocked -> _state.update {
+                    it.copy(
+                        packDeletePrompt = PackDeletePrompt(
+                            packId = outcome.packId,
+                            title = outcome.title,
+                            activeStories = outcome.activeStories,
+                            blocked = true,
+                        ),
+                    )
+                }
+
+                is StoryPackInstaller.DeleteOutcome.NotFound -> _state.update {
+                    it.copy(packDeletePrompt = null, error = "Bu paket zaten kurulu değil.")
+                }
+            }
+        }
+    }
+
+    /** Backing out of either delete dialog. Nothing has been removed at this point. */
+    fun dismissPackDelete() = _state.update { it.copy(packDeletePrompt = null) }
+
+    /**
+     * Offers the catalog's newer edition of an installed pack.
+     *
+     * With no newer edition available this says so instead of re-downloading the same one:
+     * "Güncelle" that silently reinstalls is a control that teaches the user nothing and
+     * risks a re-commit of identical content.
+     */
+    fun updatePack(packId: String) {
+        val card = _state.value.catalogCards.firstOrNull {
+            it.packId == packId && it.installState == PackInstallState.UPDATE_AVAILABLE
+        }
+        if (card == null) {
+            _state.update { it.copy(notice = "Bu paket zaten güncel.") }
+            return
+        }
+        startPackDownload(card)
+    }
+
+    /**
+     * Re-reads the registry and the catalog for the pack store.
+     *
+     * Off the boot path on purpose: launch restores what the user plays, and a catalog
+     * fetch is a network round trip that has no business delaying it. The screen calls this
+     * when it opens, and every install/delete/download calls it afterwards.
+     */
+    fun refreshPackStore() {
+        viewModelScope.launch {
+            _state.update { it.copy(packBusy = true) }
+            val records = runCatching { packInstaller.installedRecords() }.getOrDefault(emptyList())
+            // Never fails the screen: offline, 404 or garbage all leave the built-in
+            // listings in place with the source note saying so.
+            runCatching { (storyCatalog as? RemoteStoryCatalog)?.refresh() }
+            val cards = storyCatalog.items.map { item ->
+                item.toStoryCatalogCard(
+                    installState = installStateOf(item, records),
+                    download = packDownloader?.snapshot(item.id)?.toPackDownloadUi(),
+                )
+            }
+            val note = storyCatalogSourceNote(
+                (storyCatalog as? RemoteStoryCatalog)?.catalogSource ?: StoryCatalogSource.NotLoaded,
+            )
+            val packs = runCatching { runtime.listPacks() }.getOrDefault(_state.value.packs)
+            _state.update {
+                it.copy(
+                    packBusy = false,
+                    packStoreItems = records.map(InstalledPackRecord::toPackStoreItem),
+                    catalogCards = cards,
+                    catalogSourceNote = note,
+                    packs = packs,
+                )
+            }
+        }
     }
 
     // ------------------------------------------------------------------
@@ -1864,6 +2587,57 @@ class CharalyViewModel(
         runGeneration(story, trimmed, speaker)
     }
 
+    /**
+     * Takes one of the branches the world is currently offering.
+     *
+     * The same decision typing a line is - conditions rechecked, effects through the event
+     * engine, the choice recorded in the ledger. The outcome note (or the refusal's reason)
+     * is posted as a notice: it is the world's answer to the move, in the world's own words,
+     * and it must not be dressed up as a character's dialogue.
+     */
+    fun takeChoice(sceneId: String, choiceId: String) {
+        val story = _state.value.story ?: return
+        viewModelScope.launch {
+            when (val outcome = runtime.takeChoice(story, sceneId, choiceId)) {
+                is CharalyRuntime.ChoiceOutcome.Taken -> {
+                    _state.update {
+                        it.copy(
+                            story = outcome.instance,
+                            notice = outcome.note.ifBlank { "Seçenek işlendi." },
+                        )
+                    }
+                    refreshInstances()
+                }
+
+                // Refusals are rare but real - a one-shot branch tapped twice, a choice that
+                // closed while the chip was still on screen. The reason is already written
+                // for a person ("bu seçenek artık yok"), so it is shown as it is.
+                is CharalyRuntime.ChoiceOutcome.Refused -> _state.update {
+                    it.copy(notice = outcome.reason)
+                }
+            }
+            refreshOfferedChoices()
+        }
+    }
+
+    /**
+     * Re-reads the branches the open story's world offers.
+     *
+     * Called whenever the story moves - opened, a turn finished, a choice taken - because
+     * "which branches are open" is a fact about the current scene and the chips are only
+     * useful while they are current.
+     */
+    private fun refreshOfferedChoices() {
+        val story = _state.value.story ?: run {
+            _state.update { it.copy(offeredChoices = emptyList()) }
+            return
+        }
+        viewModelScope.launch {
+            val choices = runCatching { runtime.offeredChoices(story) }.getOrDefault(emptyList())
+            _state.update { it.copy(offeredChoices = choices) }
+        }
+    }
+
     private fun runGeneration(instance: StoryInstance, input: String, speaker: CharacterId?) {
         generationJob?.cancel()
         generationJob = viewModelScope.launch {
@@ -1873,6 +2647,8 @@ class CharalyViewModel(
                     streamingText = "",
                     failureMessage = "",
                     lastFailedGeneration = "",
+                    // Held for Retry until this turn finishes. See [CharalyUiState.retryInput].
+                    retryInput = input,
                 )
             }
             try {
@@ -1903,26 +2679,57 @@ class CharalyViewModel(
                     return@launch
                 }
 
+                // Stream grouping: accumulate chunks and publish to Compose every 3 tokens.
+                // Publishing every single token caused a full-screen recomposition per token
+                // (StageScreen, LazyColumn, backdrop, composer, HUD). Grouping reduces
+                // recompositions by ~3× without losing the final text or stop/cancel behaviour.
+                var chunkCount = 0
+                var lastAccumulated = ""
+
                 runtime.respond(instance, input, speaker).collect { update ->
                     when (update) {
                         is GenerationUpdate.Started -> _state.update {
                             it.copy(generationPhase = GenerationPhase.STREAMING)
                         }
 
-                        is GenerationUpdate.Chunk -> _state.update {
-                            it.copy(generationPhase = GenerationPhase.STREAMING, streamingText = update.accumulated)
+                        is GenerationUpdate.Chunk -> {
+                            lastAccumulated = update.accumulated
+                            chunkCount++
+                            if (chunkCount >= 3) {
+                                chunkCount = 0
+                                _state.update {
+                                    it.copy(
+                                        generationPhase = GenerationPhase.STREAMING,
+                                        // PROSE ON SCREEN, NEVER PROTOCOL. The model streams its
+                                        // action tags inline, and what the player watches arrive
+                                        // is the character speaking - not `<charaly:action .../>`
+                                        // typed out token by token in the middle of a sentence.
+                                        streamingText = dev.charaly.runtime.director.ProposedActionParser
+                                            .stripActions(update.accumulated),
+                                    )
+                                }
+                            }
                         }
 
                         is GenerationUpdate.AppliedAction -> _state.update {
-                            it.copy(notice = "World updated: ${update.changes.joinToString("; ")}")
+                            it.copy(notice = "Dünya güncellendi: ${update.changes.joinToString("; ")}")
                         }
 
                         is GenerationUpdate.RejectedAction -> _state.update {
-                            it.copy(notice = "Ignored an invalid world action: ${update.review.reason}")
+                            it.copy(notice = "Geçersiz bir dünya eylemi yok sayıldı: ${update.review.reason}")
                         }
 
                         is GenerationUpdate.Finished -> {
                             val finished = update.instance
+                            // The turn completed: nothing to retry any more. A later Retry
+                            // is a regeneration of this turn, not a re-send of its input.
+                            _state.update { it.copy(retryInput = null) }
+                            // Developer-only diagnostics. A normal player never sees this:
+                            // it is behind the developer gate, and it carries real clocks
+                            // rather than a screen-level stopwatch.
+                            update.perf?.takeIf { _state.value.developerMode }?.let { perf ->
+                                android.util.Log.i("StoryTurnPerf", perf.summary())
+                            }
                             if (finished != null) {
                                 _state.update {
                                     it.copy(
@@ -1941,6 +2748,7 @@ class CharalyViewModel(
                                 _state.update { it.copy(streamingText = "", generationPhase = GenerationPhase.IDLE) }
                             }
                             refreshInstances()
+                            refreshOfferedChoices()
                         }
 
                         is GenerationUpdate.Failed -> {
@@ -1986,7 +2794,7 @@ class CharalyViewModel(
         viewModelScope.launch {
             val (trimmed, lastInput) = runCatching { runtime.prepareRegeneration(story) }.getOrDefault(story to null)
             if (lastInput.isNullOrBlank()) {
-                _state.update { it.copy(notice = "Nothing to regenerate yet") }
+                _state.update { it.copy(notice = "Henüz yeniden üretilecek bir şey yok") }
                 return@launch
             }
             _state.update { it.copy(story = trimmed) }
@@ -2004,9 +2812,12 @@ class CharalyViewModel(
     fun editLastUserMessage(text: String) {
         val story = _state.value.story ?: return
         viewModelScope.launch {
-            val lastCharacter = story.conversation.lastCharacterEntry()
-            val trimmed = if (lastCharacter != null) {
-                story.copy(conversation = story.conversation.dropFrom(lastCharacter.turn))
+            val lastUser = story.conversation.lastUserEntry()
+            // The edited line is REPLACED, not shadowed: dropping only the reply left the
+            // original player line in the transcript and `respond` appended the edit under
+            // it, so one message arrived twice with different wording.
+            val trimmed = if (lastUser != null) {
+                story.copy(conversation = story.conversation.dropFrom(lastUser.turn))
             } else {
                 story
             }
@@ -2034,7 +2845,7 @@ class CharalyViewModel(
             _state.update {
                 it.copy(
                     story = advanced,
-                    notice = "Clock advanced to ${advanced.worldClock.now.formatClock()}",
+                    notice = "Saat ${advanced.worldClock.now.formatClock()} zamanına ilerledi",
                 )
             }
             refreshInstances()
@@ -2075,7 +2886,7 @@ class CharalyViewModel(
             val branch = runCatching {
                 runtime.duplicateStory(instance, StoryInstanceId("story-${now()}"), nowEpochMs = now())
             }.getOrNull() ?: return@launch
-            _state.update { it.copy(notice = "Branched into ${branch.displayTitle}") }
+            _state.update { it.copy(notice = "${branch.displayTitle} hikâyesine dallanıldı") }
             refreshInstances()
         }
     }
@@ -2094,34 +2905,68 @@ class CharalyViewModel(
         viewModelScope.launch {
             // IMPORTING is a real state, not a spinner drawn over a finished list: a 4 GB
             // SAF copy takes a long time, and the whole time the model does not exist yet.
-            _state.update { it.copy(modelBusy = true, modelImport = ModelImportState.IMPORTING, error = null) }
-            models.importFrom(uri)
+            _state.update {
+                it.copy(
+                    modelBusy = true,
+                    modelImport = ModelImportState.IMPORTING,
+                    importProgress = dev.charaly.app.model.ImportProgress(0L, 0L),
+                    error = null,
+                )
+            }
+            models.importFrom(uri) { progress ->
+                // Straight from the copy loop: a 4 GB import that shows nothing for two
+                // minutes is indistinguishable from a hang.
+                _state.update { it.copy(importProgress = progress) }
+            }
                 .onSuccess { entry ->
-                    _state.update { it.copy(modelImport = ModelImportState.VERIFYING) }
-                    val registered = models.registerImported(entry, registry, catalog)
+                    // The copy is done; everything after it is registry bookkeeping, and a
+                    // failure there must not take the process down with it. This block used
+                    // to run unguarded: any throw from the registry write or the header
+                    // record escaped the coroutine and closed the app - *after* a
+                    // multi-gigabyte copy had already succeeded, which is the worst possible
+                    // moment for it. Now the same honest failure path serves both halves.
+                    val outcome = runCatching {
+                        _state.update { it.copy(modelImport = ModelImportState.VERIFYING) }
+                        val registered = models.registerImported(entry, registry, catalog)
 
-                    // Read the GGUF header *before* anything asks whether this model can
-                    // run. Without it the registry entry has a blank architecture, and a
-                    // blank architecture is read as "the engine does not know what this is"
-                    // - which turned a perfectly good imported GGUF into a model whose Use
-                    // control was disabled.
-                    readAndRecordHeader(registered)
+                        // Read the GGUF header *before* anything asks whether this model can
+                        // run. Without it the registry entry has a blank architecture, and a
+                        // blank architecture is read as "the engine does not know what this is"
+                        // - which turned a perfectly good imported GGUF into a model whose Use
+                        // control was disabled.
+                        readAndRecordHeader(registered)
 
-                    registry.setActive(registered.id)
-                    val installed = runCatching { registry.list() }.getOrDefault(_state.value.installedModels)
-                    _state.update {
-                        it.copy(
-                            modelBusy = false,
-                            modelImport = ModelImportState.READY,
-                            installedModels = installed,
-                            activeModelId = registered.id,
-                            notice = Loc.t("model.imported_ok", registered.displayName),
-                        )
+                        registry.setActive(registered.id)
+                        registered
                     }
-                    // State is complete and correct *before* the engine is touched, so the
-                    // Continue button is usable immediately even while a multi-gigabyte
-                    // model is still being read into memory.
-                    syncModelState()
+                    outcome.onSuccess { registered ->
+                        val installed = runCatching { registry.list() }.getOrDefault(_state.value.installedModels)
+                        _state.update {
+                            it.copy(
+                                modelBusy = false,
+                                modelImport = ModelImportState.READY,
+                                importProgress = null,
+                                installedModels = installed,
+                                activeModelId = registered.id,
+                                notice = Loc.t("model.imported_ok", registered.displayName),
+                            )
+                        }
+                        // State is complete and correct *before* the engine is touched, so the
+                        // Continue button is usable immediately even while a multi-gigabyte
+                        // model is still being read into memory.
+                        syncModelState()
+                    }
+                    outcome.onFailure { error ->
+                        _state.update {
+                            it.copy(
+                                modelBusy = false,
+                                modelImport = ModelImportState.NONE,
+                                importProgress = null,
+                                error = importErrorMessage(error),
+                            )
+                        }
+                        syncModelState()
+                    }
 
                     // IMPORT STOPS HERE.
                     //
@@ -2138,6 +2983,7 @@ class CharalyViewModel(
                         it.copy(
                             modelBusy = false,
                             modelImport = ModelImportState.NONE,
+                            importProgress = null,
                             error = importErrorMessage(error),
                         )
                     }
@@ -2213,11 +3059,20 @@ class CharalyViewModel(
                     loadedModelId = if (it.loadedModelId == model.id) null else it.loadedModelId,
                 )
             }
-            val next = installed.firstOrNull { it.id == active }
-            engineStatus.value = if (next == null) {
-                EngineStatus.Failed("No model installed yet. Import a GGUF to generate replies.")
+            // Deleting the resident model releases its native memory here and now.
+            //
+            // What it does NOT do is eagerly load whatever inherited the active slot: that
+            // spends seconds of the user's time loading a model they did not ask for, and a
+            // load that fails there would be recorded as *that* model's failure for no
+            // better reason than that it happened to be next in the list. It is READY, and
+            // it will be loaded on its first turn.
+            if (model.id == _state.value.loadedModelId) {
+                runCatching { residency.unload() }
+            }
+            engineStatus.value = if (installed.isEmpty()) {
+                EngineStatus.Failed(Loc.t("model.no_model_yet"))
             } else {
-                loadModel(next)
+                EngineStatus.Unknown
             }
         }
     }
@@ -2255,7 +3110,7 @@ class CharalyViewModel(
             if (model != null) {
                 loadModel(model)
             }
-            _state.update { it.copy(story = updated, notice = "This story now runs ${profile.name}") }
+            _state.update { it.copy(story = updated, notice = "Bu hikâye artık ${profile.name} profilini kullanıyor") }
             refreshInstances()
         }
     }
@@ -2314,7 +3169,14 @@ class CharalyViewModel(
                 syncModelState()
                 return@launch
             }
-            loadModel(model)
+            // OPENING A STORY DOES NOT LOAD A MODEL.
+            //
+            // The load is lazy and happens on the first turn (`ensureModelResident`). This
+            // screen is a place the user reads; spending thirty seconds of it mmap-ing a
+            // 4 GB GGUF - and then recording whatever went wrong as that model's permanent
+            // verdict - is the mistake this whole chain is here to undo. A model that is
+            // bound, on disk and parsed is READY, and READY is enough to be here.
+            syncModelState()
         }
     }
 
@@ -2338,22 +3200,55 @@ class CharalyViewModel(
     private suspend fun loadModelLocked(model: InstalledModel): EngineStatus {
         _state.update { it.copy(modelBusy = true) }
         engineStatus.value = EngineStatus.Loading
-        val status = when (
-            val outcome = runCatching {
-                runtime.loadModel(
-                    ModelLoadRequest(
-                        path = model.absolutePath,
-                        displayName = model.displayName,
-                        // The registry id, so engine residency can be attributed to the
-                        // right model rather than to a file name in a different namespace.
-                        installedModelId = model.id,
-                    ),
-                )
-            }.getOrNull()
+
+        // PRE-FLIGHT, before the native loader is touched.
+        //
+        // Two conditions are cheaper and more honest to catch here than inside
+        // llama.cpp, where the same situation is a crash or a hang rather than a
+        // sentence:
+        //
+        //  * an architecture the engine does not support - the registry records
+        //    this at import time, but a hand-edited or migrated entry can still
+        //    carry one, and the engine's own answer to it is a failed load with
+        //    no explanation;
+        //  * a file larger than the memory the device can offer. llama.cpp maps
+        //    the weights, so this is a heuristic rather than a law - but a model
+        //    that cannot fit even as a mapping will not generate, and the user
+        //    deserves the refusal up front, not a native OOM.
+        //
+        // Unknown memory (0) never refuses: a device that will not report its
+        // free memory must not be unable to load anything at all.
+        if (model.architecture.isNotBlank() &&
+            !dev.charaly.runtime.model.EngineCapabilities.supports(model.architecture)
         ) {
-            is LoadOutcome.Loaded -> EngineStatus.Ready(outcome.info.displayName)
-            is LoadOutcome.Failed -> EngineStatus.Failed(ErrorMessages.of(outcome.error))
-            null -> EngineStatus.Failed(Loc.t("model.load_failed"))
+            val status = EngineStatus.Failed(Loc.t("model.unsupported_arch"))
+            engineStatus.value = status
+            _state.update { it.copy(modelBusy = false) }
+            runCatching { models.markLoadFailure(registry, model.id, status.reason) }
+            return status
+        }
+        val availableRam = models.availableRamBytes()
+        if (availableRam > 0L && model.sizeBytes > availableRam) {
+            val status = EngineStatus.Failed(Loc.t("error.too_large_model"))
+            engineStatus.value = status
+            _state.update { it.copy(modelBusy = false) }
+            runCatching { models.markLoadFailure(registry, model.id, status.reason) }
+            return status
+        }
+
+        // Through the ONE loader. It closes the previous model before opening this one, so
+        // "select B while A is loaded" is unload A -> load B and never two residents.
+        val outcome = runCatching { residency.switchTo(model) }.getOrNull()
+        val status = when (outcome) {
+            is dev.charaly.app.model.LocalModelResidency.Outcome.Loaded ->
+                EngineStatus.Ready(outcome.displayName)
+            is dev.charaly.app.model.LocalModelResidency.Outcome.AlreadyResident ->
+                EngineStatus.Ready(model.displayName)
+            is dev.charaly.app.model.LocalModelResidency.Outcome.Failed ->
+                EngineStatus.Failed(outcome.reason.ifBlank { Loc.t("model.load_failed") })
+            is dev.charaly.app.model.LocalModelResidency.Outcome.FileMissing ->
+                EngineStatus.Failed(Loc.t("model.file_missing"))
+            else -> EngineStatus.Failed(Loc.t("model.load_failed"))
         }
         _state.update {
             it.copy(
@@ -2427,11 +3322,45 @@ class CharalyViewModel(
      */
     private suspend fun ensureModelResident(): Boolean {
         val selection = _state.value.model
+        // `canGenerate` deliberately still answers true for LOAD_FAILED: a record of a past
+        // failure is not a lock on the composer, and refusing to even try here is what made
+        // one bad load permanent. The retry below is the recovery.
         if (!selection.canGenerate) return false
         if (selection.isResident && runtime.isModelLoaded()) return true
+
+        // Resolve through the runtime's own port so the lazy half of "READY != LOADED" has
+        // exactly one implementation - `CharalyRuntime.respond` calls the very same object.
+        val ensured = runCatching { residency.ensureResident(resolveBinding()) }.getOrDefault(false)
         val installed = _state.value.installedModels.firstOrNull { it.id == selection.modelId }
-            ?: return false
-        return loadModel(installed) is EngineStatus.Ready
+        _state.update {
+            it.copy(loadedModelId = if (ensured) selection.modelId else null)
+        }
+        engineStatus.value = when {
+            ensured -> EngineStatus.Ready(installed?.displayName ?: selection.displayName)
+            else -> EngineStatus.Failed(
+                residency.lastFailure.ifBlank {
+                    when (residency.lastOutcome) {
+                        is dev.charaly.app.model.LocalModelResidency.Outcome.FileMissing ->
+                            Loc.t("model.file_missing")
+                        is dev.charaly.app.model.LocalModelResidency.Outcome.Unresolved ->
+                            Loc.t("model.missing_for_story")
+                        else -> Loc.t("model.load_failed")
+                    }
+                },
+            )
+        }
+        syncModelState()
+        return ensured
+    }
+
+    /** The binding `respond` would resolve, kept identical so both paths agree. */
+    private fun resolveBinding(): dev.charaly.runtime.model.ModelBinding {
+        val current = _state.value
+        return current.story?.modelBinding
+            ?: dev.charaly.runtime.model.ModelBindingResolver.resolve(
+                packDefaultProfileId = "",
+                installedModel = current.installedModels.firstOrNull { it.id == current.activeModelId },
+            )
     }
 
     // ------------------------------------------------------------------
@@ -2456,6 +3385,11 @@ class CharalyViewModel(
     fun setReduceMotion(reduce: Boolean) {
         preferences.reduceMotion = reduce
         _state.update { it.copy(reduceMotion = reduce) }
+    }
+
+    fun setHudEnabled(enabled: Boolean) {
+        preferences.hudEnabled = enabled
+        _state.update { it.copy(hudEnabled = enabled) }
     }
 
     /**
@@ -2523,7 +3457,7 @@ class CharalyViewModel(
      */
     fun storyHealth(): String {
         val story = _state.value.story ?: return "No story open."
-        val report = runCatching { runtime.storyHealth(story) }.getOrNull() ?: return "Could not analyse."
+        val report = runCatching { runtime.storyHealth(story) }.getOrNull() ?: return "Analiz edilemedi."
         return buildString {
             appendLine(report.summarise())
             if (report.findings.isEmpty()) return@buildString
@@ -2560,7 +3494,7 @@ fun causalityGraph(): String {
         val story = _state.value.story ?: return "No story open."
         val state = story.worldState
         if (state.causality.isEmpty()) {
-            return "No causal links recorded yet. Every event starts as a cause rather than a reason."
+            return "Henüz nedensel bağ kurulmadı. Her olay, sebep olarak başlar."
         }
         return buildString {
             appendLine("${state.causality.size} links from ${state.eventLog.size} events")
@@ -2643,7 +3577,7 @@ fun causalityGraph(): String {
     fun contextSectionBreakdown(): String {
         val story = _state.value.story ?: return "No story open."
         val sections = runCatching { runtime.contextSections(story) }.getOrNull()
-            ?: return "Could not build a context."
+            ?: return "Bağlam oluşturulamadı."
         if (sections.isEmpty()) return "No context could be built."
         return buildString {
             val total = sections.sumOf { it.chars }
@@ -2742,6 +3676,21 @@ fun causalityGraph(): String {
                         // And the engine a story would actually use, so a benchmark measures
                         // the code the user runs rather than a differently-configured copy.
                         inferenceEngine = application.inferenceEngine,
+                        // Shared with `application.charaly`, so a story turn and this
+                        // screen's pre-flight contend on the same load lock.
+                        residency = application.modelResidency,
+                        // The story pack pipeline, so demos are seeded through the real
+                        // import and the store's export/update/delete are real too.
+                        packInstaller = application.packInstaller,
+                        // And the catalog, remote when reachable with the built-ins as its
+                        // offline floor.
+                        storyCatalog = application.storyCatalog,
+                        // And the downloader, so a catalog card's İndir is a real transfer
+                        // through verify -> install -> register.
+                        packDownloader = application.packDownloads,
+                        // And the SAF writer behind export, for the same reason the SAF
+                        // reader sits behind character import.
+                        packFiles = dev.charaly.app.ui.ContentResolverPackFileWriter(application),
                     ) as T
             }
     }

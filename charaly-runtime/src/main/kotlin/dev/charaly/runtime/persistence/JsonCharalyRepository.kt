@@ -73,11 +73,23 @@ class JsonCharalyRepository(
     }
 
     override suspend fun getInstance(id: StoryInstanceId): StoryInstance? =
-        instancesFlow.value.firstOrNull { it.id == id } ?: decodeInstance(storage.read(instanceDoc(id)))
+        instancesFlow.value.firstOrNull { it.id == id }
+            ?: decodeInstance(storage.read(instanceDoc(id)))
+            ?: recoverInstance(instanceDoc(id))?.first
 
     override suspend fun saveInstance(instance: StoryInstance) {
-        writeDocument(instanceDoc(instance.id), json.encodeToString(StoryInstance.serializer(), instance))
-        refreshInstances()
+        val name = instanceDoc(instance.id)
+        // Keep the previous good copy beside the tree. A torn write then costs the last
+        // turn instead of the story, and recovery is a read instead of an apology.
+        storage.read(name)?.let { previous -> storage.write(backupName(name), previous) }
+        writeDocument(name, json.encodeToString(StoryInstance.serializer(), instance))
+        // Update the in-memory list in place rather than re-listing and re-decoding EVERY
+        // story on disk. A turn saves several times, and `refreshInstances()` made each of
+        // those an O(all-stories) parse - work that grew with the user's library and showed
+        // up directly in the latency between Send and the reply. `listInstances()` still
+        // refreshes from storage, so a caller that wants the on-disk truth still gets it.
+        instancesFlow.value = (instancesFlow.value.filterNot { it.id == instance.id } + instance)
+            .sortedByDescending { it.updatedAt }
     }
 
     override suspend fun deleteInstance(id: StoryInstanceId) {
@@ -117,8 +129,16 @@ class JsonCharalyRepository(
         storage.list("$INSTANCE_DIR/").forEach { doc ->
             val raw = storage.read(doc) ?: return@forEach
             noteMigration(doc, raw, observedMigrations)
-            val instance = decodeInstance(raw)
-            if (instance == null) failures += StorageFailure(doc, "unreadable story document") else restoredInstances += instance
+            val decoded = decodeInstance(raw)
+            val recovered = if (decoded == null) recoverInstance(doc) else null
+            when {
+                decoded != null -> restoredInstances += decoded
+                recovered != null -> {
+                    failures += StorageFailure(doc, "restored from the previous good save")
+                    restoredInstances += recovered.first
+                }
+                else -> failures += StorageFailure(doc, "unreadable story document")
+            }
         }
 
         packsFlow.value = restoredPacks.sortedBy { it.title.lowercase() }
@@ -156,6 +176,18 @@ class JsonCharalyRepository(
 
     private fun decodeInstance(raw: String?): StoryInstance? =
         raw?.let { runCatching { json.decodeFromString(StoryInstance.serializer(), it) }.getOrNull() }
+
+    /**
+     * Falls back to the last-known-good copy of a torn save.
+     *
+     * Returns the instance and *whether it was recovered*, so a caller can tell the user
+     * that the last turn was lost rather than pretending nothing happened.
+     */
+    private suspend fun recoverInstance(doc: String): Pair<StoryInstance, Boolean>? {
+        val backup = storage.read(backupName(doc)) ?: return null
+        val instance = decodeInstance(backup) ?: return null
+        return instance to true
+    }
 
     /**
      * Writes a document with its schema version stamped in.

@@ -199,7 +199,7 @@ object LobbyPresenter {
      * rather than the product's: Home is a doorway, and "Where do you want to go?" is
      * the only question that belongs above the fold.
      */
-    const val HEADLINE = "Where do you want to go?"
+    const val HEADLINE = "Nereye gitmek istersiniz?"
 
     /** How many stories sit on the shelf. Enough to recognise, few enough to stay quiet. */
     const val SHELF_LIMIT = 4
@@ -233,10 +233,10 @@ object LobbyPresenter {
             modelStatus = modelStatus(model),
             emptyWorlds = if (packs.isEmpty()) {
                 EmptyState(
-                    title = "Your first world is waiting.",
-                    body = "A world is a set of people, places and rules that remember " +
-                        "what happened in them. Build one, or step into one that ships with Charaly.",
-                    actionLabel = "Explore the model library",
+                    title = "İlk dünyanız sizi bekliyor.",
+                    body = "Bir dünya; insanları, mekânları ve olanı hatırlayan " +
+                        "kurallarıyla bir bütündür. Bir tane kurun ya da Charaly ile gelen bir dünyaya adım atın.",
+                    actionLabel = "Model kütüphanesini keşfet",
                     artSeed = "charaly-empty-lobby",
                 )
             } else {
@@ -291,7 +291,7 @@ object LobbyPresenter {
             presenceLabel = StoryContextPresenter.presenceLabel(nearby.size),
             timeLabel = listOfNotNull(
                 StoryContextPresenter.timeOfDayLabel(now.hour).takeIf { it.isNotBlank() },
-                "Day ${now.day}".takeIf { now.day > 1 },
+                "${now.day}. Gün".takeIf { now.day > 1 },
             ).joinToString(" · "),
             lastPlayedLabel = RelativeTime.describe(
                 nowEpochMs,
@@ -376,7 +376,7 @@ object LobbyPresenter {
             worldName = instance.packTitle,
             timeLabel = listOfNotNull(
                 StoryContextPresenter.timeOfDayLabel(now.hour).takeIf { it.isNotBlank() },
-                "Day ${now.day}".takeIf { now.day > 1 },
+                "${now.day}. Gün".takeIf { now.day > 1 },
             ).joinToString(" · "),
             lastPlayedLabel = RelativeTime.describe(
                 nowEpochMs,
@@ -407,8 +407,8 @@ object LobbyPresenter {
      * or that counts worlds, is noise.
      */
     private fun subline(continueSurface: ContinueSurface?, worldCount: Int): String = when {
-        continueSurface != null -> "Something is waiting for you."
-        worldCount > 0 -> "$worldCount worlds to step into."
+        continueSurface != null -> "Sizi bekleyen bir şey var."
+        worldCount > 0 -> "$worldCount dünyaya adım atabilirsiniz."
         else -> ""
     }
 }
@@ -473,7 +473,7 @@ object StoryMomentPresenter {
             ?.takeIf { it.isNotBlank() }
         if (beat != null) return beat
 
-        return "The world is quiet. Nothing has changed since you left."
+        return "Dünya sakin. Ayrıldığınızdan beri hiçbir şey değişmedi."
     }
 
     /**
@@ -501,5 +501,5 @@ object StoryMomentPresenter {
      * "Someone entered the room" rather than an unlabelled divider.
      */
     fun accessibleLabel(moment: StoryMoment): String =
-        "Story moment: ${moment.text}"
+        "Hikâye anı: ${moment.text}"
 }

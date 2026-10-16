@@ -10,8 +10,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.sp
+import dev.charaly.app.R
 import dev.charaly.app.ui.design.Charaly
 import dev.charaly.app.ui.design.CharalyAtmosphere
 import dev.charaly.app.ui.design.CharalyDesign
@@ -19,6 +21,37 @@ import dev.charaly.app.ui.design.CharalyType
 import dev.charaly.app.ui.design.LocalAtmosphere
 import dev.charaly.app.ui.design.LocalDesign
 import dev.charaly.runtime.presentation.ResolvedTheme
+
+/**
+ * Figtree, bundled.
+ *
+ * V5's typeface, in one variable file per style. Weights 400-700 all resolve through the
+ * same font resource, so a bold headline and a quiet caption are genuinely the same family
+ * rather than a system fallback that happens to be nearby.
+ */
+val Figtree: FontFamily = FontFamily(
+    androidx.compose.ui.text.font.Font(
+        resId = R.font.figtree_variable,
+        weight = FontWeight.Normal,
+    ),
+    androidx.compose.ui.text.font.Font(
+        resId = R.font.figtree_variable,
+        weight = FontWeight.Medium,
+    ),
+    androidx.compose.ui.text.font.Font(
+        resId = R.font.figtree_variable,
+        weight = FontWeight.SemiBold,
+    ),
+    androidx.compose.ui.text.font.Font(
+        resId = R.font.figtree_variable,
+        weight = FontWeight.Bold,
+    ),
+    androidx.compose.ui.text.font.Font(
+        resId = R.font.figtree_italic_variable,
+        weight = FontWeight.Normal,
+        style = FontStyle.Italic,
+    ),
+)
 
 /**
  * Charaly's theme root, and the only place a colour enters the UI.
@@ -92,7 +125,7 @@ private fun charalyTypography(): Typography {
         type: CharalyType,
         weight: FontWeight = FontWeight.Normal,
     ) = TextStyle(
-        fontFamily = FontFamily.Default,
+        fontFamily = Figtree,
         fontWeight = weight,
         fontSize = type.size,
         lineHeight = type.lineHeight,
@@ -123,43 +156,43 @@ private fun charalyTypography(): Typography {
 }
 
 /**
- * Dark: true black with a near-white primary.
+ * Dark: V5's stepped greys on the `#0F0F11` floor.
  *
  * Exposed rather than private so the app's own tests can assert the background really is
- * pure black. A theme that drifts back to navy is invisible to review and obvious on a
+ * the V5 floor. A theme that drifts back to navy is invisible to review and obvious on a
  * device.
  */
 val DarkScheme = androidx.compose.material3.darkColorScheme(
-    primary = Color(0xFFF5F5F7),
-    onPrimary = Color(0xFF000000),
-    primaryContainer = Color(0xFF141414),
-    onPrimaryContainer = Color(0xFFF5F5F7),
-    secondary = Color(0xFF9E9EA8),
-    onSecondary = Color(0xFF000000),
-    secondaryContainer = Color(0xFF0D0D0D),
+    primary = Color(0xFFF4F4F6),
+    onPrimary = Color(0xFF111111),
+    primaryContainer = Color(0xFF1C1C1F),
+    onPrimaryContainer = Color(0xFFF4F4F6),
+    secondary = Color(0xFF9B9BA4),
+    onSecondary = Color(0xFF111111),
+    secondaryContainer = Color(0xFF131315),
     onSecondaryContainer = Color(0xFFE6E6EA),
-    tertiary = Color(0xFF63636E),
-    onTertiary = Color(0xFFFAFAFC),
-    tertiaryContainer = Color(0xFF0A0A0A),
+    tertiary = Color(0xFF6E6E76),
+    onTertiary = Color(0xFFF4F4F6),
+    tertiaryContainer = Color(0xFF131315),
     onTertiaryContainer = Color(0xFFB8B8C0),
-    background = Color(0xFF000000),
-    onBackground = Color(0xFFF7F7F8),
-    surface = Color(0xFF000000),
-    onSurface = Color(0xFFF7F7F8),
-    surfaceVariant = Color(0xFF0A0A0A),
-    onSurfaceVariant = Color(0xFFA6A6B0),
+    background = Color(0xFF0F0F11),
+    onBackground = Color(0xFFF4F4F6),
+    surface = Color(0xFF0F0F11),
+    onSurface = Color(0xFFF4F4F6),
+    surfaceVariant = Color(0xFF1C1C1F),
+    onSurfaceVariant = Color(0xFF9B9BA4),
     surfaceContainerLowest = Color(0xFF000000),
-    surfaceContainerLow = Color(0xFF050505),
-    surfaceContainer = Color(0xFF0A0A0A),
-    surfaceContainerHigh = Color(0xFF111111),
-    surfaceContainerHighest = Color(0xFF171717),
-    outline = Color(0xFF232323),
-    outlineVariant = Color(0xFF141414),
+    surfaceContainerLow = Color(0xFF131315),
+    surfaceContainer = Color(0xFF1C1C1F),
+    surfaceContainerHigh = Color(0xFF232326),
+    surfaceContainerHighest = Color(0xFF2B2B2F),
+    outline = Color(0x1AFFFFFF),
+    outlineVariant = Color(0xFF131315),
     error = Color(0xFFFF6B5A),
     onError = Color(0xFF1A0A08),
     errorContainer = Color(0xFF2A0F0B),
     onErrorContainer = Color(0xFFFFDAD4),
-    scrim = Color(0xF2000000),
+    scrim = Color(0xF20F0F11),
 )
 
 /**

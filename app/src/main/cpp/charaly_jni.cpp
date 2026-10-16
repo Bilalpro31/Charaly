@@ -37,6 +37,7 @@
 #include <cstring>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "ggml-backend.h"
@@ -55,10 +56,71 @@ struct LoadedModel {
 std::mutex g_state_mutex;
 std::mutex g_error_mutex;
 std::mutex g_session_mutex;
+std::mutex g_stats_mutex;
 
 LoadedModel g_model;
 std::atomic<bool> g_cancel{false};
 std::string g_last_error;
+
+// ---------------------------------------------------------------------------
+// Per-turn timings for the REAL generation path (not the benchmark).
+//
+// The UI's "STORY TURN PERF" developer readout is only worth showing if every number
+// in it came from a clock. These are taken around the same tokenize / eval / decode
+// steps a story turn actually runs, and read back through `lastGenerateStats`.
+//
+// `reused_tokens` is the number of leading prompt tokens whose key/value state was
+// already in the cache from the previous turn (prefix reuse); `prompt_tokens` counts
+// tokens actually evaluated this call. They differ exactly when prefix caching paid off.
+// ---------------------------------------------------------------------------
+struct GenerateStats {
+    bool valid = false;
+    int64_t prompt_micros = -1;
+    int64_t tokenize_micros = -1;
+    int64_t eval_micros = -1;
+    int64_t generation_micros = -1;
+    int64_t first_token_micros = -1;
+    int prompt_tokens = 0;
+    int generated_tokens = 0;
+    int reused_tokens = 0;
+    int cache_tokens = 0;
+    bool reuse_fallback = false;
+    int context_size = 0;
+    // Why the decode loop ended, and how much room it had. "eog" is the model stopping
+    // itself; "length" is the requested budget being reached. The two are very different
+    // facts, and reporting both as "COMPLETED" is how a capped ramble looks like a normal
+    // reply.
+    std::string stop_reason = "none";
+    int budget = 0;
+    int requested_max = 0;
+    int threads = 0;
+    /**
+     * PHASE 10: the prompt-evaluation pool, reported separately from the decode pool.
+     *
+     * They are different numbers for a reason and the difference was the bug: time to
+     * first token is dominated by the batch pool, so a readout that named only `threads`
+     * described the half of the work that is not the bottleneck.
+     */
+    int threads_batch = 0;
+};
+
+GenerateStats g_last_stats;
+
+// The exact token sequence currently represented in the model's key/value cache, so the
+// next turn evaluates only what changed, and is touched only while `g_session_mutex` is
+// held (generate / load / free / benchmark all take it). It is cleared whenever the context
+// is released, so it can never outlive the state it describes.
+std::vector<llama_token> g_cached_tokens;
+
+void set_stats(const GenerateStats & stats) {
+    std::lock_guard<std::mutex> lock(g_stats_mutex);
+    g_last_stats = stats;
+}
+
+GenerateStats copy_stats() {
+    std::lock_guard<std::mutex> lock(g_stats_mutex);
+    return g_last_stats;
+}
 
 // True while this thread is inside a Kotlin callback that native code invoked.
 // A Kotlin callback that re-enters load/free from the *same* thread would
@@ -445,10 +507,12 @@ bool tokenize_prompt(
 // Taken by *non*-const reference because `llama_batch_get_one` takes a mutable token pointer:
 // it advances the pointer as it walks the batch, and llama.cpp's own examples declare the
 // batch locally and hand over a mutable vector for exactly that reason.
-bool eval_prompt(llama_context * ctx, std::vector<llama_token> & tokens, std::string & error) {
-    llama_memory_clear(llama_get_memory(ctx), true);
+//
+// Starts at `start`, so a caller that already holds the key/value state for
+// `tokens[0, start)` (prefix reuse) does not pay to evaluate it again.
+bool eval_range(llama_context * ctx, std::vector<llama_token> & tokens, int start, std::string & error) {
     const int chunk = 512;
-    for (size_t offset = 0; offset < tokens.size(); offset += static_cast<size_t>(chunk)) {
+    for (size_t offset = static_cast<size_t>(start); offset < tokens.size(); offset += static_cast<size_t>(chunk)) {
         if (g_cancel.load()) {
             error = "cancelled";
             return false;
@@ -463,11 +527,30 @@ bool eval_prompt(llama_context * ctx, std::vector<llama_token> & tokens, std::st
     return true;
 }
 
+// Full clear + full evaluation. Used by the benchmark, which measures one fixed prompt in
+// isolation, and kept as the safe fallback when a cached prefix cannot be reused.
+bool eval_prompt(llama_context * ctx, std::vector<llama_token> & tokens, std::string & error) {
+    llama_memory_clear(llama_get_memory(ctx), true);
+    return eval_range(ctx, tokens, 0, error);
+}
+
+// How many leading tokens two prompts share. This is the whole of prefix reuse: the shared
+// run's key/value state is already in the cache, so only the tail has to be evaluated.
+int common_prefix(const std::vector<llama_token> & a, const std::vector<llama_token> & b) {
+    const int n = static_cast<int>(std::min(a.size(), b.size()));
+    int i = 0;
+    while (i < n && a[i] == b[i]) {
+        ++i;
+    }
+    return i;
+}
+
 // The sampler chain used by both paths, so a benchmark measures the same sampling work
 // a story turn does. Null on allocation failure, which the callers check.
 llama_sampler * build_sampler(
     int top_k,
     float top_p,
+    float min_p,
     float temperature,
     float repeat_penalty,
     uint32_t seed) {
@@ -475,6 +558,13 @@ llama_sampler * build_sampler(
     if (chain == nullptr) return nullptr;
     llama_sampler_chain_add(chain, llama_sampler_init_top_k(top_k));
     llama_sampler_chain_add(chain, llama_sampler_init_top_p(top_p, 1));
+    // min-p BEFORE temperature: it prunes the long tail of near-zero probability tokens a
+    // small model's Turkish output is full of, and it prunes by probability rather than by
+    // rank, so what survives is the model's actual confidence. On the raw distribution, so
+    // it must run before the temperature warp or the cutoff moves with the temperature.
+    if (min_p > 0.0f) {
+        llama_sampler_chain_add(chain, llama_sampler_init_min_p(min_p, 1));
+    }
     if (temperature > 0.0f) {
         llama_sampler_chain_add(chain, llama_sampler_init_temp(temperature));
     }
@@ -556,6 +646,7 @@ Java_dev_charaly_app_inference_LlamaNative_loadModel(
     jstring j_path,
     jint j_context_size,
     jint j_threads,
+    jint j_threads_batch,
     jint j_gpu_layers,
     jobject j_progress) {
     // Refusing a re-entrant load is what keeps a Kotlin progress callback from
@@ -620,6 +711,8 @@ Java_dev_charaly_app_inference_LlamaNative_loadModel(
         std::lock_guard<std::mutex> state(g_state_mutex);
         release_model_locked();
     }
+    // The weights are gone; the cached prefix describes them, so it goes too.
+    g_cached_tokens.clear();
     clear_error();
 
     // Defensive gate at the boundary: never hand a path llama.cpp will reject
@@ -667,7 +760,41 @@ Java_dev_charaly_app_inference_LlamaNative_loadModel(
     report(60, "creating context");
     auto ctx_params = llama_context_default_params();
     ctx_params.n_ctx = static_cast<uint32_t>(j_context_size > 0 ? j_context_size : 2048);
-    ctx_params.n_threads = j_threads > 0 ? j_threads : 4;
+    // PHASE 10 — PROMPT EVALUATION THREADS WERE PINNED AT FOUR, REGARDLESS OF ANYTHING.
+    //
+    // llama.cpp runs two different thread pools: `n_threads` for token-by-token decoding
+    // and `n_threads_batch` for evaluating a prompt, and `llama_context::graph_compute`
+    // picks between them with `batched ? n_threads_batch : n_threads`. Both default to
+    // `GGML_DEFAULT_N_THREADS`, which this checkout defines as a flat 4 (ggml/include/
+    // ggml.h:228).
+    //
+    // So every Charaly turn evaluated its prompt on four threads. Measured on real
+    // Qwen3-4B-Instruct-2507-Q4_K_M weights, 8-core ARM64 host, one 4096-token context:
+    // prompt evaluation ran at ~3.3 tokens/second, and prompt evaluation is 85-95% of the
+    // time to first token (Phase10TurkishLatencyTest, 4 turns: eval 437s / 186s / 240s /
+    // 369s against generation of 52s / 91s / 90s / 106s). Nothing Charaly did could fix
+    // that from Kotlin, because the only knob it had - `threads` - sets `n_threads`, and
+    // `n_threads_batch` was not reachable at all.
+    //
+    // The two pools have genuinely different shapes and want different numbers:
+    //   * decoding one token is memory-bandwidth bound, and flattens past ~4 threads;
+    //   * evaluating a prompt is compute bound and scales nearly linearly.
+    // So batch evaluation gets the device's core count (capped, below) while decoding
+    // keeps llama.cpp's default unless the caller asks for something else.
+    //
+    // The cap exists because `hardware_concurrency()` on a phone reports every core on
+    // every cluster, and using all of them for a long prompt evaluation costs battery for
+    // throughput the player cannot see. Sixteen is comfortably past the point of return
+    // on any current mobile SoC and keeps a desktop host honest too.
+    if (j_threads > 0) ctx_params.n_threads = j_threads;
+    if (j_threads_batch > 0) {
+        ctx_params.n_threads_batch = j_threads_batch;
+    } else {
+        const unsigned int cores = std::thread::hardware_concurrency();
+        if (cores > 0) {
+            ctx_params.n_threads_batch = static_cast<int32_t>(cores > 16u ? 16u : cores);
+        }
+    }
     ctx_params.n_batch = 512;
 
     llama_context * ctx = llama_init_from_model(model, ctx_params);
@@ -705,6 +832,7 @@ Java_dev_charaly_app_inference_LlamaNative_freeModel(JNIEnv *, jclass, jlong han
     std::unique_lock<std::mutex> session(g_session_mutex);
     std::lock_guard<std::mutex> state(g_state_mutex);
     release_model_locked();
+    g_cached_tokens.clear();
 }
 
 JNIEXPORT jobjectArray JNICALL
@@ -737,6 +865,7 @@ Java_dev_charaly_app_inference_LlamaNative_generate(
     jfloat j_temperature,
     jfloat j_top_p,
     jint j_top_k,
+    jfloat j_min_p,
     jfloat j_repeat_penalty,
     jlong j_seed,
     jobjectArray j_stop_sequences,
@@ -805,6 +934,7 @@ Java_dev_charaly_app_inference_LlamaNative_generate(
     const int requested = j_max_tokens > 0 ? j_max_tokens : 0;
 
     // 1-2. Tokenize and evaluate the prompt.
+    const auto prompt_start = Clock::now();
     std::vector<llama_token> tokens;
     if (!tokenize_prompt(vocab, context_size, prompt, requested, reserve, tokens)) {
         return to_jstring(env, std::string());
@@ -814,16 +944,51 @@ Java_dev_charaly_app_inference_LlamaNative_generate(
         return to_jstring(env, std::string());
     }
     const int token_count = static_cast<int>(tokens.size());
+    // Tokenization and evaluation are separate costs with separate fixes; keeping them in
+    // one number hides which one a slow turn is paying for.
+    const auto eval_start = Clock::now();
+    const int64_t tokenize_micros = micros_since(prompt_start);
+
+    // Prefix reuse: evaluate only the tokens that are not already in the cache.
+    //
+    // Without this every turn re-ran the ENTIRE prompt - system instructions, world rules,
+    // knowledge, memories and the whole recent transcript - before producing a single word.
+    // On a phone that is the difference between the first token arriving in about a second
+    // and it arriving twenty-plus seconds later. The token stream handed to the model is
+    // identical either way; only the already-computed key/value state is kept.
+    llama_memory_t memory = llama_get_memory(ctx);
+    const int cache_tokens = static_cast<int>(g_cached_tokens.size());
+    bool reuse_fallback = false;
+    int reused = common_prefix(g_cached_tokens, tokens);
+    // A fresh sample needs a fresh logit vector, so at least one token is always evaluated.
+    if (reused >= token_count && reused > 0) reused = token_count - 1;
+    const llama_pos present = llama_memory_seq_pos_max(memory, 0) + 1;
+    if (reused < present) {
+        if (!llama_memory_seq_rm(memory, 0, reused, -1)) {
+            // A cache that cannot drop a partial sequence (recurrent, or some
+            // sliding-window types) must not make correctness depend on prefix reuse:
+            // fall back to a full clear and a full evaluation.
+            llama_memory_clear(memory, true);
+            reused = 0;
+            reuse_fallback = true;
+        }
+    }
+    // Record the prompt as the cache's contents before decoding, and extend it as tokens
+    // are generated, so the next turn's cache length and this vector agree.
+    g_cached_tokens.assign(tokens.begin(), tokens.end());
 
     std::string prompt_error;
-    if (!eval_prompt(ctx, tokens, prompt_error)) {
+    if (!eval_range(ctx, tokens, reused, prompt_error)) {
+        g_cached_tokens.clear();
         set_error(prompt_error == "cancelled" ? "generation cancelled" : prompt_error);
         return to_jstring(env, std::string());
     }
+    const int64_t prompt_micros = micros_since(prompt_start);
 
-    // 3. Sampler: temperature / top-p / top-k plus the repetition penalty.
+    // 3. Sampler: temperature / top-p / top-k / min-p plus the repetition penalty.
     llama_sampler * ctx_sampler = build_sampler(
-        j_top_k, j_top_p, j_temperature, j_repeat_penalty, static_cast<uint32_t>(j_seed));
+        j_top_k, j_top_p, j_min_p, j_temperature, j_repeat_penalty,
+        static_cast<uint32_t>(j_seed));
     if (ctx_sampler == nullptr) {
         set_error("could not build the sampler chain");
         return to_jstring(env, std::string());
@@ -840,9 +1005,39 @@ Java_dev_charaly_app_inference_LlamaNative_generate(
 
     std::string output;
     std::string pending_utf8;
+    /**
+     * How much of `output` has already been handed to the token callback.
+     *
+     * PHASE 9. Stop matching used to look only at the last `stop.size()` bytes of the
+     * accumulated text, so the marker had to land exactly on the end of a reply. A model
+     * that emits its own ChatML marker and then keeps writing never matched, and the
+     * marker reached the reader. Measured on real weights with Qwen3-4B-Instruct-2507
+     * Q4_K_M: all four Turkish replies ended with a literal `<|im_end|>`.
+     *
+     * Streaming makes a second, harder case. `<|im_end|>` can arrive split across several
+     * token pieces - `<|im` then `_end|>` - and a matcher that only inspects what this
+     * iteration added cannot see the whole marker in either iteration. Deleting the tail
+     * eagerly instead has the opposite failure: a *partial* marker reaches the reader
+     * before it is known to be one.
+     *
+     * So the tail is held back: at most `max_stop_len - 1` bytes are ever withheld, they
+     * are re-examined with the next piece, and a byte is emitted only once it can no
+     * longer begin a marker. Valid text is never deleted (a match truncates from the
+     * match onward, never from before it), nothing after a stop is ever emitted, and the
+     * withheld tail is flushed once generation ends.
+     */
+    size_t emitted = 0;
+    size_t max_stop_len = 0;
+    for (const auto & stop : stop_sequences) {
+        if (!stop.empty()) max_stop_len = std::max(max_stop_len, stop.size());
+    }
+    const size_t hold_back = max_stop_len > 1 ? max_stop_len - 1 : 0;
     int position = token_count;
     int generated = 0;
     bool stopped = false;
+
+    const auto decode_start = Clock::now();
+    int64_t first_token_micros = -1;
 
     // llama_token_to_piece does not write a terminator, so the buffer is owned by a
     // vector sized to the token and never handed to NewStringUTF as raw stack memory.
@@ -853,6 +1048,9 @@ Java_dev_charaly_app_inference_LlamaNative_generate(
         if (llama_vocab_is_eog(vocab, id)) {
             break;
         }
+        // TTFT is measured here: everything from the start of the call to the first
+        // token the model actually produced. This is the number a reader feels.
+        if (first_token_micros < 0) first_token_micros = micros_since(decode_start);
 
         piece.assign(8, '\0');
         int written = llama_token_to_piece(vocab, id, piece.data(),
@@ -866,24 +1064,44 @@ Java_dev_charaly_app_inference_LlamaNative_generate(
             const size_t before = output.size();
             output.append(piece.data(), static_cast<size_t>(written));
 
-            // Stop sequences are matched against the accumulated text, and the
-            // matched run is removed: a reply that ends with the user's own stop
-            // string is not the same reply as one that does not.
+            // Stop sequences end the reply AT the marker. The search runs over the part of
+            // the text that has not been emitted yet, and that is what makes three
+            // properties true at the same time:
+            //
+            //   - a marker split across pieces is seen, because the bytes that could still
+            //     become one were never handed to the reader;
+            //   - a marker already emitted in an earlier iteration is not re-found, and
+            //     never retroactively deletes text the reader has seen;
+            //   - the earliest match wins across all configured markers.
+            //
+            // A match truncates FROM the match onward, so ordinary text before it survives -
+            // which is the property that makes this a stop sequence rather than a filter.
             size_t cut = std::string::npos;
             for (const auto & stop : stop_sequences) {
-                if (stop.empty() || output.size() < stop.size()) continue;
-                if (output.compare(output.size() - stop.size(), stop.size(), stop) == 0) {
-                    cut = std::min(cut, output.size() - stop.size());
-                }
+                if (stop.empty()) continue;
+                if (output.size() < stop.size()) continue;
+                const size_t found = output.find(stop, emitted);
+                if (found == std::string::npos) continue;
+                cut = std::min(cut, found);
             }
 
             std::string visible;
             if (cut != std::string::npos) {
-                visible = sanitize_utf8(output.substr(before, cut - before), pending_utf8);
+                // `cut >= emitted` by construction: this cannot underflow, and it cannot
+                // reach back into text the reader already has.
+                visible = sanitize_utf8(output.substr(emitted, cut - emitted), pending_utf8);
                 output.resize(cut);
+                emitted = cut;
                 stopped = true;
             } else {
-                visible = sanitize_utf8(piece.data(), pending_utf8);
+                // Withhold only what could still turn out to be the head of a marker.
+                const size_t safe_end = output.size() - emitted > hold_back
+                    ? output.size() - hold_back
+                    : emitted;
+                if (safe_end > emitted) {
+                    visible = sanitize_utf8(output.substr(emitted, safe_end - emitted), pending_utf8);
+                    emitted = safe_end;
+                }
             }
 
             if (!visible.empty()) {
@@ -912,15 +1130,51 @@ Java_dev_charaly_app_inference_LlamaNative_generate(
 
         llama_batch batch = llama_batch_get_one(&id, 1);
         if (llama_decode(ctx, batch) != 0) {
+            // The cache is in an unknown state after a failed decode; drop the prefix so
+            // the next turn cannot reuse a partial evaluation.
+            g_cached_tokens.clear();
             llama_sampler_free(ctx_sampler);
             set_error("llama_decode failed during generation");
             return to_jstring(env, output);
         }
+        // This token is now in the key/value cache, so the next turn may reuse it.
+        g_cached_tokens.push_back(id);
         ++position;
         ++generated;
     }
 
     llama_sampler_free(ctx_sampler);
+
+    const int64_t generation_micros = micros_since(decode_start);
+
+    // PHASE 9: flush the held-back tail.
+    //
+    // Up to `max_stop_len - 1` bytes were withheld from the callback because they could
+    // still have become the start of a marker. If generation ended WITHOUT a match - the
+    // model ran out of budget, was cancelled, or emitted EOG - those bytes were ordinary
+    // text after all, and the reader must receive them. Without this flush the last
+    // characters of every reply would silently disappear.
+    if (!stopped && emitted < output.size()) {
+        const std::string tail = sanitize_utf8(output.substr(emitted), pending_utf8);
+        emitted = output.size();
+        if (!tail.empty()) {
+            jstring jtoken = to_jstring(env, tail);
+            if (jtoken != nullptr) {
+                jobject unit = nullptr;
+                {
+                    g_in_kotlin_callback = true;
+                    unit = static_cast<jobject>(
+                        env->CallObjectMethod(j_token_callback, on_token.invoke, jtoken));
+                    g_in_kotlin_callback = false;
+                }
+                env->DeleteLocalRef(jtoken);
+                if (unit != nullptr) env->DeleteLocalRef(unit);
+            }
+            if (throw_if_pending(env, "the token callback")) {
+                return to_jstring(env, output);
+            }
+        }
+    }
 
     // Flush any UTF-8 sequence the last token left half-finished, rather than
     // dropping the character on the floor.
@@ -932,6 +1186,32 @@ Java_dev_charaly_app_inference_LlamaNative_generate(
 
     if (generated <= 0 && !g_cancel.load()) {
         set_error("generation produced no tokens");
+    }
+
+    {
+        GenerateStats stats;
+        stats.valid = true;
+        stats.prompt_micros = prompt_micros;
+        stats.tokenize_micros = tokenize_micros;
+        // prompt_micros spans tokenize + eval; eval is what is left after tokenization.
+        stats.eval_micros = prompt_micros - tokenize_micros;
+        stats.generation_micros = generation_micros;
+        stats.first_token_micros = first_token_micros;
+        stats.prompt_tokens = token_count;
+        stats.generated_tokens = generated;
+        stats.reused_tokens = reused;
+        stats.cache_tokens = cache_tokens;
+        stats.reuse_fallback = reuse_fallback;
+        stats.context_size = context_size;
+        stats.stop_reason = stopped
+                                ? "stop_sequence"
+                                : (g_cancel.load() ? "cancelled"
+                                                   : (generated >= budget ? "length" : "eog"));
+        stats.budget = budget;
+        stats.requested_max = requested;
+        stats.threads = llama_n_threads(ctx);
+        stats.threads_batch = llama_n_threads_batch(ctx);
+        set_stats(stats);
     }
 
     return to_jstring(env, output);
@@ -948,6 +1228,35 @@ Java_dev_charaly_app_inference_LlamaNative_stopGeneration(JNIEnv *, jclass, jlon
 JNIEXPORT jstring JNICALL
 Java_dev_charaly_app_inference_LlamaNative_lastError(JNIEnv * env, jclass) {
     return env->NewStringUTF(current_error().c_str());
+}
+
+// The real generation path's own timings for the most recent turn, as flat
+// [key, value, ...] pairs. An empty array means no turn has been timed yet, which the
+// Kotlin side must render as "not measured" rather than as zero.
+JNIEXPORT jobjectArray JNICALL
+Java_dev_charaly_app_inference_LlamaNative_lastGenerateStats(JNIEnv * env, jclass) {
+    const GenerateStats stats = copy_stats();
+    std::vector<std::pair<std::string, std::string>> out;
+    if (!stats.valid) {
+        return string_pairs_to_java(env, out);
+    }
+    out.emplace_back("prompt_micros", std::to_string(stats.prompt_micros));
+    out.emplace_back("tokenize_micros", std::to_string(stats.tokenize_micros));
+    out.emplace_back("eval_micros", std::to_string(stats.eval_micros));
+    out.emplace_back("generation_micros", std::to_string(stats.generation_micros));
+    out.emplace_back("first_token_micros", std::to_string(stats.first_token_micros < 0 ? 0 : stats.first_token_micros));
+    out.emplace_back("prompt_tokens", std::to_string(stats.prompt_tokens));
+    out.emplace_back("generated_tokens", std::to_string(stats.generated_tokens));
+    out.emplace_back("reused_tokens", std::to_string(stats.reused_tokens));
+    out.emplace_back("cache_tokens", std::to_string(stats.cache_tokens));
+    out.emplace_back("reuse_fallback", stats.reuse_fallback ? "1" : "0");
+    out.emplace_back("stop_reason", stats.stop_reason);
+    out.emplace_back("budget", std::to_string(stats.budget));
+    out.emplace_back("requested_max", std::to_string(stats.requested_max));
+    out.emplace_back("threads", std::to_string(stats.threads));
+    out.emplace_back("threads_batch", std::to_string(stats.threads_batch));
+    out.emplace_back("context_size", std::to_string(stats.context_size));
+    return string_pairs_to_java(env, out);
 }
 
 // ---------------------------------------------------------------------------
@@ -1003,6 +1312,10 @@ Java_dev_charaly_app_inference_LlamaNative_benchmark(
     std::vector<std::pair<std::string, std::string>> out;
     g_cancel.store(false);
     clear_error();
+    // The benchmark clears and refills the cache with its own fixed prompt, which the
+    // cached token vector does not describe. Drop it so a story turn that follows cannot
+    // reuse key/value state that belongs to a different prompt.
+    g_cached_tokens.clear();
 
     const int requested = j_max_tokens > 0 ? j_max_tokens : 0;
 
@@ -1025,7 +1338,8 @@ Java_dev_charaly_app_inference_LlamaNative_benchmark(
     }
     const int64_t prompt_micros = micros_since(prompt_start);
 
-    llama_sampler * sampler = build_sampler(/* top_k = */ 1, /* top_p = */ 1.0f, /* temperature = */ 0.0f,
+    llama_sampler * sampler = build_sampler(/* top_k = */ 1, /* top_p = */ 1.0f, /* min_p = */ 0.0f,
+                                           /* temperature = */ 0.0f,
                                            /* repeat_penalty = */ 1.0f, /* seed = */ 1u);
     if (sampler == nullptr) {
         set_error("could not build the benchmark sampler chain");
@@ -1136,6 +1450,91 @@ Java_dev_charaly_app_inference_LlamaNative_availableBackends(JNIEnv * env, jclas
         env->DeleteLocalRef(entry);
     }
     return out;
+}
+
+// ---------------------------------------------------------------------------
+// Chat templates
+//
+// An instruct model only stops at its end-of-turn token when the prompt is in the
+// format it was trained on. A plain "[user] ... [assistant]" block is a foreign format:
+// the model rambles to the token cap and never emits EOG. Applying the model's own
+// template is what makes "the model ended its turn" a real event rather than a guess.
+//
+// The messages arrive as a flat [role0, content0, role1, content1, ...] array, the same
+// flat contract the rest of this boundary speaks. `add_assistant` is true: the prompt ends
+// with the opening of the assistant's turn, ready for the model to continue.
+// ---------------------------------------------------------------------------
+
+JNIEXPORT jstring JNICALL
+Java_dev_charaly_app_inference_LlamaNative_applyChatTemplate(
+    JNIEnv * env,
+    jclass,
+    jlong handle,
+    jobjectArray j_messages) {
+    if (handle == 0) {
+        set_error("no model loaded");
+        return to_jstring(env, std::string());
+    }
+    llama_model * model = nullptr;
+    {
+        std::lock_guard<std::mutex> state(g_state_mutex);
+        model = g_model.model;
+    }
+    if (model == nullptr) {
+        set_error("no model loaded");
+        return to_jstring(env, std::string());
+    }
+
+    const jsize count = j_messages != nullptr ? env->GetArrayLength(j_messages) : 0;
+    if (count == 0 || count % 2 != 0) {
+        set_error("chat messages must be a flat array of role/content pairs");
+        return to_jstring(env, std::string());
+    }
+    const size_t n = static_cast<size_t>(count / 2);
+
+    std::vector<llama_chat_message> msgs(n);
+    std::vector<std::string> roles(n);
+    std::vector<std::string> contents(n);
+    size_t total_chars = 0;
+    for (size_t i = 0; i < n; ++i) {
+        auto j_role = static_cast<jstring>(env->GetObjectArrayElement(j_messages, static_cast<jsize>(i * 2)));
+        auto j_content = static_cast<jstring>(env->GetObjectArrayElement(j_messages, static_cast<jsize>(i * 2 + 1)));
+        if (j_role == nullptr || j_content == nullptr) {
+            set_error("chat message has a null role or content");
+            return to_jstring(env, std::string());
+        }
+        const char * role = env->GetStringUTFChars(j_role, nullptr);
+        const char * content = env->GetStringUTFChars(j_content, nullptr);
+        roles[i] = role != nullptr ? role : "";
+        contents[i] = content != nullptr ? content : "";
+        if (role != nullptr) env->ReleaseStringUTFChars(j_role, role);
+        if (content != nullptr) env->ReleaseStringUTFChars(j_content, content);
+        env->DeleteLocalRef(j_role);
+        env->DeleteLocalRef(j_content);
+        msgs[i].role = roles[i].c_str();
+        msgs[i].content = contents[i].c_str();
+        total_chars += contents[i].size() + roles[i].size();
+    }
+
+    // The recommended buffer is twice the message text; if the template needs more, grow
+    // and retry rather than truncating a prompt the model will read as malformed.
+    size_t cap = total_chars * 2 + 4096;
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        std::vector<char> buf(cap);
+        const int32_t written = llama_chat_apply_template(
+            nullptr, msgs.data(), n, /* add_assistant = */ true,
+            buf.data(), static_cast<int32_t>(buf.size()));
+        if (written < 0) {
+            set_error("this model has no chat template, or the template could not be applied");
+            return to_jstring(env, std::string());
+        }
+        if (static_cast<size_t>(written) <= buf.size()) {
+            return to_jstring(env, std::string(buf.data(), static_cast<size_t>(written)));
+        }
+        cap = static_cast<size_t>(written) * 2;
+    }
+    set_error("the chat template output did not fit");
+    return to_jstring(env, std::string());
 }
 
 } // extern "C"

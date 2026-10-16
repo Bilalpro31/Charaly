@@ -103,6 +103,26 @@ fun ShowcaseScreen(
      * a thing that is meant to be glanced past.
      */
     onAboutThisWorld: () -> Unit = {},
+    /**
+     * "{universe} · {era}", computed from the pack by the view model.
+     *
+     * A line rather than more pills: these are the two nouns of the setting ("Paris ·
+     * Çağdaş"), and they belong to the same breath as the edition below them. Optional so
+     * existing call sites and previews compile unchanged.
+     */
+    settingLabel: String = "",
+    /** "Sürüm 1.2.0" - which edition of this world is installed. */
+    versionLabel: String = "",
+    /**
+     * Pack maintenance: archive it, fetch a newer edition, remove it.
+     *
+     * Nullable one by one, and each button renders only where its callback exists - a row
+     * of dead buttons is worse than no row. The real shell supplies all three; a preview or
+     * a focused test supplies none and gets the unchanged poster.
+     */
+    onExport: (() -> Unit)? = null,
+    onUpdate: (() -> Unit)? = null,
+    onDelete: (() -> Unit)? = null,
 ) {
     var aboutOpen by remember { mutableStateOf(false) }
     val openAbout = {
@@ -213,6 +233,22 @@ fun ShowcaseScreen(
                     showcase.atmosphere.takeIf { it.isNotBlank() && it != showcase.tone },
                 ).take(1).forEach { CharalyPill(label = it) }
             }
+            // One line of setting facts - "{universe} · {era} · Sürüm {packVersion}" - under
+            // the pills. It answers "where, when, and which edition" in the same breath,
+            // which is what a returning reader checks before stepping back in.
+            val facts = listOf(settingLabel, versionLabel).filter { it.isNotBlank() }
+            if (facts.isNotEmpty()) {
+                Text(
+                    text = facts.joinToString(" · "),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Charaly.ink.secondary,
+                    modifier = Modifier.padding(
+                        start = Charaly.space.gutter,
+                        end = Charaly.space.gutter,
+                        top = Charaly.space.xs,
+                    ),
+                )
+            }
         }
 
         // ---- the premise ----------------------------------------------------
@@ -306,6 +342,36 @@ fun ShowcaseScreen(
                     onClick = openAbout,
                     modifier = Modifier.fillMaxWidth(),
                 )
+            }
+        }
+
+        // ---- pack maintenance ------------------------------------------------
+        //
+        // After ENTER STORY and About on purpose: this row is library upkeep - archive a
+        // pack, fetch its newer edition, remove it - and none of it may compete with the
+        // invitation. Each action renders only where the shell actually wired one, so a
+        // half-wired row can never appear. "Sil" takes the same confirmed path as the
+        // pack store's delete, including "your saves survive this".
+        if (onExport != null || onUpdate != null || onDelete != null) {
+            item(key = "pack-actions") {
+                Row(
+                    modifier = Modifier.padding(
+                        start = Charaly.space.gutter,
+                        end = Charaly.space.gutter,
+                        top = Charaly.space.lg,
+                    ),
+                    horizontalArrangement = Arrangement.spacedBy(Charaly.space.xs),
+                ) {
+                    if (onExport != null) {
+                        CharalyQuietAction(label = "Dışa Aktar", onClick = onExport)
+                    }
+                    if (onUpdate != null) {
+                        CharalyQuietAction(label = "Güncelle", onClick = onUpdate)
+                    }
+                    if (onDelete != null) {
+                        CharalyQuietAction(label = "Sil", onClick = onDelete)
+                    }
+                }
             }
         }
 

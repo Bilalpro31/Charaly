@@ -7,66 +7,83 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import dev.charaly.runtime.presentation.Loc
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import dev.charaly.app.R
 import dev.charaly.app.ui.art.PackArtworkHero
-import dev.charaly.app.ui.components.CharalyAction
 import dev.charaly.app.ui.components.CharalyEmptyState
-import dev.charaly.app.ui.components.CharalyIconButton
-import dev.charaly.app.ui.components.CharalyQuietAction
-import dev.charaly.app.ui.components.CharalySearchField
+import dev.charaly.app.ui.components.CharalyPill
 import dev.charaly.app.ui.components.CharalySectionHeader
 import dev.charaly.app.ui.components.CharalySkeleton
 import dev.charaly.app.ui.components.tappable
 import dev.charaly.app.ui.design.Charaly
 import dev.charaly.app.ui.design.CharalyAtmosphere
 import dev.charaly.app.ui.design.CharalyShapes
-import dev.charaly.runtime.presentation.LibraryShelf
 import dev.charaly.runtime.presentation.LayoutPolicy
+import dev.charaly.runtime.presentation.LibraryShelf
+import dev.charaly.runtime.presentation.Loc
 import dev.charaly.runtime.presentation.ShelfStory
+import dev.charaly.runtime.presentation.WorldFeedItem
+import dev.charaly.runtime.presentation.WorldsFeedSnapshot
 
 /**
  * LIBRARY.
  *
- * ## A shelf, not a session manager
+ * ## The V5 shape
  *
- * Every story you have made, in one vertical list, each card carrying its world, its
- * current moment and who is there. Continue is the whole interaction.
+ * Four sections, each answering one question:
  *
- * The previous version of this screen offered rename, branch and delete on every row plus
- * a detail screen with a full transcript and a chapter list - which made a shelf of living
- * stories read as a database of records. Those actions still exist, behind one explicit
- * "Details" tap per story, because removing a story is a decision and not a swipe.
+ * ```
+ *   Continue playing     where was I?
+ *   Previously on…       what happened before that?
+ *   Story packs          what worlds are here?
+ *   People you've met    who is in them?
+ * ```
+ *
+ * The poster grid is two columns because a shelf of stories is a *set you choose between*,
+ * and choice reads side-by-side. Every poster is a 3:4.1 card with its play affordance in
+ * the corner - the same shape the sessions list and the pack showcase use, so a story looks
+ * like itself everywhere it appears.
+ *
+ * ## What is deliberately absent
+ *
+ * No rename, no branch, no delete on any card. Destructive actions still exist, behind one
+ * explicit "Details" tap per story on the Sessions screen, because removing a story is a
+ * decision and not a swipe.
  */
 @Composable
 fun LibraryScreen(
     shelf: LibraryShelf,
+    worlds: WorldsFeedSnapshot,
     loading: Boolean,
     policy: LayoutPolicy,
     onQueryChange: (String) -> Unit,
     onContinue: (String) -> Unit,
     onOpenStory: (String) -> Unit,
     onOpenDetails: (String) -> Unit,
-    onOpenWorlds: () -> Unit,
+    onOpenWorld: (String) -> Unit,
+    onOpenSessions: () -> Unit,
 ) {
     val gutter = if (policy.cardColumns > 1) Charaly.space.gutterWide else Charaly.space.gutter
 
@@ -80,309 +97,275 @@ fun LibraryScreen(
         contentPadding = PaddingValues(
             start = gutter,
             end = gutter,
+            top = Charaly.space.xxl,
             bottom = Charaly.space.section,
         ),
-        verticalArrangement = Arrangement.spacedBy(Charaly.space.md),
+        verticalArrangement = Arrangement.spacedBy(Charaly.space.lg),
     ) {
         item(key = "title") {
-            Column {
-                Text(
-                    text = Loc.t("library.title"),
-                    style = MaterialTheme.typography.displaySmall,
-                    color = Charaly.ink.primary,
-                    modifier = Modifier.semantics { heading() },
+            Text(
+                text = Loc.t("library.title"),
+                style = MaterialTheme.typography.displaySmall,
+                color = Charaly.ink.primary,
+                modifier = Modifier.semantics { heading() },
+            )
+        }
+
+        // ---- Continue playing -------------------------------------------------
+        val live = shelf.stories.filter { it.isLive }
+        if (live.isNotEmpty()) {
+            item(key = "continue-header") {
+                CharalySectionHeader(
+                    title = stringResource(R.string.library_continue_playing),
+                    micro = true,
                 )
-                if (shelf.totalCount > 0) {
-                    Text(
-                        text = if (shelf.totalCount == 1) {
-                            "1 story on this device"
-                        } else {
-                            "${shelf.totalCount} stories on this device"
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Charaly.ink.muted,
-                    )
+            }
+            storyPosterGrid(live) { story ->
+                StoryPoster(
+                    story = story,
+                    onClick = { onOpenStory(story.id) },
+                )
+            }
+        }
+
+        // ---- Previously on… ---------------------------------------------------
+        val earlier = shelf.stories.filterNot { it.isLive }
+        if (earlier.isNotEmpty()) {
+            item(key = "previously-header") {
+                CharalySectionHeader(
+                    title = stringResource(R.string.library_previously_on),
+                    micro = true,
+                )
+            }
+            storyPosterGrid(earlier) { story ->
+                StoryPoster(
+                    story = story,
+                    onClick = { onOpenStory(story.id) },
+                )
+            }
+        }
+
+        // ---- Story packs ------------------------------------------------------
+        if (worlds.worlds.isNotEmpty()) {
+            item(key = "packs-header") {
+                CharalySectionHeader(
+                    title = stringResource(R.string.library_story_packs),
+                    micro = true,
+                )
+            }
+            packPosterGrid(worlds.worlds) { world ->
+                PackPoster(
+                    world = world,
+                    onClick = { onOpenWorld(world.id) },
+                )
+            }
+        }
+
+        // ---- The honest empties -----------------------------------------------
+        if (live.isEmpty() && earlier.isEmpty() && worlds.worlds.isEmpty()) {
+            item(key = "empty") {
+                shelf.emptyState?.let { state ->
+                    CharalyEmptyState(state = state)
                 }
             }
-        }
-
-        if (shelf.totalCount > 3) {
-            item(key = "search") {
-                CharalySearchField(
-                    value = shelf.query,
-                    onValueChange = onQueryChange,
-                    placeholder = "Search your stories",
-                )
-            }
-        }
-
-        shelf.emptyState?.let { state ->
-            item(key = "empty") {
-                CharalyEmptyState(
-                    state = state,
-                    action = {
-                        if (state.actionLabel.contains("world", ignoreCase = true)) {
-                            CharalyAction(label = state.actionLabel, onClick = onOpenWorlds)
-                        }
-                    },
-                )
-            }
-        }
-
-        items(
-            count = shelf.stories.size,
-            key = { index -> shelf.stories[index].id },
-        ) { index ->
-            val story = shelf.stories[index]
-            ShelfRow(
-                story = story,
-                isNewest = index == 0,
-                onContinue = { onContinue(story.id) },
-                onOpenDetails = { onOpenDetails(story.id) },
-            )
         }
     }
 }
 
 /**
- * One story.
+ * Two columns of posters, chunked into rows so there is exactly one vertical scroll owner
+ * per screen. A nested LazyVerticalGrid inside a lazy item throws at measure time.
+ */
+private fun androidx.compose.foundation.lazy.LazyListScope.storyPosterGrid(
+    items: List<ShelfStory>,
+    item: @Composable (ShelfStory) -> Unit,
+) {
+    items.chunked(2).forEachIndexed { rowIndex, row ->
+        item(key = "story-row-$rowIndex") {
+            Row(horizontalArrangement = Arrangement.spacedBy(Charaly.space.sm)) {
+                row.forEach { story ->
+                    Box(Modifier.weight(1f)) { item(story) }
+                }
+                repeat(2 - row.size) { Box(Modifier.weight(1f)) }
+            }
+        }
+    }
+}
+
+private fun androidx.compose.foundation.lazy.LazyListScope.packPosterGrid(
+    items: List<WorldFeedItem>,
+    item: @Composable (WorldFeedItem) -> Unit,
+) {
+    items.chunked(2).forEachIndexed { rowIndex, row ->
+        item(key = "pack-row-$rowIndex") {
+            Row(horizontalArrangement = Arrangement.spacedBy(Charaly.space.sm)) {
+                row.forEach { world ->
+                    Box(Modifier.weight(1f)) { item(world) }
+                }
+                repeat(2 - row.size) { Box(Modifier.weight(1f)) }
+            }
+        }
+    }
+}
+
+/**
+ * One story as a poster.
  *
- * ## The newest one is the obvious one
- *
- * The first card gets the Continue action; the rest get a play affordance in the corner and
- * a Details link. That asymmetry is the whole library's interaction model: almost always
- * you are resuming exactly one story, and the screen should make that one tap away without
- * making the other nine look like it forgot to offer one.
+ * V5's shape: a 3:4.1 cover with a scrim, the play affordance bottom-left, the story's
+ * name under it, and its world as a small muted line. The same sentence Home shows, from
+ * the same presenter - a shelf that described a story differently from the lobby would be
+ * two truths about one thing.
  */
 @Composable
-private fun ShelfRow(
+private fun StoryPoster(
     story: ShelfStory,
-    isNewest: Boolean,
-    onContinue: () -> Unit,
-    onOpenDetails: () -> Unit,
+    onClick: () -> Unit,
 ) {
     val atmosphere = CharalyAtmosphere.of(story.theme)
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(CharalyShapes.soft)
-            .background(Charaly.surface.raised)
-            .tappable { if (isNewest) onContinue() else onOpenDetails() }
-            .padding(Charaly.space.md),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
+    Column {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(3f / 4.1f)
+                .clip(CharalyShapes.soft)
+                .tappable(onClick),
+        ) {
+            PackArtworkHero(
+                artwork = story.artwork,
+                atmosphere = atmosphere,
+                modifier = Modifier.fillMaxSize(),
+                strength = 0.8f,
+            )
+            // The bottom scrim, so the play affordance reads over any artwork.
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                androidx.compose.ui.graphics.Color.Transparent,
+                                androidx.compose.ui.graphics.Color(0xC0000000),
+                            ),
+                            startY = 400f,
+                        ),
+                    ),
+            )
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(Charaly.space.sm),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.PlayArrow,
+                    contentDescription = null,
+                    tint = androidx.compose.ui.graphics.Color.White,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.size(4.dp))
                 Text(
-                    text = story.worldName.uppercase(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = atmosphere.accent,
+                    text = story.contextLine.ifBlank { story.lastPlayedLabel },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = androidx.compose.ui.graphics.Color.White,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text(
-                    text = story.title,
-                    style = MaterialTheme.typography.titleLarge,
-                    color = Charaly.ink.primary,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            if (isNewest) {
-                CharalyIconButton(
-                    icon = Icons.Filled.PlayArrow,
-                    contentDescription = Loc.t("a11y.continue_story", story.title),
-                    onClick = onContinue,
-                    container = Charaly.atmosphere.accent.copy(alpha = 0.16f),
-                    tint = atmosphere.accent,
-                )
             }
         }
-
-        // The same sentence Home shows, from the same presenter. A shelf that described a
-        // story differently from the lobby would be two truths about one thing.
         Text(
-            text = story.moment,
-            style = MaterialTheme.typography.bodyMedium,
-            color = Charaly.ink.secondary,
-            maxLines = 2,
+            text = story.title,
+            style = MaterialTheme.typography.titleMedium,
+            color = Charaly.ink.primary,
+            maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(top = Charaly.space.xs),
         )
+        Text(
+            text = story.worldName,
+            style = MaterialTheme.typography.bodySmall,
+            color = Charaly.ink.muted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
 
-        Row(
-            modifier = Modifier.padding(top = Charaly.space.sm),
-            verticalAlignment = Alignment.CenterVertically,
+/** One pack as a poster: cover, episode count affordance, name, genre. */
+@Composable
+private fun PackPoster(
+    world: WorldFeedItem,
+    onClick: () -> Unit,
+) {
+    val atmosphere = CharalyAtmosphere.of(world.theme)
+
+    Column {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(3f / 4.1f)
+                .clip(CharalyShapes.soft)
+                .tappable(onClick),
         ) {
+            PackArtworkHero(
+                artwork = world.artwork,
+                atmosphere = atmosphere,
+                modifier = Modifier.fillMaxSize(),
+                strength = 0.8f,
+            )
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                androidx.compose.ui.graphics.Color.Transparent,
+                                androidx.compose.ui.graphics.Color(0xC0000000),
+                            ),
+                            startY = 400f,
+                        ),
+                    ),
+            )
+            if (world.lastPlayedLabel.isNotBlank()) {
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(Charaly.space.sm),
+                ) {
+                    CharalyPill(label = world.lastPlayedLabel)
+                }
+            }
+        }
+        Text(
+            text = world.title,
+            style = MaterialTheme.typography.titleMedium,
+            color = Charaly.ink.primary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = Charaly.space.xs),
+        )
+        if (world.genres.isNotEmpty()) {
             Text(
-                text = listOfNotNull(
-                    story.contextLine.takeIf { it.isNotBlank() },
-                    story.lastPlayedLabel.takeIf { it.isNotBlank() },
-                ).joinToString(" · "),
+                text = world.genres.joinToString(" · "),
                 style = MaterialTheme.typography.bodySmall,
                 color = Charaly.ink.muted,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
             )
-            CharalyQuietAction(label = Loc.t("library.details"), onClick = onOpenDetails)
         }
     }
 }
 
-/**
- * One story, in full.
- *
- * The transcript as prose, with the world moments interleaved. There is no composer here:
- * this is a story you are *reading*, not one you are playing, and offering a text field
- * would blur that distinction.
- */
+/** Whether a story still reads as alive - the same rule the Sessions screen uses. */
+private val ShelfStory.isLive: Boolean
+    get() = lastPlayedLabel == "Şimdi" ||
+        lastPlayedLabel.endsWith("dk önce") ||
+        lastPlayedLabel.endsWith("sa önce") ||
+        lastPlayedLabel == "Dün"
+
+/** Skeletons shaped like the real screen, so nothing moves when the data lands. */
 @Composable
-fun StoryRecordScreen(
-    title: String,
-    moment: String,
-    contextLine: String,
-    beats: List<dev.charaly.runtime.presentation.Beat>,
-    chapters: List<dev.charaly.runtime.presentation.ChapterCard>,
-    onBack: () -> Unit,
-    onContinue: () -> Unit,
-    onDelete: () -> Unit,
-) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(
-            start = Charaly.space.gutter,
-            end = Charaly.space.gutter,
-            top = Charaly.space.xxl,
-            bottom = Charaly.space.section,
-        ),
-        verticalArrangement = Arrangement.spacedBy(Charaly.space.md),
-    ) {
-        item(key = "back") {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                CharalyIconButton(
-                    icon = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = Loc.t("a11y.back_to_library"),
-                    onClick = onBack,
-                )
-                Spacer(Modifier.height(Charaly.space.xs))
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = Charaly.ink.primary,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.semantics { heading() },
-                )
-            }
-        }
-
-        item(key = "summary") {
-            Column {
-                Text(
-                    text = "“$moment”",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = Charaly.ink.secondary,
-                )
-                if (contextLine.isNotBlank()) {
-                    Text(
-                        text = contextLine,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Charaly.ink.muted,
-                    )
-                }
-            }
-        }
-
-        item(key = "actions") {
-            Row(horizontalArrangement = Arrangement.spacedBy(Charaly.space.xs)) {
-                CharalyAction(
-                    label = Loc.t("action.continue"),
-                    onClick = onContinue,
-                    icon = Icons.Filled.PlayArrow,
-                )
-                CharalyQuietAction(
-                    label = Loc.t("library.delete"),
-                    onClick = onDelete,
-                    contentColor = Charaly.ink.muted,
-                )
-            }
-        }
-
-        if (chapters.isNotEmpty()) {
-            item(key = "chapters-header") {
-                CharalySectionHeader(
-                    title = Loc.t("library.chapters"),
-                    micro = true,
-                    caption = if (chapters.size == 1) "1 chapter" else "${chapters.size} chapters",
-                )
-            }
-            chapters.forEach { chapter ->
-                item(key = "chapter-${chapter.index}") {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(CharalyShapes.soft)
-                            .background(if (chapter.isCurrent) Charaly.surface.raised else Charaly.surface.base)
-                            .padding(Charaly.space.md),
-                    ) {
-                        Text(
-                            text = chapter.title,
-                            style = MaterialTheme.typography.titleMedium,
-                            color = Charaly.ink.primary,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        if (chapter.summary.isNotBlank()) {
-                            Text(
-                                text = chapter.summary,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Charaly.ink.secondary,
-                                maxLines = 3,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        Text(
-                            text = listOfNotNull(
-                                chapter.locationName.takeIf { it.isNotBlank() },
-                                chapter.timeLabel.takeIf { it.isNotBlank() },
-                            ).joinToString(" · "),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Charaly.ink.muted,
-                        )
-                    }
-                }
-            }
-        }
-
-        if (beats.isNotEmpty()) {
-            item(key = "transcript-header") {
-                CharalySectionHeader(title = Loc.t("library.what_happened"), micro = true)
-            }
-            beats.forEach { beat ->
-                item(key = "beat-${beat.id}") {
-                    val text = beat.dialogue.ifBlank { beat.narration }.ifBlank { beat.action }
-                    if (text.isNotBlank()) {
-                        Text(
-                            text = if (beat.dialogue.isNotBlank()) "“$text”" else text,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (beat.role == dev.charaly.runtime.presentation.BeatRole.PLAYER) {
-                                Charaly.ink.muted
-                            } else {
-                                Charaly.ink.prose
-                            },
-                            modifier = Modifier.padding(bottom = 2.dp),
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-/** The artwork a story card draws, exposed so a preview can build one. */
-@Composable
-private fun LibrarySkeleton(gutter: Dp) {
+private fun LibrarySkeleton(gutter: androidx.compose.ui.unit.Dp) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -390,13 +373,17 @@ private fun LibrarySkeleton(gutter: Dp) {
         verticalArrangement = Arrangement.spacedBy(Charaly.space.md),
     ) {
         CharalySkeleton(Modifier.fillMaxWidth(0.45f), height = 40.dp)
-        repeat(3) {
-            CharalySkeleton(
-                Modifier
-                    .fillMaxWidth()
-                    .height(140.dp),
-                shape = CharalyShapes.soft,
-            )
+        repeat(2) {
+            Row(horizontalArrangement = Arrangement.spacedBy(Charaly.space.sm)) {
+                repeat(2) {
+                    CharalySkeleton(
+                        Modifier
+                            .weight(1f)
+                            .aspectRatio(3f / 4.1f),
+                        shape = CharalyShapes.soft,
+                    )
+                }
+            }
         }
     }
 }

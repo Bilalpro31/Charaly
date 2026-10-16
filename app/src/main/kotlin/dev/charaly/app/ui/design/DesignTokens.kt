@@ -101,24 +101,22 @@ data class CharalySpace(
 /**
  * Corner radii.
  *
- * Deliberately few, and mostly *not* rounded rectangles.
+ * V5's shapes, and deliberately few of them:
  *
  * - `none` for full-bleed artwork, which should meet the screen edge cleanly.
- * - `soft` for cards and sheets.
- * - `pill` for compact controls only.
- *
- * The previous design used five radii across every surface in the app, which is what made
- * it read as a grid of cards. A sea of rounded rectangles is a shape language for
- * dashboards; a cinema poster does not have one.
+ * - `cut` for small artwork insets.
+ * - `soft` for cards and covers - V5's 24dp.
+ * - `sheet` for a bottom sheet's top corners - V5's 28dp.
+ * - `pill` for compact controls and buttons, fully rounded.
  */
 data class CharalyShape(
     val none: Dp = 0.dp,
-    /** 6dp. Artwork and full-bleed bands. */
+    /** 6dp. Small artwork insets. */
     val cut: Dp = 6.dp,
-    /** 14dp. Cards, sheets. */
-    val soft: Dp = 14.dp,
-    /** 24dp. Bottom sheets and the composer's inner field. */
-    val sheet: Dp = 24.dp,
+    /** 24dp. Cards, covers, V5's card radius. */
+    val soft: Dp = 24.dp,
+    /** 28dp. Bottom sheets. V5's sheet radius. */
+    val sheet: Dp = 28.dp,
     val pill: Dp = 999.dp,
 )
 
@@ -155,16 +153,21 @@ data class CharalyTiming(
 /**
  * Surfaces.
  *
- * On true black, the steps above black exist for *elevation*, not for tint. `#050505` and
- * `#080808` are indistinguishable from black at arm's length on a phone, which is the
- * point: a card should be felt rather than seen.
+ * V5's stepped greys: a near-black screen floor (`#0F0F11`), then `#1C1C1F` for cards and
+ * inputs, then `#2B2B2F` for pills and search bars. The steps exist for *elevation*, not
+ * for tint - each is neutral within two points, so a card is felt rather than seen.
  */
 data class CharalySurface(
+    /** True black: the deepest layer behind full-bleed artwork. */
     val void: Color = Color(0xFF000000),
-    val base: Color = Color(0xFF050505),
-    val raised: Color = Color(0xFF0A0A0A),
-    val elevated: Color = Color(0xFF111111),
-    val overlay: Color = Color(0xFF171717),
+    /** The screen floor - V5's `#0F0F11`. */
+    val base: Color = Color(0xFF0F0F11),
+    /** V5 surface1: cards, chips, inputs. */
+    val raised: Color = Color(0xFF1C1C1F),
+    /** Between surface1 and surface2, for nested panels. */
+    val elevated: Color = Color(0xFF232326),
+    /** V5 surface2: pills, the search bar, quiet buttons. */
+    val overlay: Color = Color(0xFF2B2B2F),
     /** Translucent white, for a control floating over artwork. */
     val glass: Color = Color(0x1AFFFFFF),
     val glassStrong: Color = Color(0x2EFFFFFF),
@@ -173,16 +176,36 @@ data class CharalySurface(
 /**
  * Ink.
  *
- * Three levels on black, and the third is genuinely dim rather than "slightly less
- * white". Metadata that competes with a title is metadata that has been given too much
+ * V5's text ramp: `#F4F4F6` for prose, `#9B9BA4` for meta, and a genuinely dim third
+ * level. Metadata that competes with a title is metadata that has been given too much
  * weight.
  */
 data class CharalyInk(
-    val primary: Color = Color(0xFFF7F7F8),
-    val secondary: Color = Color(0xFFA6A6B0),
-    val muted: Color = Color(0xFF6E6E79),
+    val primary: Color = Color(0xFFF4F4F6),
+    val secondary: Color = Color(0xFF9B9BA4),
+    val muted: Color = Color(0xFF6E6E76),
     /** Narration, between ink and secondary: prose, but not speech. */
-    val prose: Color = Color(0xFFC4C4CD),
+    val prose: Color = Color(0xFFC4C4CC),
+)
+
+/**
+ * THE SIGNALS.
+ *
+ * V5 gives Charaly exactly two accents, and they are not decorative:
+ *
+ * ```
+ *   amber   #F2B66D   the world is alive: the clock, Live, memory, ripples,
+ *                     the speaking character's name, progression
+ *   blue    #3B63FF   new for you: the New badge, the unread dot
+ * ```
+ *
+ * These belong to the *product*, not to a pack, so they live beside the structural
+ * tokens rather than inside [CharalyAtmosphere]. A pack's own accent still colours its
+ * artwork; these two colour the app's living signals, and nothing else may.
+ */
+data class CharalySignal(
+    val amber: Color = Color(0xFFF2B66D),
+    val blue: Color = Color(0xFF3B63FF),
 )
 
 /**
@@ -322,6 +345,7 @@ data class CharalyDesign(
     val timing: CharalyTiming = CharalyTiming(),
     val surface: CharalySurface = CharalySurface(),
     val ink: CharalyInk = CharalyInk(),
+    val signal: CharalySignal = CharalySignal(),
 )
 
 /**
@@ -383,6 +407,10 @@ object Charaly {
 
     val ink: CharalyInk
         @Composable @ReadOnlyComposable get() = LocalDesign.current.ink
+
+    /** The two product accents: amber for "the world is alive", blue for "new". */
+    val signal: CharalySignal
+        @Composable @ReadOnlyComposable get() = LocalDesign.current.signal
 
     val atmosphere: CharalyAtmosphere
         @Composable @ReadOnlyComposable get() = LocalAtmosphere.current

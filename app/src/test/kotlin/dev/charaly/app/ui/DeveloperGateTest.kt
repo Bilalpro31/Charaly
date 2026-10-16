@@ -3,7 +3,7 @@ package dev.charaly.app.ui
 import dev.charaly.app.ui.nav.CharalyNavigator
 import dev.charaly.app.ui.nav.Route
 import dev.charaly.app.ui.nav.decodeRoute
-import dev.charaly.app.ui.nav.destinationOrNull
+import dev.charaly.app.ui.nav.tabOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -48,16 +48,15 @@ class DeveloperGateTest {
     fun `the developer panel and the authoring tool own no destination`() {
         // They are reached from Settings, so drawing a bar on them would let a user leave
         // an engine inspector by tapping "Worlds" and lose their place in the diagnostics.
-        assertNull(Route.Developer.destinationOrNull())
-        assertNull(Route.Authoring.destinationOrNull())
+        assertNull(Route.Developer.tabOrNull())
+        assertNull(Route.Authoring.tabOrNull())
     }
 
     @Test
     fun `the gate is narrow - every other destination stays reachable`() {
         // The check must not be so broad that it hides the app: only these two routes.
         val navigator = CharalyNavigator()
-        navigator.navigateTo(Route.Home)
-        navigator.navigateTo(Route.Worlds)
+        navigator.navigateTo(Route.Sessions)
         navigator.navigateTo(Route.Library)
         navigator.navigateTo(Route.Stage("story-1"))
         navigator.navigateTo(Route.Settings)

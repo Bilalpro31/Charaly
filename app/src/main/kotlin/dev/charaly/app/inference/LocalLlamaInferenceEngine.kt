@@ -58,6 +58,18 @@ class LocalLlamaInferenceEngine(
          */
         val threads: Int = 0,
         /**
+         * Workers for evaluating a *prompt*, as opposed to [threads] for decoding a token.
+         *
+         * PHASE 10. Left at 0, which now means "the device's core count, capped at 16" -
+         * see the native side for why these two pools must be set separately.
+         *
+         * Before this existed the batch pool was llama.cpp's `GGML_DEFAULT_N_THREADS`, a
+         * flat 4, and nothing in Kotlin could reach it. Measured on real Qwen3-4B weights
+         * (Phase10TurkishLatencyTest): prompt evaluation, which is 85-95% of the time to
+         * first token, ran at ~3.3 tokens/second on an eight-core host.
+         */
+        val threadsBatch: Int = 0,
+        /**
          * Layers to offload to an accelerator.
          *
          * Currently 0, and the UI must not claim GPU acceleration while it is. The JNI
@@ -86,6 +98,37 @@ class LocalLlamaInferenceEngine(
     private val loadMutex = kotlinx.coroutines.sync.Mutex()
 
     /**
+     * Held for the whole of a decode.
+     *
+     * ## Why a second lock exists beside [loadMutex]
+     *
+     * `loadModel`/`unloadModel` were serialised against each other but *not* against
+     * `generate`/`stream`, so `unload()` could run while a decode was in flight and free
+     * `llama_context` underneath it. The JNI layer refuses to be freed mid-decode (it holds
+     * its own session mutex for the duration), which turns the race into "the free blocks
+     * until the reply ends" - a silent, multi-second stall on the model switch that the user
+     * experiences as a hung app.
+     *
+     * Holding this gate across a decode makes the intent explicit and testable: a load or
+     * an unload *asks the decode to stop and then waits*, and only ever frees a context that
+     * nothing is reading. The ordering is always [loadMutex] then this gate, so the two can
+     * never deadlock against each other.
+     */
+    private val generationGate = kotlinx.coroutines.sync.Mutex()
+
+    /**
+     * The lifecycle state machine for the one resident model.
+     *
+     * Pure data plus a transition table, so "is unloading during a generation legal?"
+     * has an answer that is asserted in a unit test rather than discovered on a device.
+     * Every entry point below reports its real transitions into it.
+     */
+    private val lifecycle = dev.charaly.runtime.model.ModelLifecycleMachine()
+
+    /** Illegal transitions that were reconciled rather than honoured. Should stay 0. */
+    private val lifecycleMisses = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /**
      * The last native failure worth showing a user.
      *
      * Set whenever a native call fails, and cleared when one succeeds. The diagnostics
@@ -99,11 +142,68 @@ class LocalLlamaInferenceEngine(
     var nativeDiagnostic: String = ""
         private set
 
+    /** The native clocks for the most recent turn, or null before one is measured. */
+    @Volatile
+    private var lastTurnTimings: dev.charaly.runtime.inference.InferenceTimings? = null
+
+    /**
+     * Whether the loaded model declares a chat template in its GGUF header.
+     *
+     * Decides whether [buildPrompt] renders the model's own template (instruct models) or the
+     * plain turn format (base models). Set from the header at load, never assumed.
+     */
+    @Volatile
+    private var hasChatTemplate: Boolean = false
+
+    override fun lastTimings(): dev.charaly.runtime.inference.InferenceTimings? = lastTurnTimings
+
     override fun lastDiagnostic(): String = nativeDiagnostic
 
+    /** The lifecycle state of the one resident model. See [dev.charaly.runtime.model.ModelLifecycle]. */
+    fun lifecycle(): dev.charaly.runtime.model.ModelLifecycle = lifecycleMachine().state
+
+    private fun lifecycleMachine(): dev.charaly.runtime.model.ModelLifecycleMachine = lifecycle
+
+    /** Count of transitions the table rejected and that were reconciled. A test asserts 0. */
+    fun rejectedTransitions(): Int = lifecycleMisses.get()
+
+    /**
+     * Reports a transition the engine is *certain* of.
+     *
+     * The table is a detector, not a gate: if it rejects an edge that the engine just
+     * observed to be true (a load that returned a handle IS loaded), reality wins and the
+     * miss is counted. Silently accepting an illegal edge, or silently dropping a real one,
+     * are both worse than a counter a test can read.
+     */
+    private fun enter(next: dev.charaly.runtime.model.ModelLifecycle): dev.charaly.runtime.model.ModelLifecycle {
+        val result = lifecycle.transition(next)
+        if (result is dev.charaly.runtime.model.ModelLifecycleMachine.TransitionResult.Rejected) {
+            lifecycleMisses.incrementAndGet()
+            lifecycle.reset(next)
+        }
+        return next
+    }
+
+    /**
+     * Brings a GGUF into native memory.
+     *
+     * The whole operation is one exclusive section: [loadMutex] against other loads and
+     * unloads, [generationGate] against a decode that is still running. A load *replaces*
+     * the resident model, so it starts by asking any running generation to stop and then
+     * waits for the gate - the native context is never freed underneath a decode.
+     */
     override suspend fun loadModel(request: ModelLoadRequest): LoadOutcome = loadMutex.withLock {
         withContext(Dispatchers.IO) {
+            requestStop()
+            generationGate.withLock { loadModelUnderGate(request) }
+        }
+    }
+
+    /** [loadModel]'s body, already holding both locks. */
+    private suspend fun loadModelUnderGate(request: ModelLoadRequest): LoadOutcome {
+        return withContext(Dispatchers.IO) {
         unload()
+        enter(dev.charaly.runtime.model.ModelLifecycle.LOADING)
 
         // Validate the user's file FIRST. These checks are pure Kotlin, so they
         // give a precise reason ("that file is not a GGUF model") even when the
@@ -176,11 +276,14 @@ class LocalLlamaInferenceEngine(
                 path = request.path,
                 contextSize = config.contextSize,
                 threads = config.threads,
+                threadsBatch = config.threadsBatch,
                 gpuLayers = config.gpuLayers,
             ) { percent, stage -> request.progress(LoadProgress(percent, stage)) }
             if (opened == 0L) {
                 val reason = LlamaNative.lastError().ifBlank { "the native loader refused the file" }
                 nativeDiagnostic = "Model load failed: $reason"
+                unload()
+                enter(dev.charaly.runtime.model.ModelLifecycle.LOAD_FAILED)
                 return@withContext LoadOutcome.Failed(InferenceError.InvalidModel(request.path, reason))
             }
             handle.set(opened)
@@ -204,6 +307,12 @@ class LocalLlamaInferenceEngine(
                 }
             }
 
+            // Whether this model was published with a chat template. An instruct model only
+            // ends its turn at its own end-of-turn token when the prompt is in the format it
+            // was trained on, so this flag decides between the model's template and the plain
+            // turn format. Read from the header, never assumed from the architecture.
+            hasChatTemplate = metadata["tokenizer.chat_template"]?.isNotBlank() == true
+
             val modelInfo = ModelInfo(
                 // The registry's id, so "which model is loaded" is answerable with the same
                 // identifier every other layer uses. See [ModelLoadRequest.installedModelId].
@@ -221,19 +330,27 @@ class LocalLlamaInferenceEngine(
                 metadata = metadata,
             )
             info.set(modelInfo)
+            enter(dev.charaly.runtime.model.ModelLifecycle.LOADED)
             LoadOutcome.Loaded(modelInfo)
         } catch (error: OutOfMemoryError) {
+            // Out of memory is a fact about this device, and it is survivable: nothing is
+            // left allocated, the engine holds no model, and the user gets a sentence about
+            // memory rather than a process death. `unload()` in each catch is what makes the
+            // "no crash" part true - a half-built handle must never stay behind.
             unload()
+            enter(dev.charaly.runtime.model.ModelLifecycle.LOAD_FAILED)
             nativeDiagnostic = "Model load failed: the device ran out of memory."
             LoadOutcome.Failed(InferenceError.OutOfMemory(file.length()))
         } catch (error: UnsatisfiedLinkError) {
             unload()
+            enter(dev.charaly.runtime.model.ModelLifecycle.LOAD_FAILED)
             nativeDiagnostic = "Native engine unavailable: the llama.cpp library is not in this build."
             LoadOutcome.Failed(
                 InferenceError.Unsupported("native llama.cpp is not available in this build"),
             )
         } catch (error: Throwable) {
             unload()
+            enter(dev.charaly.runtime.model.ModelLifecycle.LOAD_FAILED)
             nativeDiagnostic = "Model load failed: ${error.message ?: error.javaClass.simpleName}"
             LoadOutcome.Failed(
                 InferenceError.InvalidModel(request.path, error.message ?: "load failed"),
@@ -242,11 +359,25 @@ class LocalLlamaInferenceEngine(
         }
     }
 
-    override suspend fun unloadModel() = loadMutex.withLock { withContext(Dispatchers.IO) { unload() } }
+    /**
+     * Drops the resident model and its native context together.
+     *
+     * Waits for a running decode to end rather than freeing its context: `GENERATING ->
+     * unload` is not a legal transition (see [dev.charaly.runtime.model.ModelLifecycleMachine]),
+     * and the way to make it legal is to stop the generation first, not to free faster.
+     */
+    override suspend fun unloadModel() = loadMutex.withLock {
+        withContext(Dispatchers.IO) {
+            requestStop()
+            generationGate.withLock { unload() }
+        }
+    }
 
-    override suspend fun generate(request: InferenceRequest): InferenceResult = withContext(Dispatchers.IO) {
+    override suspend fun generate(request: InferenceRequest): InferenceResult =
+        generationGate.withLock { withContext(Dispatchers.IO) {
         val current = requireHandle()
         generating.set(true)
+        enter(dev.charaly.runtime.model.ModelLifecycle.GENERATING)
         try {
             // Cancellation is wired here, not left to the caller: `generate` is a
             // suspending function whose native half is a blocking call, so a cancelled
@@ -277,8 +408,9 @@ class LocalLlamaInferenceEngine(
             }
         } finally {
             generating.set(false)
+            enter(dev.charaly.runtime.model.ModelLifecycle.LOADED)
         }
-    }
+        } }
 
     /**
      * Streams tokens as native code produces them.
@@ -307,7 +439,12 @@ class LocalLlamaInferenceEngine(
 
         coroutineScope {
             val decode = launch(Dispatchers.IO) {
+                // The gate is held for the whole decode, so `unloadModel` and `loadModel`
+                // queue behind it instead of freeing `llama_context` mid-token. They ask for
+                // a stop first (see `requestStop()` in both), so the wait is one token long.
+                generationGate.withLock {
                 try {
+                    enter(dev.charaly.runtime.model.ModelLifecycle.GENERATING)
                     val text = runGeneration(current, request) { token ->
                         val seen = count.incrementAndGet()
                         trySend(StreamChunk(text = token, done = false, tokenCount = seen.toInt()))
@@ -329,6 +466,11 @@ class LocalLlamaInferenceEngine(
                         trySend(StreamChunk(text = "", done = true, tokenCount = count.get().toInt()))
                         throw error
                     }
+                } finally {
+                    // Leaving GENERATING is unconditional: a cancelled, failed and completed
+                    // decode all end with the model still resident and nothing running.
+                    enter(dev.charaly.runtime.model.ModelLifecycle.LOADED)
+                }
                 }
             }
             decode.invokeOnCompletion { close() }
@@ -352,6 +494,12 @@ class LocalLlamaInferenceEngine(
     override fun isLoaded(): Boolean = loaded.get() && handle.get() != 0L
 
     override fun modelInfo(): ModelInfo? = info.get()
+
+    /** [requestStop] for the caller that only wants "whatever is running, stop". */
+    private fun requestStop() {
+        val current = handle.get()
+        if (current != 0L) requestStop(current)
+    }
 
     /**
      * Asks native to abandon the running decode.
@@ -377,13 +525,16 @@ class LocalLlamaInferenceEngine(
     ): String {
         generating.set(true)
         return try {
-            LlamaNative.generate(
+            val text = LlamaNative.generate(
                 handle = nativeHandle,
-                prompt = buildPrompt(request),
+                prompt = buildPrompt(request, nativeHandle),
                 maxTokens = request.params.maxTokens,
                 temperature = request.params.temperature,
                 topP = request.params.topP,
                 topK = request.params.topK,
+                // PHASE 8: minP was configured on every profile and carried through
+                // SamplerSettings -> GenerationParams, then dropped at the JNI boundary.
+                minP = request.params.minP,
                 repeatPenalty = request.params.repeatPenalty,
                 seed = request.params.seed,
                 // Array, not List: native indexes this as a jobjectArray, and a
@@ -391,11 +542,47 @@ class LocalLlamaInferenceEngine(
                 stopSequences = request.params.stopSequences.toTypedArray(),
                 tokenCallback = onToken,
             )
+            recordTimings()
+            text
         } catch (error: UnsatisfiedLinkError) {
             throw InferenceError.Unsupported(
                 "native llama.cpp is not available in this build",
             )
         }
+    }
+
+    /**
+     * Reads the native generation path's own clocks back into Kotlin.
+     *
+     * Purely observational: a missing or malformed reply leaves the previous reading in
+     * place, and nothing here can change what was decoded. It is the data behind the
+     * developer-mode "STORY TURN PERF" line, and it is never rendered to a normal player.
+     */
+    private fun recordTimings() {
+        val parsed = NativeReturnParser.parseKeyValuesCatching("generate stats") {
+            LlamaNative.lastGenerateStats()
+        }
+        val values = (parsed as? NativeReturnParser.KeyValues.Ok)?.values ?: return
+        if (values.isEmpty()) return
+        val promptMicros = values["prompt_micros"]?.toLongOrNull() ?: return
+        lastTurnTimings = dev.charaly.runtime.inference.InferenceTimings(
+            promptMicros = promptMicros,
+            tokenizeMicros = values["tokenize_micros"]?.toLongOrNull() ?: 0L,
+            evalMicros = values["eval_micros"]?.toLongOrNull() ?: 0L,
+            generationMicros = values["generation_micros"]?.toLongOrNull() ?: 0L,
+            firstTokenMicros = values["first_token_micros"]?.toLongOrNull() ?: 0L,
+            promptTokens = values["prompt_tokens"]?.toIntOrNull() ?: 0,
+            generatedTokens = values["generated_tokens"]?.toIntOrNull() ?: 0,
+            reusedTokens = values["reused_tokens"]?.toIntOrNull() ?: 0,
+            contextSize = values["context_size"]?.toIntOrNull() ?: config.contextSize,
+            cachedTokens = values["cache_tokens"]?.toIntOrNull() ?: 0,
+            reuseFallback = values["reuse_fallback"] == "1",
+            stopReason = values["stop_reason"].orEmpty().ifBlank { "none" },
+            budget = values["budget"]?.toIntOrNull() ?: 0,
+            requestedMaxTokens = values["requested_max"]?.toIntOrNull() ?: 0,
+            threads = values["threads"]?.toIntOrNull() ?: 0,
+            threadsBatch = values["threads_batch"]?.toIntOrNull() ?: 0,
+        )
     }
 
     /**
@@ -405,9 +592,56 @@ class LocalLlamaInferenceEngine(
      * simple, explicit turn format rather than guessing at a template. This is
      * the one place that decides how the context reads to the model.
      */
-    internal fun buildPromptInternal(request: InferenceRequest): String = buildPrompt(request)
+    internal fun buildPromptInternal(request: InferenceRequest): String = buildPlainPrompt(request)
 
-    private fun buildPrompt(request: InferenceRequest): String = buildString {
+    private fun buildPrompt(request: InferenceRequest, nativeHandle: Long): String {
+        // An instruct model only ends its turn at its own end-of-turn token when the prompt
+        // is in the format it was trained on. The plain turn format is a foreign one: the
+        // model rambles to the token cap and never emits EOG. So a model that declares a chat
+        // template gets its template applied; a base model keeps the plain format.
+        if (hasChatTemplate) {
+            val templated = applyChatTemplate(request, nativeHandle)
+            if (templated.isNotBlank()) return templated
+        }
+        return buildPlainPrompt(request)
+    }
+
+    /**
+     * Renders the request with the loaded model's own chat template.
+     *
+     * The system block is the first message, the transcript follows, and the template opens
+     * the assistant's turn. A named speaker is kept by prefixing the assistant content with
+     * the name, so a multi-character scene still says who is talking - the template has no
+     * role for "Marinette", only for "assistant".
+     */
+    private fun applyChatTemplate(request: InferenceRequest, nativeHandle: Long): String {
+        val flat = mutableListOf<String>()
+        if (request.systemPrompt.isNotBlank()) {
+            flat += "system"
+            flat += request.systemPrompt
+        }
+        request.messages.forEach { message ->
+            val role = when (message.role) {
+                dev.charaly.runtime.inference.ChatRole.SYSTEM -> "system"
+                dev.charaly.runtime.inference.ChatRole.USER -> "user"
+                dev.charaly.runtime.inference.ChatRole.ASSISTANT -> "assistant"
+            }
+            val content = if (message.role == dev.charaly.runtime.inference.ChatRole.ASSISTANT && !message.name.isNullOrBlank()) {
+                "${message.name}: ${message.content}"
+            } else {
+                message.content
+            }
+            flat += role
+            flat += content
+        }
+        return LlamaNative.applyChatTemplate(nativeHandle, flat.toTypedArray())
+    }
+
+    /**
+     * The plain turn format, used for base models and as the fallback when a model declares a
+     * template that cannot be applied.
+     */
+    private fun buildPlainPrompt(request: InferenceRequest): String = buildString {
         if (request.systemPrompt.isNotBlank()) {
             appendLine(request.systemPrompt.trim())
             appendLine()
@@ -573,6 +807,13 @@ class LocalLlamaInferenceEngine(
      */
     override fun configThreads(): Int = config.threads
 
+    /**
+     * The prompt-evaluation pool this engine was configured with.
+     *
+     * 0 means "the device's core count, capped at 16" - see [EngineConfig.threadsBatch].
+     */
+    override fun configThreadsBatch(): Int = config.threadsBatch
+
     /** The offload count this engine was configured with. 0 today; see [EngineConfig]. */
     override fun configGpuLayers(): Int = config.gpuLayers
 
@@ -594,6 +835,9 @@ class LocalLlamaInferenceEngine(
         loaded.set(false)
         generating.set(false)
         info.set(null)
+        // The weights are gone; the file is not. "Nothing is resident" is READY again -
+        // which is exactly the READY != LOADED distinction this engine exists to keep.
+        enter(dev.charaly.runtime.model.ModelLifecycle.READY)
     }
 
     /** Cheap header sniff so a renamed .txt never reaches native code. */

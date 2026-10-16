@@ -1,7 +1,9 @@
 package dev.charaly.app.ui.sheets
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -10,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
@@ -24,12 +27,15 @@ import dev.charaly.runtime.presentation.Loc
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import dev.charaly.app.ui.components.CharalyAction
 import dev.charaly.app.ui.components.CharalyEmptyState
 import dev.charaly.app.ui.components.CharalyIconButton
 import dev.charaly.app.ui.components.CharalyPill
@@ -95,13 +101,43 @@ fun StageSheetContent(
     onSelectSheet: (StageSheet) -> Unit,
     onDismiss: () -> Unit,
     onSelectSpeaker: (String) -> Unit,
+    /**
+     * Moves the world clock, in minutes.
+     *
+     * Never a setter: the same `advance` a real turn takes, through the event engine, so
+     * the hours that pass are hours the world actually experiences. The UI has no way to
+     * put a time on the clock and no interest in one.
+     */
+    onAdvanceTime: (Int) -> Unit = {},
+    /**
+     * What the story is asking of the player right now - active objectives, titles and
+     * descriptions only.
+     *
+     * Handed in rather than derived here: the sheet projects `StoryContext`, which is
+     * about the scene and its people, and an objective is a promise between the player and
+     * the pack. It answers the STORY sheet's question - "what am I supposed to be doing?" -
+     * in the player's own terms.
+     */
+    objectives: List<dev.charaly.app.ui.packstore.PackObjectiveRow> = emptyList(),
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Charaly.surface.raised)
+            .clip(CharalyShapes.sheet)
+            .background(Charaly.surface.base)
             .navigationBarsPadding(),
     ) {
+        // The V5 drag handle: a small bar that says "this layer can be pulled down",
+        // before any content claims the eye. It is the only decoration on the sheet's
+        // top edge - no title strip, no grabber text.
+        Box(
+            Modifier
+                .padding(top = Charaly.space.sm, bottom = Charaly.space.sm)
+                .align(Alignment.CenterHorizontally)
+                .size(width = 40.dp, height = 4.dp)
+                .clip(CharalyShapes.pill)
+                .background(Charaly.surface.elevated),
+        )
         LazyRow(
             contentPadding = PaddingValues(horizontal = Charaly.space.gutter),
             horizontalArrangement = Arrangement.spacedBy(Charaly.space.xs),
@@ -113,7 +149,16 @@ fun StageSheetContent(
                 CharalyPill(
                     label = if (summary.isBlank()) entry.title else "${entry.title} · $summary",
                     selected = entry == sheet,
-                    onClick = { onSelectSheet(entry) },
+                    // PHASE 9: the active tab is now a toggle. It used to call
+                    // `onSelectSheet(entry)` unconditionally, which re-selected what was
+                    // already selected - so tapping the pill you could see was selected did
+                    // nothing at all, and the reader had to find the X in the heading to get
+                    // rid of a panel they had just opened. Selected-state controls that look
+                    // like tabs are expected to toggle; this is the same gesture on the same
+                    // pill, and it closes the sheet exactly as the X and system back do.
+                    onClick = {
+                        if (entry == sheet) onDismiss() else onSelectSheet(entry)
+                    },
                     contentDescription = buildString {
                         append(entry.title)
                         append(". ").append(entry.caption)
@@ -165,7 +210,8 @@ fun StageSheetContent(
                 StageSheet.WORLD -> worldSheet(stage, context)
                 StageSheet.MEMORY -> memorySheet(context)
                 StageSheet.PEOPLE -> peopleSheet(context, onSelectSpeaker)
-                StageSheet.STORY -> storySheet(stage, context)
+                StageSheet.STORY -> storySheet(stage, context, objectives)
+                StageSheet.SKIP_TIME -> skipTimeSheet(stage, onAdvanceTime)
             }
         }
     }
@@ -205,6 +251,113 @@ private fun summaryOf(
         ?.takeIf { it.isNotEmpty() }
         ?.let { "${it.size} open" }
         .orEmpty()
+    // Never a countdown: "57 minutes" would promise a precision the choice does not offer.
+    StageSheet.SKIP_TIME -> ""
+}
+
+/**
+ * SKIP TIME.
+ *
+ * ## Three honest choices
+ *
+ * Ten minutes, an hour, and - when the clock's own reading makes the question meaningful -
+ * morning. Each one is a request to the engine, not a slider: the hours are *experienced*,
+ * which is why turning the clock is worth offering at all.
+ */
+private fun LazyListScope.skipTimeSheet(
+    stage: ChatStage,
+    onAdvanceTime: (Int) -> Unit,
+) {
+    item(key = "skip-lead") {
+        Text(
+            text = "Saat yalnızca dünyada ilerleyerek geçer. Arada geçen her şey yaşanmış olur.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = Charaly.ink.secondary,
+        )
+    }
+
+    // "Until morning" only where the clock is legible enough for the question to mean
+    // anything. Where it is not, the option is simply not offered rather than guessed at.
+    val untilMorning = minutesUntilMorning(stage.clockLabel)
+
+    item(key = "skip-options") {
+        Column(verticalArrangement = Arrangement.spacedBy(Charaly.space.xs)) {
+            CharalyAction(label = "+10 dakika", onClick = { onAdvanceTime(10) }, fillWidth = true)
+            CharalyAction(label = "+1 saat", onClick = { onAdvanceTime(60) }, fillWidth = true)
+            if (untilMorning != null) {
+                CharalyAction(
+                    label = "Sabaha kadar",
+                    onClick = { onAdvanceTime(untilMorning) },
+                    fillWidth = true,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The day, drawn as an arc with the present moment marked on it.
+ *
+ * A day is the unit a reader reasons in when deciding whether to let time pass, and a
+ * glowing bar from amber into darkness says "three quarters of your daylight is gone"
+ * faster than any number. The gradient stays inside Charaly's two accents - this is the
+ * world's light draining, not a fourth theme colour.
+ */
+@Composable
+private fun DayArc(timeLabel: String, modifier: Modifier = Modifier) {
+    val elapsed = minutesIntoDay(timeLabel) ?: 12 * 60
+    val fraction = (elapsed / (24f * 60f)).coerceIn(0.03f, 0.97f)
+
+    Box(modifier = modifier.fillMaxWidth().height(14.dp)) {
+        Box(
+            Modifier
+                .align(Alignment.Center)
+                .fillMaxWidth()
+                .height(6.dp)
+                .clip(CharalyShapes.pill)
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(Charaly.signal.amber, Charaly.surface.overlay),
+                    )
+                ),
+        )
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.weight(fraction))
+            Box(
+                Modifier
+                    .size(14.dp)
+                    .clip(CharalyShapes.pill)
+                    .background(Charaly.ink.primary)
+                    .border(2.dp, Charaly.signal.amber, CharalyShapes.pill),
+            )
+            Box(Modifier.weight(1f - fraction))
+        }
+    }
+}
+
+/** Minutes past midnight in "22:40". Null when the label is not a clock reading. */
+internal fun minutesIntoDay(clockLabel: String): Int? {
+    val parts = clockLabel.trim().split(":")
+    if (parts.size != 2) return null
+    val hour = parts[0].toIntOrNull() ?: return null
+    val minute = parts[1].toIntOrNull() ?: return null
+    if (hour !in 0..23 || minute !in 0..59) return null
+    return hour * 60 + minute
+}
+
+/**
+ * Minutes from "22:40" to seven in the morning. Null when the label is not a clock reading.
+ *
+ * Arithmetic on the engine's own label rather than on a second clock, so the answer cannot
+ * disagree with the number shown in the header.
+ */
+internal fun minutesUntilMorning(clockLabel: String): Int? {
+    val now = minutesIntoDay(clockLabel) ?: return null
+    val morning = 7 * 60
+    return if (morning > now) morning - now else (24 * 60 - now) + morning
 }
 
 /**
@@ -226,10 +379,45 @@ private fun LazyListScope.worldSheet(
     val location = world?.locationName?.takeIf { it.isNotBlank() }
         ?: stage.contextLine.substringBefore(" · ").takeIf { it.isNotBlank() }
 
+    // ---- the clock, first and large -------------------------------------
+    //
+    // The exact reading, in amber and at display size, because "where am I and when is it"
+    // is this sheet's whole question and "Evening" is true for four hours. Under it, the
+    // day drawn as an arc with the present moment marked on it - a day is the unit a
+    // reader actually reasons in when they ask whether to let time pass.
+    val clock = world?.clockLabel?.takeIf { it.isNotBlank() } ?: stage.clockLabel
+    if (clock.isNotBlank()) {
+        item(key = "clock") {
+            Column {
+                Text(
+                    text = clock,
+                    style = MaterialTheme.typography.displaySmall,
+                    color = Charaly.signal.amber,
+                    modifier = Modifier.semantics { heading() },
+                )
+                val sub = listOfNotNull(world?.dayLabel, world?.timeOfDay)
+                    .filter { it.isNotBlank() }
+                    .joinToString(" · ")
+                if (sub.isNotBlank()) {
+                    Text(
+                        text = sub,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = Charaly.ink.primary,
+                        modifier = Modifier.padding(top = Charaly.space.xs),
+                    )
+                }
+                DayArc(
+                    timeLabel = clock,
+                    modifier = Modifier.padding(top = Charaly.space.md),
+                )
+            }
+        }
+    }
+
     item(key = "where") {
         Column {
             Text(
-                text = location ?: "Somewhere",
+                text = location ?: "Bir yer",
                 style = MaterialTheme.typography.headlineSmall,
                 color = Charaly.ink.primary,
                 modifier = Modifier.semantics { heading() },
@@ -277,7 +465,7 @@ private fun LazyListScope.worldSheet(
             Spacer(Modifier.height(Charaly.space.xs))
             if (nearby.isEmpty()) {
                 Text(
-                    text = world?.presenceLabel?.takeIf { it.isNotBlank() } ?: "Just you",
+                    text = world?.presenceLabel?.takeIf { it.isNotBlank() } ?: Loc.t("sheet.just_you"),
                     style = MaterialTheme.typography.bodyMedium,
                     color = Charaly.ink.muted,
                 )
@@ -314,8 +502,7 @@ private fun LazyListScope.memorySheet(context: StoryContext?) {
             CharalyEmptyState(
                 state = EmptyState(
                     title = Loc.t("sheet.no_memories_title"),
-                    body = "Memories appear here as the story accumulates them - what people " +
-                        "experienced, and what they decided about you.",
+                    body = Loc.t("sheet.no_memories_body_long"),
                     artSeed = "charaly-empty-memory",
                 ),
             )
@@ -357,7 +544,7 @@ private fun MemoryRow(card: MemoryCard) {
         ) {
             // Importance as a word, never as a number.
             CharalyPill(label = card.importanceLabel, selected = card.importance >= 4)
-            if (card.isSecret) CharalyPill(label = "A secret")
+            if (card.isSecret) CharalyPill(label = "Bir sır")
             Text(
                 text = listOfNotNull(
                     card.ownerName.takeIf { it.isNotBlank() },
@@ -392,8 +579,7 @@ private fun LazyListScope.peopleSheet(
             CharalyEmptyState(
                 state = EmptyState(
                     title = Loc.t("sheet.nobody_title"),
-                    body = "People arrive as the story needs them. Open this again once " +
-                        "someone has walked in.",
+                    body = Loc.t("sheet.nobody_body_long"),
                     artSeed = "charaly-empty-people",
                 ),
             )
@@ -420,7 +606,7 @@ private fun LazyListScope.peopleSheet(
             CharalySectionHeader(
                 title = Loc.t("sheet.worth_knowing"),
                 micro = true,
-                caption = "Elsewhere in this world",
+                caption = Loc.t("sheet.elsewhere_in_world"),
             )
         }
         elsewhere.forEach { person ->
@@ -478,8 +664,37 @@ private fun PersonRowCard(person: PersonRow, onSelect: (String) -> Unit) {
 private fun LazyListScope.storySheet(
     stage: ChatStage,
     context: StoryContext?,
+    objectives: List<dev.charaly.app.ui.packstore.PackObjectiveRow>,
 ) {
     val story = context?.story
+
+    // What the story is asking of the player, first: this sheet's question is "what am I
+    // supposed to be doing?", and an answer the player can act on outranks a recap. Only
+    // active, non-secret objectives arrive here - the projection decides that, so a hidden
+    // agenda cannot leak out of a sheet.
+    if (objectives.isNotEmpty()) {
+        item(key = "story-objectives") {
+            Column {
+                CharalySectionHeader(title = "Görevler", micro = true)
+                objectives.forEach { row ->
+                    Text(
+                        text = row.title,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = Charaly.ink.primary,
+                        modifier = Modifier.padding(top = Charaly.space.xs),
+                    )
+                    if (row.description.isNotBlank()) {
+                        Text(
+                            text = row.description,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Charaly.ink.muted,
+                            modifier = Modifier.padding(top = 2.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
 
     item(key = "story-now") {
         Column {
@@ -487,7 +702,7 @@ private fun LazyListScope.storySheet(
             Text(
                 text = story?.currentBeat?.takeIf { it.isNotBlank() }
                     ?: stage.moments.firstOrNull()?.text
-                    ?: "Nothing is pressing yet.",
+                    ?: Loc.t("sheet.nothing_pressing"),
                 style = MaterialTheme.typography.headlineSmall,
                 color = Charaly.ink.primary,
                 modifier = Modifier.padding(top = Charaly.space.xs),

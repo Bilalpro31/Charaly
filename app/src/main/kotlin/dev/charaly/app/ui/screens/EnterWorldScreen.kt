@@ -112,6 +112,16 @@ fun EnterWorldScreen(
     onImportCharacter: () -> Unit = {},
     onOpenModels: () -> Unit,
     onEnter: () -> Unit,
+    /**
+     * What this story will ask of the reader, for the review step.
+     *
+     * The selected opening's own objectives, projected from the pack by the view model and
+     * limited to title and description. Listed at the one moment a reader is deciding
+     * whether this is the story they want - after the cast and before the threshold - so
+     * the answer to "what am I signing up for" is on the screen rather than a surprise in
+     * the second act.
+     */
+    objectiveRows: List<dev.charaly.app.ui.packstore.PackObjectiveRow> = emptyList(),
 ) {
     if (snapshot == null) {
         EnterWorldMissing(loading = loading, onBack = onBack)
@@ -242,7 +252,7 @@ fun EnterWorldScreen(
                     onToggleImported = onToggleImported,
                     onImportCharacter = onImportCharacter,
                 )
-                NewStoryStep.REVIEW -> review(snapshot, onOpenModels)
+                NewStoryStep.REVIEW -> review(snapshot, objectiveRows, onOpenModels)
             }
         }
 
@@ -516,6 +526,7 @@ private fun ImportedCastMark(
  */
 private fun androidx.compose.foundation.lazy.LazyListScope.review(
     snapshot: NewStorySnapshot,
+    objectiveRows: List<dev.charaly.app.ui.packstore.PackObjectiveRow>,
     onOpenModels: () -> Unit,
 ) {
     val review = snapshot.review
@@ -547,6 +558,47 @@ private fun androidx.compose.foundation.lazy.LazyListScope.review(
                     value = review.castNames.joinToString(", "),
                     caption = "",
                 )
+            }
+        }
+    }
+
+    // What this opening is actually asking of the reader, before the threshold.
+    //
+    // The one place the wizard shows intent rather than arrangement: role, cast and place
+    // say who and where; this says *what for*. Titles and descriptions only - the
+    // conditions behind an objective are authoring machinery and would read as spoilers
+    // or as noise at exactly the wrong moment.
+    if (objectiveRows.isNotEmpty()) {
+        item(key = "review-objectives") {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(CharalyShapes.soft)
+                    .background(Charaly.surface.base)
+                    .padding(Charaly.space.lg),
+            ) {
+                Text(
+                    text = "Bu hikâyenin görevi",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Charaly.atmosphere.accent,
+                    modifier = Modifier.semantics { heading() },
+                )
+                objectiveRows.forEach { row ->
+                    Text(
+                        text = row.title,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = Charaly.ink.primary,
+                        modifier = Modifier.padding(top = Charaly.space.sm),
+                    )
+                    if (row.description.isNotBlank()) {
+                        Text(
+                            text = row.description,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Charaly.ink.muted,
+                            modifier = Modifier.padding(top = 2.dp),
+                        )
+                    }
+                }
             }
         }
     }

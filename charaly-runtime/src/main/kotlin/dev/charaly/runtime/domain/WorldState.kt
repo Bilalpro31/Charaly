@@ -14,6 +14,36 @@ import kotlinx.serialization.Serializable
  * Those live next to it in the StoryInstance because they are not authoritative
  * world truth (see section 22 of the Charaly architecture).
  */
+/**
+ * One retained line about a world change.
+ *
+ * Deliberately the event's *own* `summary` rather than a natural-language rewrite: the
+ * point is that the next prompt is told what the engine did, verbatim, so there is no layer
+ * between the mutation and the model's understanding of it.
+ */
+@Serializable
+data class WorldChange(
+    val at: StoryTime,
+    val eventId: EventId,
+    val summary: String,
+    val origin: dev.charaly.runtime.domain.events.EventOrigin = dev.charaly.runtime.domain.events.EventOrigin.ENGINE,
+    /**
+     * True for a change about somebody's inner state: what they noticed, believe, suspect,
+     * remember, owe or are owed.
+     *
+     * ## Why the prompt never sees these
+     *
+     * A belief is one character's, and putting it in a shared "what just happened" feed is
+     * how Andre's theory about "some girl from another school" turns up in Marinette's
+     * prompt. Personal state already has its own homes in the prompt - the `mind` block is
+     * read for its owner only, and `commitments` likewise - so the world-change feed is
+     * restricted to what a bystander could have witnessed.
+     */
+    val personal: Boolean = false,
+) {
+    fun render(): String = "${at.formatClock()} - $summary"
+}
+
 @Serializable
 data class WorldState(
     val worldClock: WorldClock = WorldClock(),
@@ -50,6 +80,13 @@ data class WorldState(
      * set off this?" has no answer on a graph whose edges are free text.
      */
     val causality: Map<EventId, CausalLink> = emptyMap(),
+    /**
+     * Rolling account of what changed, newest last, capped at [MAX_CHANGE_LOG].
+     *
+     * Capped because a thirty-turn session must not grow a prompt along with it: this is
+     * the "recent events" slice of the context, and recent is the operative word.
+     */
+    val changeLog: List<WorldChange> = emptyList(),
     val revision: Long = 0L,
 ) {
     fun location(id: LocationId?): Location? = id?.let { locations[it] }
@@ -102,10 +139,15 @@ data class WorldState(
     /**
      * Records an applied event. `activeEvents` is a set-like list of events that
      * are still in force, so a repeated id must not accumulate.
+     *
+     * [change] is the event's own one-line summary, retained so the next prompt can say
+     * WHAT JUST HAPPENED. Without it the only thing left after `applyEvent` returns is the
+     * event id, and an id is not something a character can be told.
      */
-    fun recordEvent(id: EventId, stillActive: Boolean): WorldState = copy(
+    fun recordEvent(id: EventId, stillActive: Boolean, change: WorldChange? = null): WorldState = copy(
         activeEvents = if (stillActive && id !in activeEvents) activeEvents + id else activeEvents,
         eventLog = eventLog + id,
+        changeLog = if (change == null) changeLog else (changeLog + change).takeLast(MAX_CHANGE_LOG),
         revision = revision + 1,
     )
 
@@ -120,6 +162,21 @@ data class WorldState(
      * entirely possible once consequences start referencing each other - would
      * otherwise hang a diagnostic. A truncated chain is still useful; a hang is not.
      */
+    /**
+     * The last [limit] things that actually changed, oldest first, in the world's own words.
+     *
+     * Sourced from [changeLog] - the summaries `EventEngine` retained as it applied each
+     * event - and nothing else. No prose is read, no transcript is mined, nothing is
+     * inferred: what a character is told about the recent past is exactly what the world
+     * says happened. That is what makes "what just happened" a fact a later turn can rely on
+     * rather than a recollection that might not match the state.
+     */
+    fun recentChanges(limit: Int = 4): List<String> {
+        if (limit <= 0) return emptyList()
+        // Only what a bystander could have seen. See [WorldChange.personal].
+        return changeLog.filterNot { it.personal }.takeLast(limit).map { it.render() }
+    }
+
     fun causesOf(eventId: EventId, limit: Int = MAX_CAUSE_DEPTH): List<CausalLink> {
         val chain = mutableListOf<CausalLink>()
         val seen = mutableSetOf(eventId)
@@ -171,6 +228,13 @@ data class WorldState(
     }
 
     companion object {
+        /**
+         * How many world changes are remembered for the prompt.
+         *
+         * Bounded on purpose - see [changeLog].
+         */
+        const val MAX_CHANGE_LOG = 24
+
         val EMPTY = WorldState()
 
         /**

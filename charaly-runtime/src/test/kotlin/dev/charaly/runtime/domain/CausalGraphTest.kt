@@ -282,12 +282,23 @@ class CausalGraphTest {
     // Secrets
     // ------------------------------------------------------------------
 
+    /**
+     * A secret in world truth that [holder] genuinely knows.
+     *
+     * The two steps are not interchangeable: `FactRevealed` registers truth and teaches
+     * it to nobody, so only after the holder's own `KnowledgeDiscovered` may the reveal
+     * below be attempted - a reveal is authorized by the revealer's knowledge, and these
+     * tests are about audiences, not about characters who never knew the secret at all
+     * (that refusal is `SecretRevealAuthorityTest`'s subject).
+     */
+    private fun secretHeldBy(holder: CharacterId): StoryInstance = applied(
+        applied(instance(), FactRevealed(Fact(id = factId, description = "Adrien is Cat Noir", secret = true))),
+        KnowledgeDiscovered(holder, factId, via = "he lived it"),
+    )
+
     @Test
     fun `a reveal teaches exactly its recipients`() {
-        val start = applied(
-            instance(),
-            FactRevealed(Fact(id = factId, description = "Adrien is Cat Noir", secret = true)),
-        )
+        val start = secretHeldBy(adrien)
         val story = applied(
             start,
             SecretRevealed(
@@ -306,17 +317,15 @@ class CausalGraphTest {
     @Test
     fun `a reveal to nobody is refused`() {
         // A secret that came out has an audience. Registering it as revealed while
-        // teaching no one is how a reveal becomes omnipotent.
-        val start = applied(instance(), FactRevealed(Fact(id = factId, description = "something")))
+        // teaching no one is how a reveal becomes omnipotent. Adrien holds the secret,
+        // so the empty audience is the one and only defect this event carries.
+        val start = secretHeldBy(adrien)
         assertTrue(apply(start, SecretRevealed(factId, adrien, recipients = emptyList())) is EventApplication.Rejected)
     }
 
     @Test
     fun `a revealed secret is remembered as a secret, not world knowledge`() {
-        val start = applied(
-            instance(),
-            FactRevealed(Fact(id = factId, description = "Adrien is Cat Noir", secret = true)),
-        )
+        val start = secretHeldBy(adrien)
         val story = applied(start, SecretRevealed(factId, adrien, recipients = listOf(marinette)))
         val memory = story.memories.of(marinette).firstOrNull {
             it.relatedFactIds.contains(factId)
